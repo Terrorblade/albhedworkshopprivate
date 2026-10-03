@@ -114,9 +114,16 @@ namespace pilgrimage
 
 		// F4 hands the arrow keys to the next clone. Safe to read without checking
 		// alt, because alt+F4 would have closed the window before we got here.
+		//
+		// ctrl+F4 is the host's menu control override, which reads sensibly next to it:
+		// F4 is already the "who am I driving" key, so ctrl+F4 is "take control". It goes
+		// through a request flag because it has to become an ordered command, and sending
+		// one is a game-thread job. See menu/MenuSync.h.
 		if (pressed[KeyF4])
 		{
-			if (ShiftHeld())
+			if (CtrlHeld())
+				InterlockedExchange(&requests.toggleMenuOverride, 1);
+			else if (ShiftHeld())
 				InterlockedExchange(&requests.toggleLockstepEnforce, 1);
 			else
 				InterlockedExchange(&requests.cycleClone, 1);
@@ -199,7 +206,8 @@ namespace pilgrimage
 		       "F12 lists what is interactable nearby, shift+F6 fires an examine "
 		       "on the nearest one, shift+F5 arms the esc menu row test, "
 		       "ctrl+F3 asks the host for the world again, "
-		       "ctrl+F11 logs the world transfer";
+		       "ctrl+F4 lets the host take control of the menu, "
+		       "ctrl+F11 logs the world transfer, the menu and the pause";
 	}
 
 } // namespace pilgrimage

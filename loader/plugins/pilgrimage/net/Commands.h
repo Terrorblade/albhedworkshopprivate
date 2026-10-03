@@ -36,6 +36,42 @@ namespace pilgrimage
 		// is made by one player in a menu whose entire state is a single global, so
 		// there is no input to replicate and no way to derive it.
 		kCommandBattleCommit = 2,
+
+		// The in-game menu opening. See MenuSync.h. The only part of the menu that
+		// needs a command: the Triangle test lives in FFX_MainStep reading the local
+		// hardware pad mask, before the menu system exists, so without this the
+		// person who pressed it opens a menu and the other machine does not. Closing
+		// needs nothing, because the close is decided inside the menu from the
+		// replicated pad block.
+		kCommandMenuOpen = 3,
+
+		// The host taking or giving back control of whatever menu is up, from
+		// ctrl+F4. Ordered rather than a local flag flip, because the two machines
+		// disagreeing about who is driving is the one failure in that subsystem that
+		// cannot be recovered from.
+		kCommandMenuOverride = 4,
+
+		// One peer's Esc pause menu opening or closing. See PauseSync.h, and read the
+		// asymmetry note there before using this: the OPEN is what this command is
+		// for, and the close is observed rather than relied on arriving, because a
+		// command can only be consumed on the step it was stamped for and nobody's
+		// clock is moving while everybody is paused.
+		kCommandPause = 5,
+
+		// One peer taking one character. See coop/Ownership.h, and read the warning
+		// on SetCharacterOwner before touching this: a binding applied on one
+		// machine and not the other is the one failure in that subsystem with no way
+		// back, which is exactly why it is on this channel.
+		//
+		// It is here rather than being derived because the binding is a CHOICE
+		// somebody made in a menu, not a consequence of input. Both machines do run
+		// the Config screen from the same replicated pad block and would reach the
+		// same setter on the same step, so in the normal case this is belt to the
+		// braces. It earns its place in the abnormal one: if the two machines ever
+		// have different rows installed, or if the pad replication has a hole,
+		// deriving the binding locally would split the ownership table and nothing
+		// afterwards would notice.
+		kCommandCharOwner = 6,
 	};
 
 	// The booster payload. Four ints rather than a packed bitfield because
@@ -47,6 +83,50 @@ namespace pilgrimage
 		int32_t encounterRate; // 0 off, 1 normal, 2 high
 		int32_t invincible;
 		int32_t autoBattle;
+	};
+
+	// Which menu to open. One int rather than nothing at all, because the mode
+	// decides which branch FFX_MenuSys_Enter takes and only mode 0 is the ordinary
+	// menu. Sending it means the two machines cannot end up in two different modes
+	// if a later version ever replicates one of the save-UI paths.
+	struct MenuOpenCommand
+	{
+		int32_t mode; // ffx::kMenuModeMain, which is 0
+	};
+
+	// The host override, as the WANTED STATE rather than as "toggle".
+	//
+	// A toggle would be wrong for the same reason BoosterSync sends values instead of
+	// keypresses: two commands crossing, or one arriving twice, would leave the
+	// machines on opposite settings. A state is idempotent.
+	struct MenuOverrideCommand
+	{
+		uint8_t held; // 1 the host is driving every menu, 0 back to normal
+		uint8_t reserved[3];
+	};
+
+	// One peer's pause state, again as a state and not an edge, and for the same
+	// reason. The peer is not in here because CommandPayload already carries the
+	// issuer and two fields that have to agree are one field too many.
+	struct PauseCommand
+	{
+		uint8_t paused;
+		uint8_t reserved[3];
+	};
+
+	// One peer taking one character, as an absolute binding rather than a swap.
+	//
+	// The pair goes straight into SetCharacterOwner, so the exclusivity rule is the
+	// one documented there: binding a peer to a character takes that peer off
+	// whatever it had. Sending the whole table instead was considered and dropped,
+	// because one binding is already idempotent and the host orders them, so two
+	// crossing commands leave both machines in the same state whichever way round
+	// they arrive.
+	struct CharOwnerCommand
+	{
+		uint8_t peer;      // 0 is the host, and it has to be a real peer id
+		uint8_t charIndex; // a save block character index 0..7, or 0xFF to unbind
+		uint8_t reserved[2];
 	};
 
 	// One battle action.

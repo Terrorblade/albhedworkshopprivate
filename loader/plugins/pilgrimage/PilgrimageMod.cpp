@@ -48,6 +48,8 @@
 #include "ffx/VerifyLayout.h"
 #include "battle/BattleSync.h"
 #include "hooks/FrameHook.h"
+#include "menu/CoopConfig.h"
+#include "menu/MenuSync.h"
 #include "net/LockstepLink.h"
 #include "world/EncounterSync.h"
 #include "world/RemotePlayers.h"
@@ -165,6 +167,33 @@ namespace pilgrimage
 			if (!InstallBattleSync())
 				Log("battle commands will not be replicated, so the first battle in a "
 				    "session will diverge");
+
+			// Installed unconditionally for the same reason as the two above: the
+			// callback leaves the menu pad block exactly as the engine filled it until a
+			// session is active, so a solo game is byte for byte the shipped game.
+			//
+			// Not fatal, and the consequence is worth spelling out because it is not
+			// obvious from the outside. Without it, two players share ONE menu cursor and
+			// drive it from two controllers at the same time, and the first sphere spent
+			// or piece of gear equipped is a divergence. The menu would still look like it
+			// works, which is what makes it worth a loud line here.
+			if (!InstallMenuSync())
+				Log("the in-game menu will be driven by both controllers at once, so the "
+				    "first sphere spent or item used in a session will diverge");
+
+			// The co-op rows on the game's own Config screen. Installed
+			// unconditionally and inert until a session starts, like the three above:
+			// nothing is added to the Config screen while nobody is connected, so a
+			// solo player's screen is byte for byte the shipped game's.
+			//
+			// Not fatal, and the consequence is only a missing feature rather than a
+			// hazard. Without it the ownership settings and the host menu override are
+			// reachable from the control panel and ctrl+F4 and nowhere a player would
+			// look, which is the thing this was added to fix.
+			if (!InstallCoopConfig())
+				Log("the co-op settings will not appear on the in-game Config screen, so "
+				    "who plays which character can only be changed from the control panel "
+				    "and the host override only from ctrl+F4");
 
 			// Not fatal. Only the force-visible diagnostic depends on it.
 			if (!InstallVisibilityDetour())

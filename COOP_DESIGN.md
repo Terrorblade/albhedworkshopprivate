@@ -1265,11 +1265,28 @@ rather than assumed, see the probe under Status.
 
 ### What is deliberately not done yet
 
-**The other player's input is not injected into the engine.** The exchange runs, the frames are there
-to read, and the clock agrees across machines, but nothing is written into the game. That needs one
-frame-order question settled by measurement rather than reading: `FFX_MainStep` reads the pad inside
-itself, ahead of `FFX_StepPacing`, so a write from the gate callback would be overwritten. Until that
-is measured, running the clock without the injection is the honest increment.
+**THE BOUND PLAYER IS THE ONE CHARACTER NOT DRIVEN FROM THE REPLICATED BYTES, and that is now the
+single thing standing between all of this and a playable co-op.**
+
+An earlier version of this section said the other player's input was not injected at all. That is no
+longer true and the correction matters, because the remaining gap is the opposite end of the same
+problem. `world\RemotePlayers.cpp` drives every remote peer from the replicated frame: it dequantises
+the heading and the deflection, mirrors the local pad path's run rule, and calls
+`DriveCloneFromHeading`. It coasts on the last frame for up to `MaxCoastSteps` when one is missing and
+holds the character still after that. The menu and the message window are injected too, by
+`menu\MenuSync.cpp` and `world\DialogueSync.cpp` writing their shared pad block.
+
+What is left is the local player. The engine drives that one itself, straight from the raw pad at full
+float precision, while the OTHER machine computes that same character's motion from the quantised
+bytes through `DriveCloneFromHeading`. Two code paths and two precisions for one character, which is a
+guaranteed position divergence rather than a risk of one. The gate already quantises the local stick on
+the way out for exactly this reason, so the numbers exist, they are just not fed back in.
+
+Two documented routes, neither tried: `FFX_Input__setPollOverride 0x630DF0`, or writing input cache 1
+from an `FFX_MainStep` pre-hook. The frame-order question is the thing to settle first, by measurement
+rather than reading: `FFX_MainStep` reads the pad inside itself, so a write from the frame hook after
+animate is overwritten before the step reads it. See `reversing\INPUT_LAYER.md` for the three caches
+and which of them is derived from which.
 
 **The gate does not refuse a step by default.** It counts how often it would have. Shift+F4 switches
 enforcement on. That way the whole exchange can be watched running, with the stall counts visible,
@@ -1277,23 +1294,24 @@ before anything is allowed to freeze the game.
 
 ## What to research next, in order
 
-Eight of the ten items that used to head this list are answered. What is left:
+Nine of the ten items that used to head this list are answered. The battle command commit point, which
+headed it, is answered and built: `FFX_Btl_CommitCommand 0x792D60` with the player path intercepted at
+the single call site inside `FFX_Btl_SendMenu`, full writeup in `reversing\BATTLE_COMMAND.md`. What is
+left is no longer blocking anything in the requirements, it is cleanup, confidence and the long tail:
 
-1. **The battle command commit point.** The one function that has to be gated for per-character
-   ownership, and now the most important unanswered question by a clear margin. Everything else in the
-   requirements has a known mechanism.
-2. **Does a simulation step allocate?** This is the question that decides whether rollback was ever on
+1. **Does a simulation step allocate?** This is the question that decides whether rollback was ever on
    the table, and it would also tell us whether a state hash can include anything holding a pointer.
    Hook the allocator, count calls per step while walking a field, then in battle, then in a cutscene.
    An hour of work.
-3. **Four unidentified menu modules, 6, 9, 20 and 23.** None writes the save block and none has a
+2. **Four unidentified menu modules, 6, 9, 20 and 23.** None writes the save block and none has a
    distinctive string, which is why they are still unknown. Module 21 is probably Overdrive, unproved.
-4. **How a carried object is attached to its carrier.** Bone parent, script-written position, or Bullet
+3. **How a carried object is attached to its carrier.** Bone parent, script-written position, or Bullet
    rigid body. One answer decides whether held-object sync is one byte or a transform stream.
-5. **Where a button press cancels an FMV.** The observables are known, the skip path is not.
-6. **Chr ids 45, 307, 901 and 908.** They have field motion sets and no entry in
+4. **Where a button press cancels an FMV.** The observables are known, the skip path is not. This is
+   the one that still gates a feature, since the FMV barrier is not built.
+5. **Chr ids 45, 307, 901 and 908.** They have field motion sets and no entry in
    `g_ffxCharIndexToChrId`. Cheapest route is to spawn each and look, several at once.
-7. **Blitzball's nine wall-clock reads.** The one remaining pocket of clock-driven gameplay that has
+6. **Blitzball's nine wall-clock reads.** The one remaining pocket of clock-driven gameplay that has
    not been looked at.
 
 ### What the running game has to settle, each already one keypress
@@ -1302,11 +1320,17 @@ These are not research, they are experiments the mod ships because reading the d
 as far as it can go.
 
 - **Shift+F2**, the fixed timestep. Still the single biggest lockstep unknown.
-- **Shift+F5**, the Esc menu row. Decides whether the mod's settings live in the game's own menu.
 - **F12 then shift+F6**, the examine event on a character that is not the bound player. Decides the
   chest feature.
 - **Shift+F8**, which save-block regions sit still. Decides what the desync detector can hash.
-- **Shift+F4**, the lockstep gate enforcing rather than counting.
+- **Shift+F4**, the lockstep gate enforcing rather than counting. Worth leaving off until the bound
+  player is injected, because until then the two machines genuinely do disagree and enforcing would
+  be holding the game over a divergence that is expected.
+
+The Esc menu row experiment that used to be on this list is gone, and so is the question it was for.
+The mod's settings went into the game's own in-game Config screen instead, which turned out to take no
+experiment at all: the row table is a pointer plus a runtime count in writable `.data`. See the
+section above and `reversing\CONFIG_ROWS.md`.
 
 ## Closed avenues
 
@@ -1362,8 +1386,28 @@ Built, compiling clean at `/W4 /WX`, and installed:
 - **The lockstep layer.** The step clock, the delayed-input ring, the host-ordered command channel and
   the checksum comparison. See the section above.
 
-What has NOT been exercised against a second machine is the Steam backend end to end, and what has
-not been built is the input injection. Those are the next two things.
+Since that was written the per-character battle command path, the menu and pause sync, and the co-op
+rows on the game's own Config screen have all been built, and the Config rows are confirmed working in
+a running game. The ownership table they all share is `plugins\pilgrimage\coop\Ownership.h`.
+
+**What is left, in the order it matters:**
+
+1. **The bound player's input injection.** See the section above. One character is still computed two
+   different ways on the two machines, so positions will drift no matter how good the rest is.
+2. **The Steam backend end to end against a real second machine.** Everything above it has only run
+   over the loopback UDP transport.
+3. **The FMV barrier.** Not built, and it needs the FMV cancel path from the research list.
+4. **Turning the gate on.** Shift+F4 today, default once 1 is done.
+
+**A correctness fix that has not run yet, and it is worth knowing about:** every machine used to seed
+its lockstep clock from its own `g_ffxMainStepCounter`, which is a per-process counter, so two machines
+numbered the same step differently and every ordered command stamped one machine and was matched
+against the other's clock. A client now adopts the host's step out of the world snapshot, which works
+because the host freezes itself for the whole transfer. That was never going to show up on loopback
+with one process and it would have broken everything on two machines.
+
+Beyond that, almost nothing from the last three sessions has run in a game yet. Treat the battle,
+menu, pause and arrival layers as written and reviewed rather than working.
 
 ### The diagnostics that are in there because a guess was cheaper to measure than to argue about
 

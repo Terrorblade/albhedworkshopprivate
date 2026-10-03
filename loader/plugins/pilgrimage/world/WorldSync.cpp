@@ -516,6 +516,20 @@ namespace pilgrimage
 		return g_started;
 	}
 
+	bool AppliedHostStep(uint32_t* out)
+	{
+		// Zero means the host had no clock running when it snapshotted, which should not
+		// happen now that NetLink starts the clock ahead of ServiceWorldSync, but a zero
+		// here would silently seed a client at step 1 against a host in the thousands.
+		// Refusing is the safe answer, because a clock that never starts is visible in
+		// the status line and a clock started at the wrong number is not visible at all.
+		if (!out || !g_worldInstalled || g_appliedHostStep == 0)
+			return false;
+
+		*out = g_appliedHostStep;
+		return true;
+	}
+
 	bool WorldSyncReady()
 	{
 		if (!g_started)

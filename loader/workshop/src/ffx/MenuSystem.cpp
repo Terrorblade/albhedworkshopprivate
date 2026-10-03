@@ -264,6 +264,198 @@ namespace ffx
 		// its own constant and every list read is clamped to it.
 		const int kMenuCharListCapacity = 8;
 
+		// ---------------------------------------------------------------------------
+		// ADDRESSES THAT BELONG IN addresses\MenuSystem.h AND ARE PARKED HERE.
+		//
+		// They are here and not there because the pass that derived them was not
+		// allowed to edit the addresses\ files. Move them, add them to
+		// MenuSystemRvaList so VerifyLayout checks them at startup, and delete this
+		// block. Every one was read out of the IDB and is named and commented there.
+		//
+		// The derivation is in reversing\CONFIG_ROWS.md.
+		// ---------------------------------------------------------------------------
+		namespace ParkedRva
+		{
+			// Module 10's own four slots, in descriptor order.
+			const DWORD MenuConfigSelectRowTable = 0x004CB350; // PREPARE, sets both globals
+			const DWORD MenuConfigDrawScreen = 0x004CB320;     // DRAW
+			const DWORD MenuConfigInitRowValues = 0x004CB3C0;  // INIT, seeds every row
+			const DWORD MenuConfigRowAt = 0x004CBAA0;          // rows[i], unchecked
+			const DWORD MenuConfigDrawAllRows = 0x004CBAB0;
+			const DWORD MenuConfigDrawRow = 0x004CBAE0;
+
+			// The four candidate arrays FFX_Menu_ConfigSelectRowTable picks between, on
+			// (FFX_GetLanguage() != 0) by (the HDD/asset check). All four hold the same
+			// eight row pointers in the same order in this build.
+			const DWORD MenuConfigRowArrayIntlHdd = 0x0085A554;
+			const DWORD MenuConfigRowArrayIntlNoHdd = 0x0085A578;
+			const DWORD MenuConfigRowArrayJpHdd = 0x0085A598;
+			const DWORD MenuConfigRowArrayJpNoHdd = 0x0085A5C0;
+
+			// The ten shipped row objects, 44 bytes each, of which eight are used. Here
+			// so a reader can be checked against them, never written to.
+			const DWORD MenuConfigRowPool = 0x0085A39C;
+			const int MenuConfigRowPoolCount = 10;
+
+			// Permanently 0. No writer anywhere in the binary, and it sits in the
+			// zero-filled tail of .data, so FFX_Menu_ConfigDrawRow's "editing row"
+			// branch is really a hardcoded special case for row 0, the HD Remaster's
+			// Original / Arranged music selector, whose text comes from the LocKit.
+			const DWORD MenuConfigEditingRow = 0x0146A438;
+
+			// The string lookups. FFX_Menu_GetUiString is listed for completeness and
+			// deliberately NOT detoured: its fourth byte starts a rel32 call.
+			const DWORD MenuGetUiString = 0x004DC9B0;     // label, group 7
+			const DWORD MenuGetUiStringDesc = 0x004DC970; // help line
+			const DWORD KernelStringGet = 0x0038FCF0;     // (group, id, lang), name
+			const DWORD KernelStringGetDesc = 0x0038FBB0; // (group, id, lang), desc
+			const DWORD MenuSetHelpString = 0x004AAEB0;   // keeps the POINTER
+
+			// The text renderer, for a mod that wants to draw outside a row.
+			const DWORD TextDrawString = 0x00505AB0;    // (s, x, y, colourSel, scale)
+			const DWORD TextMeasureString = 0x00505290; // (s, &width, greyed, scale)
+		} // namespace ParkedRva
+
+		// The kernel string group the in-game menu's UI strings live in.
+		const int kUiStringGroup = 7;
+
+		// ---------------------------------------------------------------------------
+		// The FFX glyph table for page 0, as a byte per printable ASCII character.
+		//
+		// Built from the formula rather than typed out, so there is one place the rule
+		// lives. It returns -1 for a character with no glyph, which is only '@'.
+		//
+		// The rule, from FFX_Text_DecodeGlyph: byte = 0x30 + glyph index, and the sheet
+		// is ASCII order with the ten digits lifted to the front and '@' dropped.
+		// ---------------------------------------------------------------------------
+		const int kFfxTextNoGlyph = -1;
+
+		// The encoded space, which is what an unmappable character becomes. Named
+		// because 0x3A reads like a colon and is not one.
+		const int kFfxTextSpace = 0x3A;
+
+		int FfxTextByteFor(char ascii)
+		{
+			const unsigned char c = (unsigned char)ascii;
+
+			if (c >= '0' && c <= '9')
+				return 0x30 + (c - '0'); // glyph 0..9
+
+			if (c >= 0x20 && c <= 0x2F)
+				return 0x30 + 10 + (c - 0x20); // space through '/', glyph 10..25
+
+			if (c >= 0x3A && c <= 0x3F)
+				return 0x30 + 26 + (c - 0x3A); // ':' through '?', glyph 26..31
+
+			if (c >= 'A' && c <= 'Z')
+				return 0x30 + 32 + (c - 'A'); // glyph 32..57
+
+			if (c >= 0x5B && c <= 0x60)
+				return 0x30 + 58 + (c - 0x5B); // '[' through '`', glyph 58..63
+
+			if (c >= 'a' && c <= 'z')
+				return 0x30 + 64 + (c - 'a'); // glyph 64..89
+
+			if (c >= 0x7B && c <= 0x7E)
+				return 0x30 + 90 + (c - 0x7B); // '{' through '~', glyph 90..93
+
+			// '@' lands here, and so does every byte outside 0x20..0x7E. There is no
+			// glyph for it on the sheet.
+			return kFfxTextNoGlyph;
+		}
+
+		// ---------------------------------------------------------------------------
+		// The two string lookup detours.
+		//
+		// Verified in IDA at 0x78FCF0 and 0x78FBB0. Identical prologues, six bytes,
+		// three whole instructions, nothing position dependent:
+		//
+		//   55        push ebp
+		//   8B EC     mov  ebp, esp
+		//   8B 45 08  mov  eax, [ebp+arg_0]
+		//
+		// Both are __cdecl(int group, int id, char lang) and both return a char * into
+		// the loaded kernel table blob, or 0 when that group's blob is not resident.
+		//
+		// WHY BOTH. One group 7 row carries four WORD offsets, the name pair at +0 and
+		// the description pair at +8. KernelStringGet reads the name, KernelStringGetDesc
+		// reads the description, and the Config screen uses the first for a row's label
+		// and value names and the second for the help line under the selected value. A
+		// mod answering only the first gets its label drawn and then a help line looked
+		// up from the real table with its own out-of-range id, which lands on whatever
+		// the first range descriptor points at.
+		// ---------------------------------------------------------------------------
+		DETOUR_DECLARE(KernelStringGet, const char*, (int group, int id, char lang));
+		DETOUR_DECLARE(KernelStringGetDesc, const char*, (int group, int id, char lang));
+
+		DETOUR_PROLOGUE(KernelStringGet) = {
+			0x55,            // push ebp
+			0x8B, 0xEC,      // mov  ebp, esp
+			0x8B, 0x45, 0x08 // mov  eax, [ebp+arg_0]
+		};
+
+		DETOUR_PROLOGUE(KernelStringGetDesc) = {
+			0x55,            // push ebp
+			0x8B, 0xEC,      // mov  ebp, esp
+			0x8B, 0x45, 0x08 // mov  eax, [ebp+arg_0]
+		};
+
+		UiStringProviderFn uiStringProvider = NULL;
+		volatile LONG uiStringHits = 0;
+
+		// The id the game will actually look up. Both originals mask to 12 bits before
+		// doing anything, so the provider is handed the masked value and a caller
+		// cannot be surprised by an id that works in one place and not another.
+		const int kUiStringIdMask = 0xFFF;
+
+		const char* __cdecl KernelStringGetHook(int group, int id, char lang)
+		{
+			if (uiStringProvider)
+			{
+				const char* ours = uiStringProvider(group, id & kUiStringIdMask, false);
+				if (ours)
+				{
+					InterlockedIncrement(&uiStringHits);
+					return ours;
+				}
+			}
+			return DETOUR_ORIGINAL(KernelStringGet)(group, id, lang);
+		}
+
+		const char* __cdecl KernelStringGetDescHook(int group, int id, char lang)
+		{
+			if (uiStringProvider)
+			{
+				const char* ours = uiStringProvider(group, id & kUiStringIdMask, true);
+				if (ours)
+				{
+					InterlockedIncrement(&uiStringHits);
+					return ours;
+				}
+			}
+			return DETOUR_ORIGINAL(KernelStringGetDesc)(group, id, lang);
+		}
+
+		// ---------------------------------------------------------------------------
+		// Config row helpers. A row is either one of the game's, reached through the
+		// live table, or one a mod owns. Either way it is 44 bytes somewhere, so every
+		// access is Readable checked over the whole object rather than per field.
+		// ---------------------------------------------------------------------------
+		BYTE* CheckedRow(const void* row)
+		{
+			BYTE* p = (BYTE*)row;
+			return Readable(p, ConfigRow::Size) ? p : NULL;
+		}
+
+		bool ReadRowInt(const void* row, DWORD offset, int* out)
+		{
+			BYTE* p = CheckedRow(row);
+			if (!p || !out)
+				return false;
+			*out = (int)Rd32(p + offset);
+			return true;
+		}
+
 	} // namespace
 
 	// ---------------------------------------------------------------------------
@@ -741,6 +933,24 @@ namespace ffx
 		return true;
 	}
 
+	bool SphereGridPadState(WORD* outHeld, WORD* outPressed, WORD* outHeldOrRepeat)
+	{
+		const BYTE* work = MenuWorkBlock();
+		if (!work)
+			return false;
+
+		// All three or none. A caller hashing these to catch a divergence wants to know
+		// it got a consistent snapshot, and the work block is a heap pointer that is
+		// genuinely null before the grid builds itself.
+		if (outHeld)
+			*outHeld = Rd16(work + MenuWork::GridPadHeld);
+		if (outPressed)
+			*outPressed = Rd16(work + MenuWork::GridPadPressed);
+		if (outHeldOrRepeat)
+			*outHeldOrRepeat = Rd16(work + MenuWork::GridPadHeldOrRepeat);
+		return true;
+	}
+
 	bool SphereGridPendingCost(int* out)
 	{
 		const BYTE* work = MenuWorkBlock();
@@ -767,6 +977,330 @@ namespace ffx
 	// ---------------------------------------------------------------------------
 	// Diagnostics
 	// ---------------------------------------------------------------------------
+
+	// ---------------------------------------------------------------------------
+	// The Config screen's row table
+	// ---------------------------------------------------------------------------
+
+	int ConfigRowCount()
+	{
+		int count = 0;
+		if (!ReadGlobal<int>(Rva::MenuConfigRowCount, &count))
+			return 0;
+
+		// Zero before the menu has ever been opened, and a nonsense value would mean
+		// something else has written the global, so it is clamped rather than trusted.
+		if (count < 0 || count > kConfigMaxRowCount)
+			return 0;
+		return count;
+	}
+
+	void** ConfigRowTable()
+	{
+		void*** slot = At<void**>(Rva::MenuConfigRows);
+		if (!slot)
+			return NULL;
+
+		// "void **volatile *" rather than "volatile void ***": the POINTER is what the
+		// game thread rewrites, and the array behind it is read separately.
+		void** table = *(void** volatile*)slot;
+		const int count = ConfigRowCount();
+		if (count <= 0)
+			return NULL;
+		return Readable(table, sizeof(void*) * (SIZE_T)count) ? table : NULL;
+	}
+
+	void* ConfigRowAt(int index)
+	{
+		void** table = ConfigRowTable();
+		if (!table || index < 0 || index >= ConfigRowCount())
+			return NULL;
+
+		void* row = (void*)Rd32((const BYTE*)(table + index));
+		return CheckedRow(row);
+	}
+
+	int ConfigCursorRow()
+	{
+		// A signed char in the game, and it is compared against the int row count as
+		// one, so it is read back as one here too.
+		const BYTE* p = At<BYTE>(Rva::MenuConfigCursorRow);
+		if (!p)
+			return -1;
+		return (int)(signed char)Rd8(p);
+	}
+
+	bool SetConfigCursorRow(int index)
+	{
+		BYTE* p = At<BYTE>(Rva::MenuConfigCursorRow);
+		if (!p || index < -128 || index > 127)
+			return false;
+		Wr8(p, (BYTE)(signed char)index);
+		return true;
+	}
+
+	bool ConfigRowTableIsShipped()
+	{
+		void*** slot = At<void**>(Rva::MenuConfigRows);
+		if (!slot)
+			return true; // cannot tell, and claiming it is ours would be worse
+
+		const DWORD live = Rd32((const BYTE*)slot);
+		if (live == 0)
+			return true; // the menu has never been opened, which is the game's state
+
+		const DWORD shipped[] = {
+			(DWORD)(UINT_PTR)ModuleAddress(ParkedRva::MenuConfigRowArrayIntlHdd),
+			(DWORD)(UINT_PTR)ModuleAddress(ParkedRva::MenuConfigRowArrayIntlNoHdd),
+			(DWORD)(UINT_PTR)ModuleAddress(ParkedRva::MenuConfigRowArrayJpHdd),
+			(DWORD)(UINT_PTR)ModuleAddress(ParkedRva::MenuConfigRowArrayJpNoHdd)
+		};
+
+		for (int i = 0; i < 4; ++i)
+			if (live == shipped[i])
+				return true;
+
+		return false;
+	}
+
+	bool CopyConfigRowTable(void** out, int maxRows, int* outCount)
+	{
+		if (outCount)
+			*outCount = 0;
+		if (!out || maxRows <= 0)
+			return false;
+
+		void** table = ConfigRowTable();
+		const int count = ConfigRowCount();
+		if (!table || count <= 0 || count > maxRows)
+			return false;
+
+		for (int i = 0; i < count; ++i)
+			out[i] = (void*)Rd32((const BYTE*)(table + i));
+
+		if (outCount)
+			*outCount = count;
+		return true;
+	}
+
+	bool SetConfigRowTable(void** rows, int count)
+	{
+		if (count < 0 || count > kConfigMaxRowCount)
+			return false;
+		if (count > 0 && !Readable(rows, sizeof(void*) * (SIZE_T)count))
+			return false;
+
+		void*** slot = At<void**>(Rva::MenuConfigRows);
+		int* countSlot = At<int>(Rva::MenuConfigRowCount);
+		if (!slot || !countSlot)
+			return false;
+
+		// ORDER MATTERS, and it is not symmetric. The game's draw loop re-reads the
+		// count on every iteration and indexes the array with it, so there must never
+		// be an instant where the count promises more rows than the live array holds.
+		// Shrinking: drop the count first. Growing: swap the pointer first and raise
+		// the count after. Either way the pair is only ever over-safe in between.
+		const int before = ConfigRowCount();
+		if (count < before)
+			Wr32((BYTE*)countSlot, (DWORD)count);
+
+		Wr32((BYTE*)slot, (DWORD)(UINT_PTR)rows);
+		Wr32((BYTE*)countSlot, (DWORD)count);
+
+		// And the cursor, because nothing in the game clamps it. FFX_Menu_ExecModule10
+		// reads it as a signed char and indexes the array with it unchecked, so a
+		// cursor left at row 11 of a table that just became 8 long is an out of bounds
+		// row-pointer read on the player's next Up or Down.
+		const int cursor = ConfigCursorRow();
+		if (count == 0 || cursor < 0 || cursor >= count)
+			SetConfigCursorRow(0);
+
+		return true;
+	}
+
+	bool ConfigRowValueCount(const void* row, int* out)
+	{
+		return ReadRowInt(row, ConfigRow::ValueCount, out);
+	}
+
+	bool ConfigRowCurrentValue(const void* row, int* out)
+	{
+		return ReadRowInt(row, ConfigRow::CurrentValue, out);
+	}
+
+	bool ConfigRowSelectable(const void* row, int* out)
+	{
+		return ReadRowInt(row, ConfigRow::Selectable, out);
+	}
+
+	bool SetConfigRowCurrentValue(void* row, int value)
+	{
+		BYTE* p = CheckedRow(row);
+		if (!p)
+			return false;
+
+		// Clamped into the row's own range, because the game wraps on a press and then
+		// indexes the value-name array with the result. A value past the count would
+		// read a value id off the end of the row.
+		const int count = (int)Rd32(p + ConfigRow::ValueCount);
+		if (count <= 0)
+			return false;
+		if (value < 0 || value >= count)
+			return false;
+
+		Wr32(p + ConfigRow::CurrentValue, (DWORD)value);
+		return true;
+	}
+
+	bool SetConfigRowSelectable(void* row, bool selectable)
+	{
+		BYTE* p = CheckedRow(row);
+		if (!p)
+			return false;
+		Wr32(p + ConfigRow::Selectable, selectable ? 1u : 0u);
+		return true;
+	}
+
+	WORD ConfigRowLabelId(const void* row)
+	{
+		BYTE* p = CheckedRow(row);
+		return p ? Rd16(p + ConfigRow::LabelId) : (WORD)0;
+	}
+
+	WORD ConfigRowValueId(const void* row, int value)
+	{
+		BYTE* p = CheckedRow(row);
+		if (!p || value < 0 || value >= kConfigRowMaxValues)
+			return 0;
+		return Rd16(p + ConfigRow::ValueIds + ConfigRow::ValueIdStride * (DWORD)value);
+	}
+
+	bool BuildConfigRow(void* row, int valueCount, bool selectable, ConfigRowFn getter,
+	    ConfigRowFn setter, WORD labelId, const WORD* valueIds)
+	{
+		BYTE* p = CheckedRow(row);
+		if (!p)
+			return false;
+		if (valueCount < 0 || valueCount > kConfigRowMaxValues)
+			return false;
+		if (valueCount > 0 && !valueIds)
+			return false;
+
+		// A null getter is a fault rather than a missing row:
+		// FFX_Menu_ConfigInitRowValues calls every row's getter unconditionally on
+		// entry to the screen. The setter is only reached from a Left or Right press on
+		// a selectable row, so a null one is survivable, but it is refused anyway
+		// because there is no reason to have one.
+		if (!getter || !setter)
+			return false;
+
+		memset(p, 0, ConfigRow::Size);
+		Wr32(p + ConfigRow::ValueCount, (DWORD)valueCount);
+		Wr32(p + ConfigRow::CurrentValue, 0);
+		Wr32(p + ConfigRow::Selectable, selectable ? 1u : 0u);
+		Wr32(p + ConfigRow::Getter, (DWORD)(UINT_PTR)getter);
+		Wr32(p + ConfigRow::Setter, (DWORD)(UINT_PTR)setter);
+		Wr16(p + ConfigRow::LabelId, labelId);
+
+		// 3, because every one of the ten shipped rows has 3 here. Nothing in the draw
+		// or the exec reads it, so this is cargo cult on purpose: matching the shipped
+		// rows costs nothing and a future reader of a memory dump will not have to
+		// wonder why ours are different.
+		Wr16(p + ConfigRow::Unknown1A, 3);
+
+		for (int i = 0; i < valueCount; ++i)
+		{
+			Wr16(p + ConfigRow::ValueIds + ConfigRow::ValueIdStride * (DWORD)i,
+			    valueIds[i]);
+		}
+		return true;
+	}
+
+	bool ConfigScreenActive()
+	{
+		return ModuleStepping(kMenuModuleConfig);
+	}
+
+	// ---------------------------------------------------------------------------
+	// FFX text
+	// ---------------------------------------------------------------------------
+
+	int FfxTextEncodedLength(const char* ascii)
+	{
+		if (!ascii)
+			return 1;
+
+		int n = 0;
+		while (ascii[n] != '\0')
+			++n;
+		return n + 1;
+	}
+
+	bool EncodeFfxText(const char* ascii, char* out, int outBytes)
+	{
+		if (!out || outBytes <= 0)
+			return false;
+
+		out[0] = '\0';
+		if (!ascii)
+			return true;
+
+		const int needed = FfxTextEncodedLength(ascii);
+		if (needed > outBytes)
+			return false;
+
+		int i = 0;
+		for (; ascii[i] != '\0'; ++i)
+		{
+			const int encoded = FfxTextByteFor(ascii[i]);
+			out[i] = (char)((encoded == kFfxTextNoGlyph) ? kFfxTextSpace : encoded);
+		}
+		out[i] = '\0';
+		return true;
+	}
+
+	// ---------------------------------------------------------------------------
+	// The UI string override
+	// ---------------------------------------------------------------------------
+
+	bool InstallUiStringOverride(UiStringProviderFn provider)
+	{
+		// Set the provider BEFORE the detours go in, so there is no window where a
+		// hooked lookup runs with no provider. Harmless either way, since the hook
+		// checks, but a window that does not exist cannot be reasoned about wrongly.
+		uiStringProvider = provider;
+
+		if (DETOUR_INSTALLED(KernelStringGet) && DETOUR_INSTALLED(KernelStringGetDesc))
+			return true;
+
+		const bool name = DETOUR_INSTALL(KernelStringGet, ParkedRva::KernelStringGet);
+		const bool desc = DETOUR_INSTALL(KernelStringGetDesc, ParkedRva::KernelStringGetDesc);
+
+		if (name && desc)
+			return true;
+
+		// All or nothing. Half of this is worse than none of it: the label would come
+		// from the provider and the help line under it from the real table with the
+		// provider's own out-of-range id, which draws whatever the kernel table's first
+		// range descriptor happens to point at.
+		Log("menu: the UI string override did not install (name hook %s, description "
+		    "hook %s), so nothing will be answered. A mod's own Config rows would be "
+		    "drawn with the wrong text.",
+		    name ? "ok" : "REFUSED", desc ? "ok" : "REFUSED");
+		uiStringProvider = NULL;
+		return false;
+	}
+
+	bool UiStringOverrideInstalled()
+	{
+		return DETOUR_INSTALLED(KernelStringGet) && DETOUR_INSTALLED(KernelStringGetDesc) &&
+		       uiStringProvider != NULL;
+	}
+
+	DWORD UiStringOverrideHits()
+	{
+		return (DWORD)uiStringHits;
+	}
 
 	void LogMenuPadFrame()
 	{

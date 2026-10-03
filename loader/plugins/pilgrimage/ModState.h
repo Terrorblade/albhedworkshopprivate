@@ -120,6 +120,11 @@ namespace pilgrimage
 		// is a client-side action: a host asked to resync has nobody to ask.
 		volatile LONG requestWorldResync;
 		volatile LONG logWorldSync;
+
+		// ctrl+F4: the host takes or gives back control of whatever menu is up. It
+		// goes out as an ordered command, which needs the session, so it goes through
+		// here like everything else that touches the game or the wire.
+		volatile LONG toggleMenuOverride;
 	};
 
 	struct Telemetry

@@ -248,7 +248,7 @@ It writes a single 0xC0 byte global block, `g_ffxMenuPadBlock` at **0x25D09C0 ..
 | 0x25D09DE | 4 | `g_ffxMenuPadAnalog` | byte0 = left stick X, byte1 = left stick Y, cleared to 0x80808080 |
 | 0x25D09E2 | 2 | `g_ffxMenuPadSynthHeldTrig` low | held mask with dpad bits synthesised from the stick (<0x18 or >0xE8 per axis) |
 | 0x25D09E4 | 2 | high half | the newly-pressed edge of that synthesised mask |
-| 0x25D09E6 | 2 | `g_ffxMenuPadRepeat` | auto-repeat mask. First repeat after 0.4667 s, then every 0.3 s. Start (0x800) and Select (0x100) are excluded from repeat |
+| 0x25D09E6 | 2 | `g_ffxMenuPadRepeat` | auto-repeat mask. First repeat after 0.4667 s, then one every 0.1667 s. NOT every 0.3 s, see the determinism section. Start (0x800) and Select (0x100) are excluded from repeat |
 | 0x25D0A00 | 64 | `g_ffxMenuPadHoldTimer` | 16 floats, seconds held |
 | 0x25D0A40 | 64 | `g_ffxMenuPadLastSampleTime` | 16 floats, last sample timestamp |
 
@@ -258,7 +258,45 @@ Three accessors read it and are called at the top of **every** module exec, 34 c
 - `FFX_MenuSys_GetPressed 0x8BE4B0`
 
 `FFX_MenuSys_ClearPad 0x8BE3D0` zeroes the whole block, and is already called by
-`FFX_Module_Stop`, so the game itself treats a full wipe of this block as a legal operation.
+`FFX_Module_Stop` and `FFX_MenuSys_Enter`, so the game itself treats a full wipe as a legal
+operation **on a module boundary**. It is not free to do every step, and the reason is the next
+section.
+
+**Only the middle of the 192 bytes is input.** The full layout:
+
+```
++0x00  arm byte              FFX_MesWin_SamplePadPort0 bails out when +0x00 and +0x01 are both 0
++0x01  second arm byte
++0x02  holdCount[16]         one byte each, input to the repeat calculation
++0x12  held        +0x14 pressed        +0x16 word10
++0x18  heldSticky  +0x1A pressedSticky  +0x1C word10Sticky
++0x1E  analogX     +0x1F analogY
++0x22  synthHeld   +0x24 synthPressed   +0x26 repeat
++0x40  holdTimer[16]         floats, seconds held
++0x80  lastSampleTime[16]    floats, THIS machine's process clock
+```
+
+The masks are the replication surface. Everything else is an arm flag or local scratch. Two
+consequences that bite a replicator and not the game:
+
+- **The arm bytes.** `FFX_MesWin_SamplePadPort0` bails out entirely when both are zero and zeroes
+  one of them on its way out, so something has to re-arm it every step, and that something is the
+  message window draw pass. The game only ever calls `ClearPad` on a module boundary so this never
+  shows up. A mod calling it every step on the passenger can hold the message window's pad read
+  disarmed, and the symptom is that the passenger cannot advance a dialogue box while the menu
+  looks perfectly fine.
+- **`lastSampleTime` is a local clock.** Zeroing it makes the next frame accumulate the whole
+  process uptime in one step, and copying the raw bytes between two machines feeds a nonsense delta
+  into the accumulator.
+
+So to mean "no buttons this step", write zeroes to the mask fields only and leave `+0x00`, `+0x01`,
+`+0x02..+0x11` and `+0x40..+0xBF` alone. Set the analog bytes to `0x80`, which is centred, rather
+than to 0, which reads as full deflection.
+
+**There are TWO writers of this block, not one.** `FFX_MenuSys_SamplePad 0x8BE500` and
+`FFX_MesWin_SamplePadPort0 0x8B7CD0` write the same globals, and they use different repeat
+constants: the menu is 14 steps then 5, the message window is 7 then 3. Any layer that hooks one
+of them is sharing state with a layer that hooks the other.
 
 **What the read depends on:** nothing but `sub_8CA510()`. If that returns 1 the block is
 filled from a different source (`sub_8CA490/8CA500/8CA520/8CA530/8CA320`) instead of the
@@ -367,11 +405,41 @@ concern rather than a new one.
 
 1. **`FFX_MenuSys_SamplePad` calls `FFX_Input__getTimeSeconds 0x630C60`, which is
    `Phyre_Time_NowSeconds() - dbl_C90278`.** The 16 hold timers at `g_ffxMenuPadBlock+0x40` are
-   seconds, the first repeat fires at 0.4666666388511658 s and every repeat after that at
-   0.29999998 s. **So the auto-repeat mask at `+0x26` is NOT deterministic.** Two machines running
-   the same button on the same simulation step will not agree on when it repeats, because the
-   repeat is paced off wall time and the frame rate is not fixed. The repeat mask has to be part
-   of the replicated payload. It cannot be rederived on the passenger.
+   seconds. **So the auto-repeat mask at `+0x26` is NOT deterministic**, and two machines holding
+   the same button from the same simulation step will not agree on when it repeats.
+
+   **The interval is 0.1667 s, not 0.3 s.** An earlier pass of this doc said 0.3 and that is a
+   misread worth spelling out, because the same mistake is sitting in the message window sampler
+   and in two IDB comments. The loop body is:
+
+   ```
+   if (holdTimer[i] > 0.4666666) { repeat |= bit; holdCount[i] = 9; holdTimer[i] = 0.3; }
+   ```
+
+   0.3 is a **reset value pushed back into the accumulator**, not an interval, and the comparison
+   stays at 0.4666666. So the gap between repeats is `0.4666666 - 0.3 = 0.1666666` s. The
+   `holdCount[i] = 9` is dead: `holdCount` is only ever tested `== 0`, only on a fresh press frame,
+   and a release zeroes it anyway. 14 and 9 are the original PS2 frame counts at 30 fps, since
+   `14/30 = 0.46666` and `9/30 = 0.3` exactly, and the PC port turned the first into a threshold
+   and the second into a seed. That quietly changed the interval from 9 frames to 5. The message
+   window sampler has the same shape with 7 and 4, so its shipped interval is 3 steps rather
+   than 4.
+
+   **Derive it, do not transmit it.** This reverses what this doc used to recommend, and the reason
+   is that both thresholds are exact 30 fps frame counts while the game steps at 29.97, so each one
+   lands within a fraction of a frame of a boundary. At 1/29.97 the first repeat is 14 steps with
+   1.4% of a frame to spare and the interval is 5 steps with 0.5% to spare. At exactly 1/30 both
+   tip over to 15 and 6. The delta being accumulated is real wall clock, so under ordinary frame
+   jitter the interval flutters between 5 and 6 steps **on a single machine**. There is no stable
+   shipped behaviour to be faithful to, which removes the only argument for transmitting it. A
+   step-counted repeat of 14 then 5, derived on both machines from the replicated held mask, is
+   deterministic by construction, costs no payload, and gives a steadier cursor than the shipped
+   game does.
+
+   The Sphere Grid never sees this mask at all. `FFX_Menu_SphereGridReadPad` deliberately does not
+   call `FFX_MenuSys_GetRepeat` and runs its own frame-counted repeat off the sticky held copy, so
+   it is already deterministic given the same held mask.
+
 2. Module 1's **draw** function `sub_8E0BA0` reaches `Phyre_Time_NowSeconds` through
    `sub_8E7D30 -> sub_641410 -> sub_42F690`. Draw-side only, so it affects an animation phase and
    nothing a screen decides. Harmless.
@@ -599,15 +667,22 @@ It survives, and the evidence is stronger than the first pass had.
 - No RNG on any menu decision path, across 3,926 reachable functions.
 - No state scribbling. Every commit goes through about ten named functions, so a divergence has
   somewhere to be caught rather than needing a memory watch.
-- `FFX_MenuSys_ClearPad` already memsets the whole block from `FFX_Module_Stop`, so a fully zeroed
-  block is a state the shipped game produces. Wiping it on a dropped network frame is safe.
+- A zeroed input mask is a state the shipped game produces itself, so "no buttons" is a safe
+  answer on a dropped network frame. Write the mask fields rather than calling
+  `FFX_MenuSys_ClearPad`, which also wipes the arm bytes and the shared repeat state. See the
+  layout note above.
+- The auto-repeat can be derived from a step count instead of transmitted, so the replicated
+  payload is just the masks.
 - The Sphere Grid's own repeat is frame counted, so the screen the requirement cares most about is
   deterministic given the same held mask.
 
 **The three conditions:**
 
-1. **The repeat mask at `+0x26` must be transmitted, not rederived.** It is wall-clock paced. Put
-   it in the payload.
+1. **The repeat mask at `+0x26` must be replaced, and the replacement should be derived from a
+   step count rather than transmitted.** It is wall-clock paced, and unstable enough that it
+   varies on one machine, so there is nothing to be faithful to. Count steps on both machines off
+   the replicated held mask: 14 steps to the first repeat, then every 5. The arithmetic and the
+   reason the old advice was wrong are in the determinism section above.
 2. **The sticky held copy at `+0x18` must be written too.** The Sphere Grid is its only reader and
    ignores `+0x12` entirely.
 3. **Opening the menu is not part of the input block.** The Triangle test lives in `FFX_MainStep`

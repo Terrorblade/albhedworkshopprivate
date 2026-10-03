@@ -100,6 +100,18 @@ namespace pilgrimage
 		// A world snapshot is going out. The host must not advance while the client is
 		// assembling the block, or the client installs a world the host has already left.
 		kHoldWorldTransfer = 1 << 0,
+
+		// Somebody else has the Esc pause menu open. Their FFX_MainStep is not being
+		// called at all, so they have stopped feeding the input ring and this machine
+		// would otherwise either starve at the gate with no explanation or, with the
+		// gate only measuring, run away alone. See menu/PauseSync.h, including why the
+		// release of this one is driven by watching their input start flowing again
+		// rather than by a second command.
+		//
+		// Raised only for a REMOTE pause. A local Esc menu already holds this machine
+		// through the engine's own byte, and a second writer for the same condition
+		// would just be racing animate's own latch.
+		kHoldPauseMenu = 1 << 1,
 	};
 
 	void HoldSimulationFor(int reason);

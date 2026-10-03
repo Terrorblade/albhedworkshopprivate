@@ -38,11 +38,25 @@
 //     Every commit goes through a named function, about ten of them, listed in
 //     addresses\MenuSystem.h. So a divergence has a place to be caught.
 //
-// Caveat one, THE REPEAT MASK IS WALL-CLOCK DERIVED. FFX_MenuSys_SamplePad reads
-// Phyre's process clock to run the 16 auto-repeat timers. Two machines pressing
-// the same button on the same frame will not agree on when it repeats. So the
-// repeat mask is part of the replicated payload. MenuPadFrame carries it, and
-// WriteMenuPad writes it. Do not try to rederive it on the passenger.
+// Caveat one, THE REPEAT MASK IS WALL-CLOCK DERIVED, SO DERIVE IT FROM A STEP
+// COUNT INSTEAD. FFX_MenuSys_SamplePad reads Phyre's process clock to run the 16
+// auto-repeat timers, and that clock is per-process uptime, so two machines are
+// not even in the same epoch.
+//
+// An earlier version of this header said to transmit the mask. That was wrong, and
+// the reason is worth knowing: there is no stable shipped behaviour to be faithful
+// to. The threshold and the reset value are exact 30 fps frame counts and the game
+// runs at 29.97, so under ordinary frame jitter the shipped interval flutters
+// between 5 and 6 steps on a single machine. Transmitting it would faithfully
+// replicate noise, and it would turn every repeat tick of one held direction into
+// its own latency-sensitive wire event.
+//
+// The supported approach is to derive the mask on both machines from the
+// replicated HELD mask and the simulation step counter: fire on the press, then
+// 14 steps, then every 5. MenuPadFrame still carries a repeat field and
+// WriteMenuPad still writes it, because something has to go in the block. See
+// MenuPadBlock::RepeatIntervalSeconds for where the numbers come from, and
+// reversing\MENU_SYNC.md for the derivation and the worked margins.
 //
 // Caveat two, THE STICKY COPY AT +0x18. The Sphere Grid does not use the normal
 // held mask. It reads the sticky copy and runs its own frame-counted repeat.
@@ -152,11 +166,28 @@ namespace ffx
 		const BYTE StickLowThreshold = 0x18;
 		const BYTE StickHighThreshold = 0xE8;
 
-		// The auto-repeat constants, for anyone who wants to predict the mask
-		// rather than replicate it. Doing that is not recommended, see the header
-		// comment, but the numbers should be written down somewhere.
+		// The auto-repeat constants. DERIVING the mask from a step count is the
+		// supported approach, see the long note in the header, and these are the
+		// numbers that derivation comes from.
+		//
+		// FirstRepeatSeconds is a THRESHOLD: FFX_MenuSys_SamplePad accumulates real
+		// elapsed seconds per button and fires the repeat when the accumulator passes
+		// it.
+		//
+		// LaterRepeatSeconds is NOT the later interval, whatever its name suggests. It
+		// is the value the accumulator is RESET TO when a repeat fires. The comparison
+		// is still against FirstRepeatSeconds, so the gap between repeats is the
+		// difference between the two, which is why RepeatIntervalSeconds below is a
+		// sixth of a second and not three tenths.
+		//
+		// Both of these are exact PS2 frame counts at a flat 30 fps, 14/30 and 9/30, and
+		// the port turned the first into a threshold and the second into a seed. That
+		// silently changed the shipped interval from 9 frames to 5. The engine still
+		// writes holdCount[i] = 9 when a repeat fires and that store is dead: holdCount
+		// is only ever tested == 0, and only on a fresh-press frame.
 		const float FirstRepeatSeconds = 0.46666664f;
 		const float LaterRepeatSeconds = 0.29999998f;
+		const float RepeatIntervalSeconds = 0.46666664f - 0.29999998f; // 0.16666666
 	}
 
 	// A module descriptor. 25 of them, reached through Rva::ModuleTable.
@@ -353,7 +384,8 @@ namespace ffx
 		WORD word10Sticky;  // +0x1C
 		WORD synthHeld;     // +0x22, held with the stick folded into the dpad bits
 		WORD synthPressed;  // +0x24
-		WORD repeat;        // +0x26, WALL-CLOCK DERIVED, must be replicated
+		WORD repeat;        // +0x26, wall-clock paced in the engine. DERIVE this from
+		                    // the step counter, do not transmit it. See caveat one.
 		BYTE analogX;       // +0x1E, 0x80 centred
 		BYTE analogY;       // +0x1F, 0x80 centred
 	};
@@ -371,9 +403,32 @@ namespace ffx
 	bool WriteMenuPad(const MenuPadFrame* in);
 
 	// Zeroes the whole 192 bytes and re-centres the analog word, which is exactly
-	// what FFX_MenuSys_ClearPad does. This is a legal state: the game calls the same
-	// wipe from FFX_Module_Stop. Use it on the passenger when a peer frame is
-	// missing, because no input is always safer than stale input.
+	// what FFX_MenuSys_ClearPad does.
+	//
+	// IT CLEARS FAR MORE THAN THE INPUT, and an earlier version of this comment
+	// recommended it for the passenger's "no buttons this step" case. Do not use it
+	// for that. The 0xC0 covers:
+	//
+	//   +0x00, +0x01   the two ARM bytes FFX_MesWin_SamplePadPort0 bails out on. That
+	//                  sampler writes this same block, and it zeroes one of them on
+	//                  its way out, so something has to re-arm it. Clearing them from
+	//                  a replicator every step can hold the message window's pad read
+	//                  disarmed, which stops a dialogue box being advanceable while
+	//                  the menu looks perfectly fine.
+	//   +0x02..+0x11   the 16 hold counters, shared with that sampler
+	//   +0x40..+0xBF   holdTimer and lastSampleTime, 32 floats of THIS MACHINE's
+	//                  process clock. Zeroing lastSampleTime makes the next sample
+	//                  accumulate the entire process uptime into holdTimer in one go.
+	//
+	// The game gets away with it because it only ever calls it on a module boundary,
+	// from FFX_Module_Stop and FFX_MenuSys_Enter. Every step is not a module boundary.
+	//
+	// TO MEAN "NO BUTTONS", write a zeroed MenuPadFrame through WriteMenuPad with both
+	// analog bytes at MenuPadBlock::AnalogCentre. That touches the nine masks and the
+	// two analog bytes and nothing else, which is exactly the right surface, and the
+	// fact that MenuPadFrame has no field for the arm bytes is what makes it safe.
+	// Note the analog bytes must be 0x80 and not 0: zero is full deflection and
+	// synthesises a held Up and Left.
 	bool ClearMenuPad();
 
 	// Convenience readers that answer what a screen would see, including the
@@ -524,6 +579,34 @@ namespace ffx
 	// direction is 1 for L1 (previous), 2 for R1 (next), 0 when idle.
 	bool SphereGridSwitchState(BYTE* outPrevChar, BYTE* outDirection);
 
+	// The Sphere Grid's own decoded pad struct, at MenuWork + 71276, as filled by
+	// FFX_Menu_SphereGridReadPad. Three of the five words, which are the ones a
+	// screen acts on.
+	//
+	// WHY THIS IS WORTH READING RATHER THAN JUST READING THE BLOCK. The grid does not
+	// use FFX_MenuSys_GetRepeat at all. It takes the sticky held copy at pad block
+	// +0x18 and runs its OWN frame-counted repeat, first at 6 frames then every 3, in
+	// counters at MenuWork + 71286 and + 71302. Frame counted rather than clock
+	// counted, so it is deterministic given the same held mask, which is convenient.
+	//
+	// And it ORs in a dpad bit synthesised from the RAW PAD. The analog read goes
+	// through FFX_MenuSys_ReadAnalogByte, which reaches FFX_Pad__readAnalogByte and
+	// never looks at the pad block, with a +-64 threshold rather than the 0x18 / 0xE8
+	// the menu sampler uses. FFX_Menu_SphereGridReadStick 0xA56BD0 does the same for
+	// both axes to pan and zoom the cursor. So THE PAD BLOCK IS NOT THE WHOLE INPUT
+	// SURFACE FOR MODULE 19, and a replicator that overwrites the block still leaves
+	// the grid partly driven by whichever controller is plugged into each machine.
+	//
+	// These three words are where that shows up first, which is why they are exposed:
+	// hash them and a divergence on the grid is caught on the step it happens.
+	//
+	// The two ways to close the hole: enable the ATEL virtual pad while module 19 is
+	// up, which redirects FFX_MenuSys_ReadAnalogByte to an axis set the latch keeps
+	// centred at 0x80, or replicate real stick axes and serve them from a detour.
+	// Neither function can take a 5-byte detour as it stands, both have a rel32 call
+	// inside the first nine bytes.
+	bool SphereGridPadState(WORD* outHeld, WORD* outPressed, WORD* outHeldOrRepeat);
+
 	// The grid's pending node cost in sphere levels, and the node the cursor is on.
 	// Reading these every frame is how a detector notices the two machines are
 	// pointing at different nodes before either one commits.
@@ -533,6 +616,243 @@ namespace ffx
 	// Is the Sphere Grid actually up, which is module 19 stepping rather than merely
 	// registered.
 	bool SphereGridActive();
+
+	// ---------------------------------------------------------------------------
+	// THE CONFIG SCREEN'S ROW TABLE, which is the one screen a mod can add to.
+	//
+	// Module 10 draws its rows out of two plain globals: a POINTER to an array of
+	// row-object POINTERS, and a row COUNT that is an ordinary int rather than a
+	// compile-time constant. Both are in the zero-filled tail of .data, both are
+	// writable, and the game rewrites both from FFX_Menu_ConfigSelectRowTable. So a
+	// mod can point them at a longer array of its own and get native rows, drawn by
+	// the game, driven by the game's own cursor.
+	//
+	// WHO CALLS WHAT, because the install timing falls straight out of it:
+	//
+	//   FFX_Menu_ConfigSelectRowTable  module 10's PREPARE slot. FFX_Module_Register
+	//                                  runs it once per FFX_Module_SwitchGameMode,
+	//                                  which is once per MENU OPEN, not once per
+	//                                  entry to the Config screen. It picks one of
+	//                                  four arrays on language and an asset check and
+	//                                  sets the count to 8.
+	//   FFX_Menu_ConfigInitRowValues   module 10's INIT slot, so it runs on every
+	//                                  entry to the Config screen. It resets the
+	//                                  cursor to 0 and calls EVERY row's getter to
+	//                                  seed that row's current value. It walks the
+	//                                  live count, so appended rows are seeded by the
+	//                                  game for free.
+	//
+	// Which means nothing has to be detoured to install rows. Notice that the table
+	// has gone back to a shipped array, and re-apply. There is plenty of time: the
+	// earliest the player can reach the Config screen is several steps after the
+	// menu opened.
+	//
+	// A DETOUR ON FFX_Menu_ConfigSelectRowTable IS NOT POSSIBLE ANYWAY. That function
+	// has no prologue at all. Its first instruction is E8 9B 0F FE FF, a rel32 call,
+	// which is exactly the five bytes a jmp wants, so workshop/Detour.h refuses it
+	// and is right to.
+	//
+	// THREE THINGS THAT WILL BITE, all read off the disassembly rather than guessed:
+	//
+	//   1. g_ffxMenuConfigCursorRow is a SIGNED CHAR and nothing clamps it against a
+	//      count that shrank. So never shorten the array while the Config screen is
+	//      up. Put the table back when the screen is gone, or at the very least set
+	//      the cursor to 0 in the same breath. SetConfigRowTable does the second for
+	//      you and says so.
+	//   2. Up and Down loop until they land on a row whose selectable flag is 1. If
+	//      no row is selectable the loop never ends and the game is gone. Keep at
+	//      least one.
+	//   3. Row pitch is 740 / count from y = 220, and the glyphs do not shrink with
+	//      it. Eight rows is the shipped 92 pixels each. Thirteen is 57, which still
+	//      clears the 18 pixel glyph height. Somewhere past twenty they touch.
+	// ---------------------------------------------------------------------------
+
+	// One row object, 44 bytes. Field offsets rather than a struct, to match the rest
+	// of this file and because the value-name ids are an array whose stride is not
+	// the element size.
+	namespace ConfigRow
+	{
+		const DWORD Unused00 = 0x00;     // int, 0 in all ten shipped rows
+		const DWORD ValueCount = 0x04;   // int, how many settings the row cycles
+		const DWORD CurrentValue = 0x08; // int, seeded from the getter
+		const DWORD Selectable = 0x0C;   // int, Up/Down skip anything that is not 1
+		const DWORD Getter = 0x10;       // void (__cdecl *)(row), must not be null
+		const DWORD Setter = 0x14;       // void (__cdecl *)(row)
+		const DWORD LabelId = 0x18;      // WORD, a group 7 string id
+		const DWORD Unknown1A = 0x1A;    // WORD, 3 in all ten shipped rows, unread
+		const DWORD ValueIds = 0x1C;     // WORD each, STRIDE 4, count = ValueCount
+		const DWORD ValueIdStride = 4;
+		const DWORD Size = 0x2C;
+	} // namespace ConfigRow
+
+	// How many value-name ids a 44 byte row holds: +0x1C to +0x28 at stride 4.
+	const int kConfigRowMaxValues = 4;
+
+	// What the shipped game has. Eight rows drawn from a ten row pool at 0xC5A39C,
+	// and all four candidate arrays hold the same eight pointers in the same order in
+	// this build, so the language and asset branches are vestigial here.
+	const int kConfigShippedRowCount = 8;
+
+	// The cursor is a signed char, so this is a hard ceiling rather than taste.
+	const int kConfigMaxRowCount = 100;
+
+	// A row callback. Both slots take the row pointer and nothing else.
+	typedef void(__cdecl* ConfigRowFn)(void* row);
+
+	// The live row count and the live array. Both report 0 and NULL before the menu
+	// has been opened once, because the globals start zeroed and only
+	// FFX_Menu_ConfigSelectRowTable fills them.
+	int ConfigRowCount();
+	void** ConfigRowTable();
+
+	// One row, or NULL. Bounds checked against the live count, which the game's own
+	// FFX_Menu_ConfigRowAt does not do.
+	void* ConfigRowAt(int index);
+
+	// The cursor. Read as a signed char by the game, so this reports -1 when it is
+	// not readable rather than 255.
+	int ConfigCursorRow();
+	bool SetConfigCursorRow(int index);
+
+	// Is the live table one of the game's own four arrays, which is to say has nobody
+	// replaced it. True also when it is NULL, because an empty table is the game's
+	// state too.
+	bool ConfigRowTableIsShipped();
+
+	// Copies the live array's pointers into out. This is how a mod builds its own
+	// longer array without caring which of the four the game picked, and without ever
+	// writing to a game row. Returns false and writes nothing when the live table is
+	// not readable.
+	bool CopyConfigRowTable(void** out, int maxRows, int* outCount);
+
+	// Points the two globals at rows and count. Pass the saved originals back to
+	// restore. rows may be NULL only when count is 0.
+	//
+	// It CLAMPS g_ffxMenuConfigCursorRow into the new count, because nothing in the
+	// game does and a cursor left past the end is an out of bounds row-pointer read
+	// on the next Up or Down press. That does not make shrinking the table while the
+	// screen is up safe, it only makes it survivable.
+	bool SetConfigRowTable(void** rows, int count);
+
+	// Typed access to one row's mutable fields. They work on a game row as well as on
+	// a mod's own, but see the warning on BuildConfigRow.
+	bool ConfigRowValueCount(const void* row, int* out);
+	bool ConfigRowCurrentValue(const void* row, int* out);
+	bool ConfigRowSelectable(const void* row, int* out);
+	bool SetConfigRowCurrentValue(void* row, int value);
+	bool SetConfigRowSelectable(void* row, bool selectable);
+	WORD ConfigRowLabelId(const void* row);
+	WORD ConfigRowValueId(const void* row, int value);
+
+	// Fills a 44 byte row object a mod owns. valueIds must hold valueCount entries
+	// and valueCount must be 0 to kConfigRowMaxValues. A valueCount of 0 draws the
+	// label and the separator and no values, which is what a header row wants.
+	//
+	// NEVER POINT THIS AT A GAME ROW. The eight shipped rows are writable and
+	// overwriting one would persist for the life of the process, so the worst failure
+	// stops being a missing row and starts being a corrupted Config screen.
+	bool BuildConfigRow(void* row, int valueCount, bool selectable, ConfigRowFn getter,
+	    ConfigRowFn setter, WORD labelId, const WORD* valueIds);
+
+	// Is module 10 actually stepping, as opposed to merely registered. The question to
+	// ask before changing the table.
+	bool ConfigScreenActive();
+
+	// ---------------------------------------------------------------------------
+	// FFX TEXT, so a mod can put its own words on screen.
+	//
+	// FFX_Text_DrawString 0x905AB0 is the only text entry the in-game menu uses and it
+	// takes a plain caller-owned char buffer, so arbitrary text is drawable once the
+	// encoding is known. It is known, and it is not ASCII.
+	//
+	// THE ENCODING. byte = 0x30 + glyph index, and the glyph table is
+	//
+	//   index  0..9   '0'..'9'
+	//   index 10..31  space ! " # $ % & ' ( ) * + , - . / : ; < = > ?
+	//   index 32..57  'A'..'Z'
+	//   index 58..63  [ \ ] ^ _ `
+	//   index 64..89  'a'..'z'
+	//   index 90..93  { | } ~
+	//
+	// So it is ASCII order with the ten digits lifted to the front and '@' dropped. A
+	// space is 0x3A, '-' is 0x47, ':' is 0x4A, 'A' is 0x50 and 'a' is 0x70. Terminate
+	// with 0x00.
+	//
+	// HOW THAT WAS ESTABLISHED, because an encoding nobody can check is worthless.
+	// FFX_Text_DecodeGlyph 0x8B7240 computes the glyph index as byte - 0x30 and the
+	// sheet coordinates from it, and its fallback branch for an unmapped low byte
+	// draws glyph 10, which is the space. Then the table was round-tripped against the
+	// shipped /FFX_Data/GameData/PS3Data/LocKit/FFX_LOC_KIT_PS3_US.BIN, whose lines
+	// the PC port hands straight to FFX_Text_DrawString: lines 461, 462 and 464 are
+	// "Music", "Original" and "Arranged", and all three encode byte for byte.
+	//
+	// WHAT NOT TO DO. Bytes below 0x30 are control codes and most of them eat a
+	// following byte, so never hand raw ASCII to the draw. 0x00 to 0x03 end the line,
+	// 0x0B is the button-icon escape and takes an icon id in the next byte. And a RUN
+	// of 0x47, the dash, is collapsed into one stretched glyph, which is how the game
+	// draws a horizontal rule, so "--" does not come out as two dashes.
+	// ---------------------------------------------------------------------------
+
+	// How many bytes EncodeFfxText needs for this string, terminator included.
+	int FfxTextEncodedLength(const char* ascii);
+
+	// Encodes ASCII into out. Characters outside 0x20..0x7E, and '@' which has no
+	// glyph, become a space rather than being dropped, so the result is always the
+	// same length as the input and a bad character shows up instead of silently
+	// shifting the text along. Returns false when out is too small, and then leaves
+	// out as a valid empty string rather than a truncated one.
+	bool EncodeFfxText(const char* ascii, char* out, int outBytes);
+
+	// ---------------------------------------------------------------------------
+	// SUPPLYING YOUR OWN UI STRINGS.
+	//
+	// Every label on the Config screen is a group 7 string id looked up at draw time,
+	// so a mod that answers for ids of its own gets the native draw to do the whole
+	// row: label, value names, greying, centring and the help line.
+	//
+	// THERE ARE TWO LOOKUPS AND A MOD HAS TO ANSWER BOTH. One kernel table row is four
+	// WORD offsets, { name lang0, name lang1, description lang0, description lang1 }.
+	// FFX_KernelString_Get 0x78FCF0 reads the first pair and is what
+	// FFX_Menu_GetUiString calls. FFX_KernelString_GetDescription 0x78FBB0 reads the
+	// second pair and is what FFX_Menu_GetUiStringDesc calls for the help line under
+	// the selected row. Both are detoured here and both pass everything through
+	// unless the provider answers.
+	//
+	// FFX_Menu_GetUiString itself CANNOT be detoured: its fourth byte starts a rel32
+	// call. The two functions under it can, 55 / 8B EC / 8B 45 08, six whole bytes
+	// with nothing position dependent among them.
+	//
+	// PICK IDS WELL ABOVE THE REAL TABLE. The id is masked to 12 bits, so the usable
+	// space is 0 to 4095, and the shipped Config rows use 4 to 0x25. Out of range is
+	// not dangerous by itself, because FFX_KernelTable_GetRow falls back to the first
+	// range descriptor rather than reading wild, but an id that collides with a real
+	// one means the provider has quietly replaced a game string somewhere else.
+	//
+	// The provider runs ON THE GAME THREAD INSIDE THE DRAW. Keep it to filling a
+	// static buffer. Return NULL for anything it does not own, which has to include
+	// every group other than the one it reserved ids in.
+	//
+	// THE RETURNED POINTER HAS TO OUTLIVE THE FRAME. The label is drawn immediately,
+	// but FFX_Menu_SetHelpString keeps the description POINTER rather than copying it
+	// and the bottom line is drawn from it later. A static buffer per id is the simple
+	// answer, and no buffer may be shared by two ids that are both live in one frame.
+	// ---------------------------------------------------------------------------
+
+	// group is the kernel string group, 7 for the in-game menu's UI strings. id has
+	// already been masked to 12 bits. wantDescription is false for the label and true
+	// for the help line. Return an FFX-ENCODED, NUL terminated string, or NULL to let
+	// the game answer.
+	typedef const char*(__cdecl* UiStringProviderFn)(int group, int id, bool wantDescription);
+
+	// Installs both detours. Idempotent, and replacing the provider on a later call is
+	// allowed. Returns false when either prologue does not match, and in that case
+	// NEITHER detour is left installed.
+	bool InstallUiStringOverride(UiStringProviderFn provider);
+	bool UiStringOverrideInstalled();
+
+	// How many lookups the provider has answered, so a readout can say whether the
+	// mechanism is doing anything at all.
+	DWORD UiStringOverrideHits();
 
 	// ---------------------------------------------------------------------------
 	// Diagnostics

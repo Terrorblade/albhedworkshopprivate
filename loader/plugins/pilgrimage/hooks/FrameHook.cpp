@@ -19,7 +19,10 @@
 #include "ffx/RenderProbe.h"
 #include "ffx/Walkmesh.h"
 #include "hooks/Hotkeys.h"
+#include "menu/CoopConfig.h"
 #include "menu/EscMenuRows.h"
+#include "menu/MenuSync.h"
+#include "menu/PauseSync.h"
 #include "net/LockstepLink.h"
 #include "net/NetLink.h"
 #include "workshop/Log.h"
@@ -152,7 +155,16 @@ namespace pilgrimage
 				LogBoosterSync();
 				LogBattleSync();
 				LogDialogueSync();
+				LogMenuSync();
+				LogCoopConfig();
+				LogPauseSync();
 			}
+
+			// The host's menu control override. Refused with a log line on a client and
+			// with no session, because a silent no-op on a keypress reads as a broken
+			// mod.
+			if (InterlockedExchange(&requests.toggleMenuOverride, 0))
+				RequestMenuControlOverride();
 			if (InterlockedExchange(&requests.requestWorldResync, 0))
 				RequestWorldFromHost(workshop::kWorldRequestManual);
 
@@ -208,10 +220,25 @@ namespace pilgrimage
 			PublishLocalIdentity();
 			StepNetworking(frame);
 
+			// Before ServiceLockstep, because that is the one owner of the hold byte and
+			// this is what decides whether a pause reason is raised. The frame path rather
+			// than the step path on purpose: a remote pause has to be noticed and released
+			// while this machine is not stepping at all, which is the whole point. See
+			// menu/PauseSync.h.
+			StepPauseSync();
+
 			// After the session has pumped, so a hold decision is made with this frame's
 			// arrivals already counted. self is the FFXApplication, which is where the
 			// stall byte lives.
 			ServiceLockstep(self);
+
+			// AFTER ServiceLockstep, which is what drives the gate, so anything the gate
+			// applied this frame is already in. This call is the housekeeping half: the
+			// gate calls the same function once per simulation step for the ordered
+			// bindings, but it returns early with no clock running, so putting the
+			// game's own Config row table back when a session ends can only happen
+			// here. See the note in menu/CoopConfig.h.
+			ServiceCoopConfigStep();
 
 			// The Esc menu's pages are built once when its singleton is constructed, so
 			// the row test has to watch for that rather than being able to act when the

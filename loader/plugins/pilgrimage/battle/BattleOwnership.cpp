@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "coop/Ownership.h"
 #include "ffx/Battle.h"
 #include "ffx/GameState.h"
 #include "net/NetLink.h"
@@ -19,71 +20,44 @@ namespace pilgrimage
 	namespace
 	{
 
-		// The explicit bindings, one per peer, -1 for "use the default". Indexed by
-		// peer id and sized by MaxPlayers rather than by kBattleOwnerSlots, because a
-		// peer id can be any of the former even though only three can own a unit.
-		int explicitChar[MaxPlayers];
-
 		char g_status[160] = "battle: not syncing";
 
-		// Is this peer actually in the session.
+		// THE TABLE ITSELF LIVES IN coop/Ownership.h, and it used to live here.
 		//
-		// PeerReachable is false for ourselves by design, so the local peer has to be
-		// added back. Both machines compute this from their own peer table, and those
-		// tables agree except during a join or a drop. That window is the one place the
-		// two machines can briefly disagree about who owns slot 2, and the cost is one
-		// battle turn where either both machines suppress the menu or neither does. It
-		// is called out in reversing\BATTLE_SYNC.md rather than papered over, because
-		// the fix is an ordered ownership command and not a cleverer predicate.
-		bool PeerPresent(Session* session, int peer)
-		{
-			if (!session || peer < 0 || peer >= MaxPlayers)
-				return false;
-			if ((uint8_t)peer == session->LocalPeer())
-				return true;
-			return session->PeerReachable((uint8_t)peer);
-		}
+		// It moved because it turned out not to be a battle question. The sphere grid
+		// asks the same thing, so does the equipment screen, and two tables that are
+		// meant to agree is a bug waiting for a quiet afternoon. What stays here is the
+		// part that really is battle's own: turning a BATTLE UNIT index into the
+		// character identity the table is keyed on, and knowing that the battle roster
+		// is the authority on slots while a battle is running.
+		//
+		// The join and drop window is unchanged by the move and is still called out in
+		// reversing\BATTLE_SYNC.md: the two machines can briefly disagree about who owns
+		// slot 2, and the cost is one battle turn where either both suppress the menu or
+		// neither does. The fix is an ordered ownership command, not a cleverer
+		// predicate.
 
 	} // namespace
 
 	void ResetBattleOwnership()
 	{
-		for (int i = 0; i < MaxPlayers; ++i)
-			explicitChar[i] = -1;
+		ResetOwnership();
 		strcpy_s(g_status, sizeof(g_status), "battle: ownership on the default, peer N drives slot N");
 	}
 
 	bool SetBattleOwner(int peer, int charIndex)
 	{
-		if (peer < 0 || peer >= MaxPlayers)
-			return false;
+		// The unit level check stays here, because "is this a thing a battle unit index
+		// can mean" is battle's question. The exclusivity and the table are shared.
 		if (charIndex >= 0 && !IsAllyUnit(charIndex))
 			return false;
 
-		// Two peers bound to the same character would be the double-commit failure, so
-		// the binding is exclusive: whoever takes a character takes it off whoever had
-		// it. Done here rather than refused, because the caller asking for a swap is
-		// the normal case and a refusal would leave the table half changed.
-		if (charIndex >= 0)
-		{
-			for (int other = 0; other < MaxPlayers; ++other)
-			{
-				if (other != peer && explicitChar[other] == charIndex)
-					explicitChar[other] = -1;
-			}
-		}
-
-		explicitChar[peer] = charIndex;
-		Log("battle: peer %d is now bound to %s", peer,
-		    charIndex >= 0 ? CharacterName((BYTE)charIndex) : "nothing, back on the default");
-		return true;
+		return SetCharacterOwner(peer, charIndex);
 	}
 
 	int BattleOwnerCharacter(int peer)
 	{
-		if (peer < 0 || peer >= MaxPlayers)
-			return -1;
-		return explicitChar[peer];
+		return OwnerCharacter(peer);
 	}
 
 	int BattleOwnerOfUnit(int unitIndex)
@@ -101,7 +75,7 @@ namespace pilgrimage
 		//    so it falls through to the default instead.
 		for (int peer = 0; peer < MaxPlayers; ++peer)
 		{
-			if (explicitChar[peer] == unitIndex && PeerPresent(session, peer))
+			if (OwnerCharacter(peer) == unitIndex && PeerInSession(peer))
 				return peer;
 		}
 
@@ -110,7 +84,7 @@ namespace pilgrimage
 		//    for an aeon and the enemy index for an enemy, and both would look like a
 		//    perfectly good slot number.
 		const int slot = BattleSlotOfUnit(unitIndex);
-		if (slot >= 0 && slot < kBattleOwnerSlots && PeerPresent(session, slot))
+		if (slot >= 0 && slot < kBattleOwnerSlots && PeerInSession(slot))
 			return slot;
 
 		// 3. Anything left over goes to the host. Slot 2 in a two player game, an aeon,
@@ -200,14 +174,9 @@ namespace pilgrimage
 			    LocalOwnsUnit(unit) ? "  (this machine)" : "");
 		}
 
-		for (int peer = 0; peer < MaxPlayers; ++peer)
-		{
-			if (explicitChar[peer] >= 0)
-			{
-				Log("peer %d is explicitly bound to %s, which beats the slot default",
-				    peer, CharacterName((BYTE)explicitChar[peer]));
-			}
-		}
+		// The bindings themselves, and anything else about the shared table, come from
+		// the layer that owns it.
+		LogOwnership();
 	}
 
 } // namespace pilgrimage

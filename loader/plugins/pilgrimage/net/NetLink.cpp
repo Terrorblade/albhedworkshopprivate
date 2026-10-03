@@ -2,6 +2,9 @@
 
 #include "net/LockstepLink.h"
 #include "battle/BattleSync.h"
+#include "menu/CoopConfig.h"
+#include "menu/MenuSync.h"
+#include "menu/PauseSync.h"
 #include "world/BoosterSync.h"
 #include "world/DialogueSync.h"
 #include "world/WorldSync.h"
@@ -181,7 +184,33 @@ namespace pilgrimage
 		if (session.State() == SessionIdle && !active)
 			return;
 
-		EndLockstep();  // before the goodbye, so nothing is left holding the game
+		EndLockstep(); // before the goodbye, so nothing is left holding the game
+
+		// Every subsystem, explicitly, here. StepNetworking's "was active, now is not"
+		// branch never runs on this path: that function returns early once the state is
+		// Idle and session.Stop() below makes it Idle in the same frame. So this is the
+		// only place these get stopped when the user disconnects on purpose, and the
+		// list has to stay in step with the one in StepNetworking.
+		//
+		// For the pause hold that is not a tidiness point. A hold reason left raised has
+		// ServiceLockstep re-asserting the stall byte every frame with no clock left to
+		// ever lower it, which is the game frozen for good. StopPauseSync drops it, and
+		// StopMenuSync hands the local stick back to the sphere grid.
+		//
+		// Menu and pause go LAST for that reason, after anything that might still raise
+		// a hold.
+		StopWorldSync();
+		StopBoosterSync();
+		StopBattleSync();
+		StopDialogueSync();
+
+		// NOT StopCoopConfig. Those rows are settings and they stay available with no
+		// session, so that someone can set up who plays whom before a join and so this
+		// is testable alone. Retiring them here would take the screen away the moment a
+		// link dropped, which is exactly when a player wants to look at it.
+		StopMenuSync();
+		StopPauseSync();
+
 		session.Stop(); // sends a goodbye first, so the other end does not wait
 		if (active)
 		{
@@ -256,6 +285,13 @@ namespace pilgrimage
 			StartBoosterSync();
 			StartBattleSync();
 			StartDialogueSync();
+			StartMenuSync();
+			StartPauseSync();
+
+			// After StartMenuSync, because the Config rows read MenuDriver to work out
+			// which machine should send an ask and MenuControlOverrideHeld to show the
+			// override row's state. Both come from MenuSync.
+			StartCoopConfig();
 		}
 		if (after != SessionActive && before == SessionActive)
 		{
@@ -264,19 +300,37 @@ namespace pilgrimage
 			StopBoosterSync();
 			StopBattleSync();
 			StopDialogueSync();
-		}
 
-		// Pace the transfer and, on a client, install a completed one.
-		if (after == SessionActive)
-			ServiceWorldSync();
+			// NOT StopCoopConfig, same reason as in StopNetworking. The rows are
+			// settings and they outlive the session.
+
+			// Menu and pause last, because StopPauseSync is what drops the hold reason
+			// and nothing after it should be able to raise one again. Leaving the game
+			// frozen because a link went away mid-pause is the worst outcome here.
+			StopMenuSync();
+			StopPauseSync();
+		}
 
 		// The clock runs only while there is a session to run it against, AND only once
 		// both ends are simulating the same world. On the host that is immediately. On a
 		// client it is after the snapshot has been installed, which is why this is a
 		// per-frame check and not a one-shot on the transition: the clock starts on
 		// whichever frame the world turns up.
+		//
+		// THIS GOES BEFORE ServiceWorldSync, deliberately. The host stamps its snapshot
+		// with clock->CurrentStep(), and that is the number the joiner starts its own
+		// clock at, so a snapshot taken while the host's clock was still unstarted would
+		// carry step 0 and seed the joiner at 1 against a host in the thousands. The
+		// host's WorldSyncReady is true from its first active frame, so ordering the
+		// start first means the clock is always up before anything can read a step off
+		// it. On a client this costs one frame, because the frame the install finishes
+		// on had WorldSyncReady false at the top, and one frame is free here.
 		if (after == SessionActive && !LockstepRunning() && WorldSyncReady())
 			BeginLockstep();
+
+		// Pace the transfer and, on a client, install a completed one.
+		if (after == SessionActive)
+			ServiceWorldSync();
 
 		// The session line, then the link quality underneath it when Steam can tell
 		// us. GetP2PSessionState is documented as debug-only, so it goes on screen

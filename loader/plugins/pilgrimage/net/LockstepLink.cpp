@@ -12,7 +12,11 @@
 #include "workshop/Lockstep.h"
 #include "workshop/Log.h"
 #include "world/RemotePlayers.h"
+#include "world/WorldSync.h"
 #include "battle/BattleSync.h"
+#include "menu/CoopConfig.h"
+#include "menu/MenuSync.h"
+#include "menu/PauseSync.h"
 #include "world/BoosterSync.h"
 #include "world/DialogueSync.h"
 #include "world/TriggerPass.h"
@@ -142,6 +146,25 @@ namespace pilgrimage
 			// anything decided afterwards would arrive a step late.
 			PrepareDialogueInput();
 
+			// And the same for the in-game menu, for the same reason:
+			// FFX_MenuSys_SamplePad is reached from FFX_MainStep too. This one also
+			// applies the ordered menu commands, because an open replayed here is
+			// consumed by FFX_MenuSys_PollOpenAndStep inside this very step, which is
+			// what puts both machines in the menu on the same step number.
+			PrepareMenuInput();
+
+			// And the co-op Config rows, which carry the ownership bindings. Same
+			// reason again: an ordered binding has to be consumed on the exact step it
+			// was stamped for, and a frame-path consumer drops one on every catch-up
+			// step. For ownership that is the unrecoverable split, not a dropped frame.
+			ServiceCoopConfigStep();
+
+			// A peer's pause, raised on the exact step the host named. The RELEASE is
+			// not here, it is in StepPauseSync on the frame path, because by the time
+			// anybody is paused there are no steps left to consume a command on. See
+			// menu/PauseSync.h.
+			ApplyPauseCommands();
+
 			const StepGateResult gate = clock.StepGate();
 			if (gate != GateWaiting)
 				return true;
@@ -229,14 +252,42 @@ namespace pilgrimage
 			return;
 		}
 
-		// Start from the game's own step counter rather than from zero, so the two
-		// numbers never have to be translated and a log line from either layer means
-		// the same thing.
-		DWORD step = 0;
-		if (!MainStepCounter(&step))
-			step = StepCount();
+		// WHERE THE FIRST STEP NUMBER COMES FROM, which is not a cosmetic choice.
+		//
+		// The step number is a SHARED LABEL, not a local counter. Ordered commands are
+		// stamped with an absolute step by whoever issues them and matched against the
+		// other machine's clock, and peers exchange input keyed by step, so the two
+		// clocks have to agree on what to call a given step or none of it lines up.
+		//
+		// The host is the authority and seeds from the game's own g_ffxMainStepCounter,
+		// so its log lines from either layer mean the same thing. A CLIENT MUST NOT do
+		// that: its counter is a different process's and would be offset by an arbitrary
+		// amount forever. It adopts the host's number instead, which it already has,
+		// because the host froze itself the instant it took the snapshot and is still
+		// sitting on that same step when the client gets here.
+		//
+		// The debugging cost is worth stating: on a client these step numbers will NOT
+		// match that machine's own g_ffxMainStepCounter. They match the host's.
+		uint32_t step = 0;
+		if (session->IsHost())
+		{
+			DWORD local = 0;
+			if (!MainStepCounter(&local))
+				local = StepCount();
+			step = (uint32_t)local;
+		}
+		else if (!AppliedHostStep(&step))
+		{
+			// Not startable yet rather than startable wrong. NetLink only calls this
+			// once WorldSyncReady is true, so reaching here means an installed snapshot
+			// carried no host step, and starting anyway would desync silently.
+			Log("lockstep: this client has no host step to start from, so the clock is "
+			    "NOT starting. A clock seeded from our own counter would put every "
+			    "ordered command on a step the host never runs.");
+			return;
+		}
 
-		clock.Start(session, (uint32_t)step);
+		clock.Start(session, step);
 	}
 
 	void EndLockstep()
@@ -358,6 +409,16 @@ namespace pilgrimage
 			}
 		}
 
+		// While a menu is up, check every step instead of every thirtieth. A menu
+		// desync reproduces, it happens while nothing else in the game is moving, and
+		// the two machines are generating no other traffic, so there is no reason to
+		// find out up to a second late. If the two machines disagree about whether a
+		// menu is open then they are checking at different rates, and the comparison
+		// only happens on steps they both hashed, which is still every thirtieth. That
+		// is the case where the disagreement IS the desync, so it gets caught either
+		// way, just a little later.
+		clock.SetChecksumInterval(MenuWantsPerStepChecksum() ? 1 : DefaultChecksumInterval);
+
 		// Feed the desync detector. Lockstep only sends one on its own interval, so
 		// offering it every frame costs a hash and nothing else. Playtime ticks on
 		// its own every frame, so it is excluded from the combined value by
@@ -369,10 +430,28 @@ namespace pilgrimage
 			// uint32_t. They are the same width here, but copying rather than casting
 			// means the day one of them changes is a compile error instead of a
 			// checksum that quietly means nothing.
-			uint32_t buckets[kBucketCount];
+			uint32_t buckets[kBucketCount + kMenuHashRegions];
 			for (int i = 0; i < (int)kBucketCount; ++i)
 				buckets[i] = (uint32_t)hash.bucket[i];
-			clock.SubmitChecksum((uint32_t)hash.combined, buckets, (int)kBucketCount);
+
+			// The menu's own replicable state goes in the spare slots past the 13 save
+			// block buckets. ChecksumPayload carries 16, so this needs no protocol
+			// change, and HandleChecksum reports "first difference in region N", which
+			// for N >= 13 means the menu rather than the save block.
+			//
+			// It is mixed into the combined value as well, not just carried alongside,
+			// because the combined value is the only thing HandleChecksum compares. A
+			// region that is sent but not folded in would never trigger a report.
+			DWORD menuRegions[kMenuHashRegions];
+			const int menuCount = MenuHashRegions(menuRegions, kMenuHashRegions);
+			uint32_t combined = (uint32_t)hash.combined;
+			for (int i = 0; i < menuCount; ++i)
+			{
+				buckets[(int)kBucketCount + i] = (uint32_t)menuRegions[i];
+				combined ^= (uint32_t)menuRegions[i];
+			}
+
+			clock.SubmitChecksum(combined, buckets, (int)kBucketCount + menuCount);
 		}
 	}
 

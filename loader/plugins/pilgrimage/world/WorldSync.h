@@ -58,6 +58,19 @@ namespace pilgrimage
 	// input is being applied to.
 	bool WorldSyncReady();
 
+	// The host's lockstep step number at the instant it snapshotted the world, as
+	// received and installed by this client. False when there is nothing valid, which
+	// is the case on a host and on a client that has not installed a snapshot.
+	//
+	// THIS IS WHAT A CLIENT MUST START ITS LOCKSTEP CLOCK AT. The step number is not a
+	// local counter, it is a shared label, and every ordered command stamps one machine
+	// and is matched on the other. The host holds its own simulation from the moment it
+	// takes the snapshot until the APPLIED reply comes back, so the number it sent is
+	// still the step it is about to run when the client gets here. Seeding from this
+	// machine's own g_ffxMainStepCounter instead, which is what used to happen, left the
+	// two clocks offset by an arbitrary amount for the life of the session.
+	bool AppliedHostStep(uint32_t* out);
+
 	// Client side. Ask the host for its world. Harmless to call when already waiting, which
 	// is why a stalled transfer can be retried by just asking again.
 	bool RequestWorldFromHost(int reason);

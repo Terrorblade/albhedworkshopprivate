@@ -8,7 +8,10 @@
 #include "clones/CloneSpawner.h"
 #include "diag/HashProbe.h"
 #include "diag/InteractProbe.h"
+#include "menu/CoopConfig.h"
 #include "menu/EscMenuRows.h"
+#include "menu/MenuSync.h"
+#include "menu/PauseSync.h"
 #include "net/LockstepLink.h"
 #include "world/Arrival.h"
 #include "battle/BattleSync.h"
@@ -253,6 +256,9 @@ namespace pilgrimage
 			    "boosters  : %s\r\n"
 			    "battle    : %s\r\n"
 			    "dialogue  : %s\r\n"
+			    "menu      : %s\r\n"
+			    "co-op cfg : %s\r\n"
+			    "pause     : %s\r\n"
 			    "interact  : %s\r\n"
 			    "menu row  : %s\r\n"
 			    "pool      : %ld live of %ld slots\r\n"
@@ -288,6 +294,9 @@ namespace pilgrimage
 			    BoosterSyncStatus(),
 			    BattleSyncStatus(),
 			    DialogueSyncStatus(),
+			    MenuSyncStatus(),
+			    CoopConfigStatus(),
+			    PauseSyncStatus(),
 			    InteractProbeStatus(),
 			    EscMenuRowTestStatus(),
 			    telemetry.poolLive, telemetry.poolTotal,

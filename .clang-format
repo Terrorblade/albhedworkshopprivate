@@ -1,0 +1,28 @@
+# Canonical code style for Al Bhed Workshop and Pilgrimage Together.
+# Taken verbatim from HoTDLL so the two projects read the same: tabs, Allman braces.
+Language: Cpp
+BasedOnStyle: LLVM
+UseTab: ForIndentation
+TabWidth: 4
+IndentWidth: 4
+ContinuationIndentWidth: 4
+ColumnLimit: 0
+BreakBeforeBraces: Allman
+PointerAlignment: Left
+DerivePointerAlignment: false
+NamespaceIndentation: All
+IndentCaseLabels: false
+AccessModifierOffset: -4
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Empty
+AllowShortLambdasOnASingleLine: None
+LambdaBodyIndentation: OuterScope
+AlignAfterOpenBracket: DontAlign
+SortIncludes: false
+SortUsingDeclarations: Never
+SpaceBeforeParens: ControlStatements
+Cpp11BracedListStyle: false
+MaxEmptyLinesToKeep: 1
+FixNamespaceComments: false

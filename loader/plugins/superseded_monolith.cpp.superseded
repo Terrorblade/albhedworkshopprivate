@@ -1,0 +1,2492 @@
+// ffxcoop_clone_plugin.cpp
+//
+// FFXCoop phase 1 prototype: spawn a second Tidus and drive it from the arrow
+// keys, with a small control window for spawning, tuning and watching state.
+//
+// Build it with ..\build_clone.bat and drop the DLL into
+// <game dir>\FFXCoop\plugins\. Then in game:
+//
+//     F9            spawn the clone at player 1's position
+//     F10           despawn it
+//     arrow keys    walk it
+//     shift         run
+//     F11           show or hide the control window
+//
+// WHAT THIS IS BUILT ON
+//   reversing\PHASE1_CLONE.md is the research this implements, and it is the
+//   place to look when something here needs changing. The short version is that
+//   movement in this game is already fully per-character: everything below the
+//   input layer takes a CHR pointer and reads no player global. So we do not
+//   reimplement movement. We allocate a second CHR, write its speed and heading
+//   every frame, and the engine turns it, animates it, moves it, collides it and
+//   clamps it to the ground for free.
+//
+//   One single-instance assumption exists in the whole path and it is handled in
+//   SpawnClone below. See the g_ffxTidusChr comment there, and do not remove it.
+//
+// FFX.exe IS ASLR-RELOCATED - NEVER HARDCODE A VA
+//   Every address here is stored as an RVA (the IDA VA minus 0x00400000) and
+//   resolved through Rva() against GetModuleHandleW(NULL). ASLR on this exe is
+//   per-boot rather than per-launch, so a hardcoded VA will appear to work
+//   perfectly until the machine reboots. See the loader README.
+//
+// THREADING - THE ONE RULE THAT MATTERS HERE
+//   The control window runs on its own thread, because a message loop cannot
+//   share a thread with the game. **That thread never calls a game function and
+//   never touches a CHR.** All it does is set request flags and tuning values.
+//   The animate hook, which runs on the game's own thread, is the only code that
+//   calls into FFX. Breaking that rule is how you get a crash that only happens
+//   when someone clicks a button mid-frame.
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+
+#if !defined(_M_IX86)
+#error "FFXCoop plugins must be 32-bit x86."
+#endif
+
+// ---------------------------------------------------------------------------
+// FFX.exe RVAs. IDA VA minus 0x00400000.
+// Verified against the IDB: names, argument counts and calling conventions were
+// all read back out of the database rather than assumed. Everything in the Ch
+// family is __cdecl.
+// ---------------------------------------------------------------------------
+
+// the per-frame hook point, proven by the example plugin
+static const DWORD RVA_vtslot_animate            = 0x0070D9A8; // FFXApplication vtable +0x10
+static const DWORD RVA_FFXApp_animate            = 0x0002F520; // expected slot contents
+
+// character allocation and teardown
+static const DWORD RVA_FFX_Ch_Allocate           = 0x00424F90; // CHR *(int chrId)
+static const DWORD RVA_FFX_Ch_DisposeIfLive      = 0x004722F0; // void (CHR *)
+static const DWORD RVA_FFX_Ch_IsLiveChr          = 0x004261B0; // int (CHR *), 0 = live
+static const DWORD RVA_FFX_Ch_CountLive          = 0x004285E0; // int (void)
+
+// data and motion paging, all idempotent
+static const DWORD RVA_FFX_Ch_RomRead            = 0x00429EF0; // int (int chrId)
+static const DWORD RVA_FFX_Ch_DataReadSync       = 0x0042A040; // int (int chrId) 0=ready 1=busy 2=missing
+static const DWORD RVA_FFX_Ch_MotionSetReadStart = 0x00436A40; // int (int chrId, int set)
+static const DWORD RVA_FFX_Ch_MotionSetReadSync  = 0x00436A50; // int (int chrId, int set)
+static const DWORD RVA_FFX_Ch_LoadMotionSetSync  = 0x00436870; // void (int chrId, int set)
+
+// per-character setters
+static const DWORD RVA_FFX_Ch_SetByte184         = 0x00435B50; // int (CHR *, char)
+static const DWORD RVA_FFX_Ch_SetPartyIndex      = 0x0042B0D0; // CHR *(CHR *, int)
+static const DWORD RVA_FFX_Ch_SetPos             = 0x0042B480; // int (CHR *, float, float, float)
+static const DWORD RVA_FFX_Ch_GetPos             = 0x0042AC90; // CHR *(CHR *, float *, float *, float *)
+static const DWORD RVA_FFX_Ch_SetRot             = 0x0042B520; // int (CHR *, float radians)
+static const DWORD RVA_FFX_Ch_SetMoveSpeed       = 0x0042B840; // CHR *(CHR *, float)
+static const DWORD RVA_FFX_Ch_SetMoveDir         = 0x0042B190; // CHR *(CHR *, float radians)
+static const DWORD RVA_FFX_Ch_SetFlags1Bit400    = 0x0042AAE0; // bool (CHR *, short on)
+
+// player binding, read only here
+static const DWORD RVA_FFX_Ch_GetPlayerChr       = 0x0042D860; // CHR *(void)
+
+// Detour target. int __cdecl (CHR *), one caller, FFX_Ch_StepAll at 0x82F256.
+static const DWORD RVA_FFX_Ch_UpdateCameLenAndZClip = 0x0042E220;
+
+// void __cdecl (CHR *). The ONLY code in the binary that resolves a position to a
+// walkmesh triangle and binds it. Binding is a side effect of this per-frame step,
+// there is no separate bind call. It reads the CHR's own position plus velocity
+// (+0x4C, +0x54) so with zero velocity it is a pure bind, and it self-heals the
+// -1 sentinel:  if (m_walkmeshTri == -1) m_walkmeshTri = FindTri(pos * scale);
+// It also fills m_groundHeight (+0x16C), m_groundAttrs (+0x828) and the ground
+// normal, which is why calling it matters for more than just the triangle index.
+static const DWORD RVA_FFX_Ch_WalkmeshMove       = 0x0043E5F0;
+static const DWORD RVA_FFX_Ch_SetGroundMode      = 0x0042B240; // void (CHR *, int)
+
+// Walkmesh globals, for telling "no walkmesh loaded" apart from "point is off it".
+static const DWORD RVA_g_ffxWalkmeshTris         = 0x00F01A84; // void *, the triangle array
+static const DWORD RVA_g_ffxWalkmeshTriCount     = 0x00F01A88; // int
+static const DWORD RVA_g_ffxWalkmeshScale        = 0x00F01A90; // float
+static const DWORD RVA_g_ffxMotionKillSwitch     = 0x00EFBBBB; // byte, non-zero disables
+                                                               // FFX_Ch_UpdateMotionAll for all
+
+// PhyreEngine's input mapper, for reading a SECOND gamepad. See ReadPad.
+//
+// Phyre keeps 18 fully independent pad slots and FFX only ever reads slot 0, so
+// slot 1 is a free second controller with no hook of any kind. Verified in
+// Phyre__PInputMapper__bindPads 0x626AA0, which loops i < 18 storing the i-th
+// device whose getDeviceType()==2 into mapper+0x38+4*i, and in
+// Phyre__PInputMapper__latchDeviceStates 0x628320, which walks the same 18.
+//
+// DO NOT USE the FFX scePad port layer for this. FFX_Pad__updateAll does step
+// ports 0 and 1, which makes port 1 look like a free second controller, but both
+// are filled by FFX_Pad__fillSceReadData -> FFX_Input__getButtonMask, which takes
+// no port argument and returns the single g_ffxInput mask. So port 1 is a
+// byte-for-byte clone of port 0, not a second pad. That is a trap worth stating.
+static const DWORD RVA_g_pApplication            = 0x008C9CD8; // FFXApplication *
+static const DWORD OFF_app_inputMapper           = 0x02B8;     // PInputMapper *
+static const DWORD OFF_mapper_pads               = 0x0038;     // PInputDevicePad *[18]
+static const DWORD PAD_SLOT_COUNT                = 18;
+// per-device, same layout for the XInput and DirectInput backends
+static const DWORD OFF_pad_buttonsLatched        = 0x0018;     // 16 bytes, semantic - 11
+static const DWORD OFF_pad_connected             = 0x0069;     // 105, byte
+static const DWORD OFF_pad_axisLX                = 0x0370;     // 880, int, about -255..255
+static const DWORD OFF_pad_axisRX                = 0x0374;     // 884
+static const DWORD OFF_pad_axisLY                = 0x037C;     // 892, positive is DOWN
+static const DWORD OFF_pad_axisRY                = 0x0380;     // 896
+// joypad button semantics, as the engine numbers them
+static const int PAD_SQUARE = 11, PAD_CROSS = 12, PAD_CIRCLE = 13, PAD_TRIANGLE = 14;
+static const int PAD_L1 = 15, PAD_R1 = 16, PAD_UP = 23, PAD_RIGHT = 24;
+static const int PAD_DOWN = 25, PAD_LEFT = 26;
+
+// the active gameplay camera, for camera-relative input. See GetCameraYaw.
+static const DWORD RVA_g_ffxCameActiveSlot       = 0x01F11430; // u8 *, points into g_ffxCameSlots
+static const DWORD RVA_g_ffxCameSlots            = 0x00D37540; // 3 slots of 0xDA0
+static const DWORD CAME_SLOT_STRIDE              = 0x0DA0;
+static const DWORD CAME_SLOT_COUNT               = 3;
+static const DWORD OFF_came_refPos               = 0x0050;     // vec4, the look-at target
+static const DWORD OFF_came_camPos               = 0x066C;     // vec4, the eye
+
+// globals
+// The graphics context, and the per-mesh visibility test that decides hide bit 8.
+//
+// FFX_Ch_UpdateCameLenAndZClip does
+//     chr->m_hideFlags &= 0xD7;                       // clear Disp and Z
+//     if (!FFX_Chr_InstanceAnyMeshVisible(m_instance)) { m_hideFlags |= 8; return 1; }
+// and that predicate is
+//     count = *(DWORD *)instance & 0x7FFFFFFF;
+//     if (count == 0) return 0;                        // no sub-meshes at all
+//     for (i = 0; i < count; ++i)
+//         if (IsMeshVisible(g_ffxGfxCtx, ((void **)instance[1])[i])) return 1;
+//     return 0;
+// where IsMeshVisible is
+//     if (mesh == 0) return 0;
+//     if (*(DWORD *)(gfxCtx + 0x10D8C) != 0) return 1; // the override, see below
+//     cull = *(DWORD *)(mesh + 0x1C);
+//     if (cull == 0) return 1;                         // no cull volume, always drawn
+//     return TestVolumeAgainstCamera(cull, *(gfxCtx + 0xDC) + 0x74);
+//
+// So hide bit 8, which the game's own debug GUI labels "Disp", means "nothing
+// about this character is visible to the camera right now". The override at
+// gfxCtx+0x10D8C short circuits it to visible, which is what makes it a clean
+// experiment: with the override on, the only remaining way to fail is count == 0.
+static const DWORD RVA_g_ffxGfxCtx               = 0x008CB9D8; // void *, the context pointer
+static const DWORD OFF_gfx_disableCull           = 0x10D8C;    // dword, non-zero = skip the cull
+
+// The 32-byte instance record ClassCharacter__createInstance builds.
+static const DWORD OFF_inst_count     = 0x00; // dword, low 31 bits are the sub-mesh count
+static const DWORD OFF_inst_meshes    = 0x04; // void **, the sub-mesh array
+static const DWORD OFF_inst_classChr  = 0x10; // ClassCharacter *
+static const DWORD OFF_inst_chr       = 0x18; // CHR *, back pointer
+// CORRECTION to an earlier guess of mine: mesh+0x1C is not a cull volume, it is the
+// Phyre NODE for that sub-mesh. FFX_ChrInstance_SetHidden 0x63C390 ultimately does
+//     node = *(void **)(mesh + 0x1C);
+//     if (node) *(void **)(node + 0x1C) = show ? mesh : NULL;
+// and that single pointer store is what links the mesh into, or out of, the render
+// graph. So reading it back is a true end-to-end "is this actually being drawn"
+// test, downstream of every FFX-side gate.
+static const DWORD OFF_mesh_node      = 0x1C; // void *, the Phyre node
+static const DWORD OFF_node_meshBack  = 0x1C; // void *, == mesh when linked, 0 when not
+static const DWORD OFF_inst_shown     = 0x14; // byte, mirrors the last show/hide decision
+static const DWORD OFF_inst_passId    = 0x15; // byte, which render pass claims it
+
+// The per-sub-mesh render objects. mesh+0x1C is a PMeshInstanceBounds, which is
+// the thing the frustum test actually works on, and mesh+0x04 is the transform
+// object the bounds box is positioned by.
+static const DWORD OFF_mesh_xform     = 0x04; // void *, the transform object
+static const DWORD OFF_bounds_corner  = 0x00; // float[3], the OBB corner
+static const DWORD OFF_bounds_xform   = 0x0C; // void *, must equal mesh+0x04
+static const DWORD OFF_bounds_extents = 0x10; // float[3], the OBB half extents
+static const DWORD OFF_xform_col3     = 0x30; // float[3], the translation column
+
+// CHR+0x1D0 is m_rootJoint[8], the matrix FFX_Ch_StepAll loop 1 pushes into the
+// transform object. Logging it alongside the transform shows whether the push
+// happened at all.
+static const DWORD OFF_chr_rootJoint8 = 0x1D0;
+
+static const DWORD RVA_g_ffxChrArray             = 0x01FC44E4; // CHR *, the pool base
+static const DWORD RVA_g_ffxChrCount             = 0x01FC44E0; // int, slots in the pool
+static const DWORD RVA_g_ffxTidusChr             = 0x00EFBC60; // CHR *, the one-slot cache
+static const DWORD RVA_g_ffxControlledChr        = 0x00F00788; // CHR *, player 1's binding
+
+// CHR layout. sizeof(CHR) is 0x880 and the pool is a flat array at that stride.
+static const DWORD CHR_STRIDE        = 0x880;
+static const DWORD OFF_chr_id        = 0x000; // short
+static const DWORD OFF_chr_inUse     = 0x002; // byte
+static const DWORD OFF_chr_speed     = 0x154; // float
+static const DWORD OFF_chr_rotY      = 0x158; // float
+static const DWORD OFF_chr_moveDir   = 0x168; // float
+static const DWORD OFF_chr_runThresh = 0x170; // float, defaults to 18.0
+static const DWORD OFF_chr_hideFlags = 0x180; // byte
+static const DWORD OFF_chr_flags1    = 0x194; // dword
+static const DWORD OFF_chr_wmeshTri  = 0x824; // short, -1 means off the walkmesh
+static const DWORD OFF_chr_instance  = 0x830; // void *, non-null once the mesh is live
+// The rest are here for the invisibility diagnostic rather than for driving.
+static const DWORD OFF_chr_b181      = 0x181; // byte, read right after hideFlags
+static const DWORD OFF_chr_b183      = 0x183; // byte, FFX_Ch_SetB183, set by category
+static const DWORD OFF_chr_partyIdx  = 0x18C; // int
+static const DWORD OFF_chr_flags2    = 0x198; // dword
+static const DWORD OFF_chr_mode19C   = 0x19C; // dword, UpdateRenderJob branches on it
+static const DWORD OFF_chr_instance2 = 0x838; // void *, the second attach slot
+static const DWORD OFF_chr_i83C      = 0x83C; // dword, 1 when part bone buffers exist
+static const DWORD OFF_chr_velX      = 0x04C; // float
+static const DWORD OFF_chr_velZ      = 0x054; // float
+static const DWORD OFF_chr_groundH   = 0x16C; // float, m_groundHeight
+static const DWORD OFF_chr_clipZ     = 0x174; // float, m_clipZ, Allocate sets 50*100
+static const DWORD OFF_chr_cameLen   = 0x178; // float, m_cameLen, distance to the camera
+static const DWORD OFF_chr_groundMode = 0x182; // byte, m_groundMode. Allocate sets 1.
+static const DWORD OFF_chr_f354      = 0x354; // float. FFX_Ch_UpdateRenderAll skips a CHR
+                                              // whose +0x354 is exactly 0.0, so it is a
+                                              // third independent draw gate. Likely a
+                                              // scale or an alpha, not yet confirmed.
+
+// m_hideFlags bits, named from the game's own debug GUI at 0x85393C.
+static const BYTE HIDE_EV   = 0x01; // an event script hid it
+static const BYTE HIDE_EFF  = 0x02; // an effect hid it
+static const BYTE HIDE_DISP = 0x08; // nothing of it is visible to the camera
+static const BYTE HIDE_BTL  = 0x10; // battle hid it
+static const BYTE HIDE_Z    = 0x20; // further away than m_clipZ
+
+// How many clones can be live at once. A field map had 36 CHR slots with 9 in
+// use, so 8 is comfortable, and PoolHasFreeSlot is still checked before every
+// allocation because FFX_Ch_Allocate memsets through a null pointer if the pool
+// is actually full.
+static const int MAX_CLONES = 8;
+
+static const int TIDUS_CHR_ID = 1; // category 0 'c' number 1, formats as "c001"
+
+// The c-series ids that ship a field motion set, from tools/pcmodels.py. Only
+// these are worth spawning: an id with no field motions would slide a T-pose.
+// Ids 1 to 8 are the party. 101 to 108 are their high-detail variants.
+static const int SPAWNABLE_IDS[] = {
+    1, 2, 3, 4, 5, 6, 7, 8,
+    41, 45,
+    101, 102, 103, 104, 105, 106, 107, 108,
+    307, 901, 908
+};
+static const int SPAWNABLE_COUNT = (int)(sizeof(SPAWNABLE_IDS) / sizeof(SPAWNABLE_IDS[0]));
+
+// ---------------------------------------------------------------------------
+// Module state
+// ---------------------------------------------------------------------------
+
+typedef void *CHRPtr;
+
+typedef CHRPtr (__cdecl *fn_Ch_Allocate)(int);
+typedef void   (__cdecl *fn_Ch_DisposeIfLive)(CHRPtr);
+typedef int    (__cdecl *fn_Ch_IsLiveChr)(CHRPtr);
+typedef int    (__cdecl *fn_Ch_CountLive)(void);
+typedef int    (__cdecl *fn_Ch_RomRead)(int);
+typedef int    (__cdecl *fn_Ch_DataReadSync)(int);
+typedef int    (__cdecl *fn_Ch_MotionSetReadStart)(int, int);
+typedef int    (__cdecl *fn_Ch_MotionSetReadSync)(int, int);
+typedef void   (__cdecl *fn_Ch_LoadMotionSetSync)(int, int);
+typedef int    (__cdecl *fn_Ch_SetByte184)(CHRPtr, char);
+typedef CHRPtr (__cdecl *fn_Ch_SetPartyIndex)(CHRPtr, int);
+typedef int    (__cdecl *fn_Ch_SetPos)(CHRPtr, float, float, float);
+typedef CHRPtr (__cdecl *fn_Ch_GetPos)(CHRPtr, float *, float *, float *);
+typedef int    (__cdecl *fn_Ch_SetRot)(CHRPtr, float);
+typedef CHRPtr (__cdecl *fn_Ch_SetMoveSpeed)(CHRPtr, float);
+typedef CHRPtr (__cdecl *fn_Ch_SetMoveDir)(CHRPtr, float);
+typedef bool   (__cdecl *fn_Ch_SetFlags1Bit400)(CHRPtr, short);
+typedef CHRPtr (__cdecl *fn_Ch_GetPlayerChr)(void);
+typedef void   (__cdecl *fn_Ch_WalkmeshMove)(CHRPtr);
+typedef void   (__cdecl *fn_Ch_SetGroundMode)(CHRPtr, int);
+
+static struct Game {
+    fn_Ch_Allocate           Allocate;
+    fn_Ch_DisposeIfLive      DisposeIfLive;
+    fn_Ch_IsLiveChr          IsLiveChr;
+    fn_Ch_CountLive          CountLive;
+    fn_Ch_RomRead            RomRead;
+    fn_Ch_DataReadSync       DataReadSync;
+    fn_Ch_MotionSetReadStart MotionSetReadStart;
+    fn_Ch_MotionSetReadSync  MotionSetReadSync;
+    fn_Ch_LoadMotionSetSync  LoadMotionSetSync;
+    fn_Ch_SetByte184         SetByte184;
+    fn_Ch_SetPartyIndex      SetPartyIndex;
+    fn_Ch_SetPos             SetPos;
+    fn_Ch_GetPos             GetPos;
+    fn_Ch_SetRot             SetRot;
+    fn_Ch_SetMoveSpeed       SetMoveSpeed;
+    fn_Ch_SetMoveDir         SetMoveDir;
+    fn_Ch_SetFlags1Bit400    SetFlags1Bit400;
+    fn_Ch_GetPlayerChr       GetPlayerChr;
+    fn_Ch_WalkmeshMove       WalkmeshMove;
+    fn_Ch_SetGroundMode      SetGroundMode;
+    CHRPtr *pChrArray;
+    int    *pChrCount;
+    CHRPtr *pTidusChr;
+    CHRPtr *pControlledChr;
+    BYTE  **pCameActiveSlot;
+    BYTE   *cameSlots;
+    BYTE  **pApplication;
+    BYTE  **pGfxCtx;
+    void  **pWalkmeshTris;
+    int    *pWalkmeshTriCount;
+    float  *pWalkmeshScale;
+    BYTE   *pMotionKillSwitch;
+} G;
+
+static void ToggleControlWindow(void);   // defined with the UI, below
+
+static BYTE *g_base = NULL;
+static DWORD g_imageSize = 0;          // filled by VerifyLayout
+static void *Rva(DWORD rva) { return g_base + rva; }
+
+// Is this pointer inside the host image? Used when following a thunk, so a
+// corrupt displacement cannot send the guard off reading unmapped memory.
+static bool InImage(const void *p)
+{
+    if (!g_imageSize) return false;
+    return (const BYTE *)p >= g_base && (const BYTE *)p < g_base + g_imageSize;
+}
+
+// Shared between the game thread and the UI thread. Plain volatile plus
+// interlocked requests is enough here: the UI only ever writes tuning scalars
+// and sets request flags, and a half-applied float for one frame is harmless.
+static struct Shared {
+    volatile LONG  requestSpawn;
+    volatile LONG  requestDespawn;
+    volatile LONG  requestDespawnAll;
+    volatile LONG  requestDiff;      // dump a CHR field diff against the real player
+    volatile LONG  idIndex;          // index into SPAWNABLE_IDS, which id F9 spawns
+    volatile LONG  spawnPartyIdx;    // what to pass to FFX_Ch_SetPartyIndex, 255 = none
+    volatile float spawnOffset;      // how far to the side of the player to spawn
+    volatile LONG  autoBindWalkmesh; // call FFX_Ch_WalkmeshMove while m_walkmeshTri is -1
+    volatile LONG  diagUntilFrame;   // log the render fields each frame until here
+    volatile LONG  autoDiffDone;     // the no-mesh auto dump only fires once per spawn
+    volatile LONG  forceVisible;     // 1 = the detour clears Disp/Z on the clone
+    volatile LONG  forcedFrames;     // how many frames we have actually cleared it for
+    volatile LONG  disableCull;      // 1 = force the engine's cull override on
+    volatile LONG  cullWasForced;    // whether we are currently holding it on
+    volatile LONG  instCount;        // the clone's sub-mesh count
+    volatile LONG  instCountPlayer;  // and the real player's, as the control
+    // MULTIPLE CLONES. cloneSlots holds CHR pool indices with -1 for an empty
+    // entry, and activeClone says which entry the input drives. The rest stand
+    // still. cloneSlot mirrors the active entry's pool index and is kept because
+    // the diagnostics, the UI and the detour all read it.
+    volatile LONG  cloneSlots[MAX_CLONES];
+    volatile LONG  activeClone;      // index into cloneSlots
+    volatile LONG  cloneCount;       // how many entries are live
+    volatile LONG  cloneSlot;        // == cloneSlots[activeClone], or -1
+    volatile LONG  frames;
+    volatile LONG  spawnAttempts;
+    volatile float walkSpeed;
+    volatile float runSpeed;
+    volatile float yawBiasDeg;       // dialled in by hand, see the note on headings
+    volatile LONG  inputEnabled;
+    volatile LONG  requireForeground;
+    volatile LONG  cameraRelative;   // 1 = input is relative to the camera
+    volatile LONG  inputSource;      // 0 auto, 1 keyboard only, 2 pad only
+    volatile LONG  padIndex;         // which Phyre pad slot drives the clone
+    volatile LONG  padBound;         // slot is bound and connected
+    volatile LONG  padsPresent;      // how many slots are bound at all
+    volatile LONG  usingPad;         // what actually drove the clone last frame
+    // published for the UI to display, written only by the game thread
+    volatile float posX, posY, posZ;
+    volatile float curSpeed, curHeading, curRotY;
+    volatile float camYaw;
+    volatile LONG  camYawValid;
+    volatile LONG  wmeshTri;
+    volatile LONG  meshLive;
+    volatile LONG  meshLive2;        // the second attach slot, CHR+0x838
+    volatile LONG  hideFlags;        // CHR+0x180
+    volatile LONG  flags1, flags2;   // CHR+0x194, CHR+0x198
+    volatile LONG  partyIdx;         // CHR+0x18C
+    volatile LONG  spawnedId;        // the chr id the live clone was allocated with
+    volatile float f354;             // CHR+0x354, the alpha
+    volatile LONG  instShown;        // instance+0x14, the last show/hide decision
+    volatile LONG  meshesLinked;     // how many sub-meshes are linked into the graph
+    volatile float cameLen, clipZ;   // measured camera distance vs the per-CHR draw limit
+    volatile LONG  binds;            // how many times we have bound the walkmesh
+    char           drawGate[80];     // which gate in UpdateRenderAll rejects the clone
+    volatile LONG  poolLive, poolTotal;
+    char           status[128];   // see SetStatus, deliberately not volatile
+} S;
+
+// ---------------------------------------------------------------------------
+// Logging
+// ---------------------------------------------------------------------------
+
+static CRITICAL_SECTION g_logLock;
+static bool             g_logLockReady = false;
+
+static void Log(const char *fmt, ...)
+{
+    char body[768];
+    va_list ap;
+    va_start(ap, fmt);
+    _vsnprintf_s(body, sizeof(body), _TRUNCATE, fmt, ap);
+    va_end(ap);
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char line[900];
+    _snprintf_s(line, sizeof(line), _TRUNCATE, "[%02d:%02d:%02d.%03d] %s\r\n",
+                st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, body);
+    OutputDebugStringA(line);
+
+    wchar_t path[MAX_PATH];
+    if (GetModuleFileNameW(NULL, path, MAX_PATH) == 0) return;
+    wchar_t *sep = NULL;
+    for (wchar_t *p = path; *p; ++p)
+        if (*p == L'\\' || *p == L'/') sep = p;
+    if (!sep) return;
+    *sep = 0;
+
+    wchar_t logPath[MAX_PATH];
+    _snwprintf_s(logPath, MAX_PATH, _TRUNCATE, L"%s\\FFXCoop\\ffxcoop_clone.log", path);
+
+    if (g_logLockReady) EnterCriticalSection(&g_logLock);
+    HANDLE h = CreateFileW(logPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+        DWORD w = 0;
+        WriteFile(h, line, (DWORD)strlen(line), &w, NULL);
+        CloseHandle(h);
+    }
+    if (g_logLockReady) LeaveCriticalSection(&g_logLock);
+}
+
+static void SetStatus(const char *fmt, ...)
+{
+    char body[128];
+    va_list ap;
+    va_start(ap, fmt);
+    _vsnprintf_s(body, sizeof(body), _TRUNCATE, fmt, ap);
+    va_end(ap);
+    // The UI thread reads this while the game thread writes it. A torn read is
+    // cosmetic, but running off the end of the array would not be, so only ever
+    // write into [0 .. n-2] and leave the final byte as a permanent NUL. That
+    // makes an unsynchronised reader safe without a lock on the frame path.
+    strncpy_s((char *)S.status, sizeof(S.status) - 1, body, _TRUNCATE);
+    S.status[sizeof(S.status) - 1] = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Layout guard
+//
+// The vtable slot check is the real test, exactly as in the example plugin: the
+// slots hold relocated pointers, so comparing them against base+RVA validates
+// both the layout and our RVA table at once. On top of that, every game function
+// we are about to call through a pointer is checked for a plausible x86 function
+// prologue. That will not catch a function that moved to a different address
+// with the same prologue, but it does catch an RVA that landed in the middle of
+// something, which is the realistic mistake.
+//
+// NEVER validate OptionalHeader.ImageBase against the on-disk 0x00400000. The
+// loader rewrites that field in memory to the relocated base, so at runtime it
+// equals GetModuleHandle(NULL). An earlier plugin did this and rejected every
+// launch.
+// ---------------------------------------------------------------------------
+
+// Does this address look like the start of a callable function?
+//
+// A JMP THUNK IS A LEGITIMATE ENTRY POINT. An earlier version of this did not
+// accept one, and it rejected every launch: FFX_Ch_MotionSetReadStart 0x836A40 is
+// a single `jmp FFX_Ch_RomReadMotionSet`, so its first byte is E9 and the check
+// failed on a function that was perfectly fine to call. MSVC emits these for
+// COMDAT folding and incremental linking and they are stable call targets.
+//
+// So E9 and EB are accepted, but the jump is FOLLOWED and the destination checked
+// instead, which keeps the guard meaningful rather than just looser. Only one
+// level of indirection is followed, which is all MSVC ever emits here.
+static bool LooksLikePrologue(const BYTE *p)
+{
+    // push ebp; mov ebp, esp      the overwhelmingly common MSVC frame setup
+    if (p[0] == 0x55 && p[1] == 0x8B && p[2] == 0xEC) return true;
+    // the frame-pointer-omitted shapes
+    if (p[0] == 0x83 && p[1] == 0xEC) return true; // sub esp, imm8
+    if (p[0] == 0x81 && p[1] == 0xEC) return true; // sub esp, imm32
+    if (p[0] >= 0x50 && p[0] <= 0x57) return true; // push reg
+    if (p[0] == 0x8B) return true;                 // mov r32, ...
+    if (p[0] == 0xA1) return true;                 // mov eax, [imm32]
+    if (p[0] == 0x8D) return true;                 // lea
+    if (p[0] == 0x33 || p[0] == 0x31) return true; // xor r32, r32
+    if (p[0] == 0xB8) return true;                 // mov eax, imm32
+    return false;
+}
+
+static bool LooksLikeFunctionStart(DWORD rva)
+{
+    const BYTE *p = (const BYTE *)Rva(rva);
+
+    if (p[0] == 0xE9) {                             // jmp rel32
+        INT32 disp;
+        memcpy(&disp, p + 1, sizeof(disp));
+        const BYTE *t = p + 5 + disp;
+        if (!InImage(t)) return false;
+        return LooksLikePrologue(t);
+    }
+    if (p[0] == 0xEB) {                             // jmp rel8
+        const BYTE *t = p + 2 + (INT8)p[1];
+        if (!InImage(t)) return false;
+        return LooksLikePrologue(t);
+    }
+    return LooksLikePrologue(p);
+}
+
+static bool VerifyLayout(void)
+{
+    const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)g_base;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) {
+        Log("  guard: DOS signature 0x%04X, expected 0x5A4D", dos->e_magic);
+        return false;
+    }
+    const IMAGE_NT_HEADERS32 *nt = (const IMAGE_NT_HEADERS32 *)(g_base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE || nt->FileHeader.Machine != IMAGE_FILE_MACHINE_I386) {
+        Log("  guard: not a 32-bit PE (sig 0x%08X machine 0x%04X)",
+            nt->Signature, nt->FileHeader.Machine);
+        return false;
+    }
+    g_imageSize = nt->OptionalHeader.SizeOfImage;
+    Log("  header: in-memory ImageBase=0x%08X SizeOfImage=0x%08X",
+        nt->OptionalHeader.ImageBase, nt->OptionalHeader.SizeOfImage);
+
+    // every RVA we use must be inside the image
+    const DWORD maxRva = nt->OptionalHeader.SizeOfImage;
+    const DWORD allRvas[] = {
+        RVA_vtslot_animate, RVA_FFXApp_animate,
+        RVA_FFX_Ch_Allocate, RVA_FFX_Ch_DisposeIfLive, RVA_FFX_Ch_IsLiveChr, RVA_FFX_Ch_CountLive,
+        RVA_FFX_Ch_RomRead, RVA_FFX_Ch_DataReadSync, RVA_FFX_Ch_MotionSetReadStart,
+        RVA_FFX_Ch_MotionSetReadSync, RVA_FFX_Ch_LoadMotionSetSync, RVA_FFX_Ch_SetByte184,
+        RVA_FFX_Ch_SetPartyIndex, RVA_FFX_Ch_SetPos, RVA_FFX_Ch_GetPos, RVA_FFX_Ch_SetRot,
+        RVA_FFX_Ch_SetMoveSpeed, RVA_FFX_Ch_SetMoveDir, RVA_FFX_Ch_SetFlags1Bit400,
+        RVA_FFX_Ch_GetPlayerChr, RVA_FFX_Ch_WalkmeshMove, RVA_FFX_Ch_SetGroundMode,
+        RVA_FFX_Ch_UpdateCameLenAndZClip,
+        RVA_g_ffxWalkmeshTris, RVA_g_ffxWalkmeshTriCount, RVA_g_ffxWalkmeshScale,
+        RVA_g_ffxMotionKillSwitch, RVA_g_ffxGfxCtx,
+        RVA_g_ffxChrArray, RVA_g_ffxChrCount, RVA_g_ffxTidusChr,
+        RVA_g_ffxControlledChr, RVA_g_ffxCameActiveSlot, RVA_g_ffxCameSlots,
+        RVA_g_pApplication,
+    };
+    for (int i = 0; i < (int)(sizeof(allRvas) / sizeof(allRvas[0])); ++i) {
+        if (allRvas[i] >= maxRva) {
+            Log("  guard: RVA 0x%08X is past SizeOfImage 0x%08X", allRvas[i], maxRva);
+            return false;
+        }
+    }
+
+    // the vtable slot still holds the animate we expect
+    DWORD got  = *(volatile DWORD *)Rva(RVA_vtslot_animate);
+    DWORD want = (DWORD)(UINT_PTR)Rva(RVA_FFXApp_animate);
+    Log("  vtable slot animate = 0x%08X expected 0x%08X %s",
+        got, want, got == want ? "OK" : "MISMATCH");
+    if (got != want) return false;
+
+    // and each call target looks like the start of a function
+    struct { const char *name; DWORD rva; } fns[] = {
+        { "FFX_Ch_Allocate",           RVA_FFX_Ch_Allocate           },
+        { "FFX_Ch_DisposeIfLive",      RVA_FFX_Ch_DisposeIfLive      },
+        { "FFX_Ch_IsLiveChr",          RVA_FFX_Ch_IsLiveChr          },
+        { "FFX_Ch_CountLive",          RVA_FFX_Ch_CountLive          },
+        { "FFX_Ch_RomRead",            RVA_FFX_Ch_RomRead            },
+        { "FFX_Ch_DataReadSync",       RVA_FFX_Ch_DataReadSync       },
+        { "FFX_Ch_MotionSetReadStart", RVA_FFX_Ch_MotionSetReadStart },
+        { "FFX_Ch_MotionSetReadSync",  RVA_FFX_Ch_MotionSetReadSync  },
+        { "FFX_Ch_LoadMotionSetSync",  RVA_FFX_Ch_LoadMotionSetSync  },
+        { "FFX_Ch_SetByte184",         RVA_FFX_Ch_SetByte184         },
+        { "FFX_Ch_SetPartyIndex",      RVA_FFX_Ch_SetPartyIndex      },
+        { "FFX_Ch_SetPos",             RVA_FFX_Ch_SetPos             },
+        { "FFX_Ch_GetPos",             RVA_FFX_Ch_GetPos             },
+        { "FFX_Ch_SetRot",             RVA_FFX_Ch_SetRot             },
+        { "FFX_Ch_SetMoveSpeed",       RVA_FFX_Ch_SetMoveSpeed       },
+        { "FFX_Ch_SetMoveDir",         RVA_FFX_Ch_SetMoveDir         },
+        { "FFX_Ch_SetFlags1Bit400",    RVA_FFX_Ch_SetFlags1Bit400    },
+        { "FFX_Ch_GetPlayerChr",       RVA_FFX_Ch_GetPlayerChr       },
+        { "FFX_Ch_WalkmeshMove",       RVA_FFX_Ch_WalkmeshMove       },
+        { "FFX_Ch_SetGroundMode",      RVA_FFX_Ch_SetGroundMode      },
+    };
+    bool ok = true;
+    int thunks = 0;
+    for (int i = 0; i < (int)(sizeof(fns) / sizeof(fns[0])); ++i) {
+        const BYTE *p = (const BYTE *)Rva(fns[i].rva);
+        bool good = LooksLikeFunctionStart(fns[i].rva);
+        bool isThunk = (p[0] == 0xE9 || p[0] == 0xEB);
+        if (isThunk) ++thunks;
+        if (!good) {
+            Log("  guard: %s at RVA 0x%08X starts %02X %02X %02X %02X %02X, "
+                "not a prologue and not a resolvable thunk",
+                fns[i].name, fns[i].rva, p[0], p[1], p[2], p[3], p[4]);
+            ok = false;
+        } else if (isThunk) {
+            // Worth logging, because a thunk is exactly what broke this check once.
+            INT32 disp = 0;
+            const BYTE *t;
+            if (p[0] == 0xE9) { memcpy(&disp, p + 1, sizeof(disp)); t = p + 5 + disp; }
+            else              { t = p + 2 + (INT8)p[1]; }
+            Log("  note: %s is a jmp thunk -> 0x%08X (RVA 0x%08X), which is fine",
+                fns[i].name, (unsigned)(UINT_PTR)t, (unsigned)(t - g_base));
+        }
+    }
+    Log("  checked %d call targets, %d of them jmp thunks, result: %s",
+        (int)(sizeof(fns) / sizeof(fns[0])), thunks, ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+static void BindGameFunctions(void)
+{
+    G.Allocate           = (fn_Ch_Allocate)          Rva(RVA_FFX_Ch_Allocate);
+    G.DisposeIfLive      = (fn_Ch_DisposeIfLive)     Rva(RVA_FFX_Ch_DisposeIfLive);
+    G.IsLiveChr          = (fn_Ch_IsLiveChr)         Rva(RVA_FFX_Ch_IsLiveChr);
+    G.CountLive          = (fn_Ch_CountLive)         Rva(RVA_FFX_Ch_CountLive);
+    G.RomRead            = (fn_Ch_RomRead)           Rva(RVA_FFX_Ch_RomRead);
+    G.DataReadSync       = (fn_Ch_DataReadSync)      Rva(RVA_FFX_Ch_DataReadSync);
+    G.MotionSetReadStart = (fn_Ch_MotionSetReadStart)Rva(RVA_FFX_Ch_MotionSetReadStart);
+    G.MotionSetReadSync  = (fn_Ch_MotionSetReadSync) Rva(RVA_FFX_Ch_MotionSetReadSync);
+    G.LoadMotionSetSync  = (fn_Ch_LoadMotionSetSync) Rva(RVA_FFX_Ch_LoadMotionSetSync);
+    G.SetByte184         = (fn_Ch_SetByte184)        Rva(RVA_FFX_Ch_SetByte184);
+    G.SetPartyIndex      = (fn_Ch_SetPartyIndex)     Rva(RVA_FFX_Ch_SetPartyIndex);
+    G.SetPos             = (fn_Ch_SetPos)            Rva(RVA_FFX_Ch_SetPos);
+    G.GetPos             = (fn_Ch_GetPos)            Rva(RVA_FFX_Ch_GetPos);
+    G.SetRot             = (fn_Ch_SetRot)            Rva(RVA_FFX_Ch_SetRot);
+    G.SetMoveSpeed       = (fn_Ch_SetMoveSpeed)      Rva(RVA_FFX_Ch_SetMoveSpeed);
+    G.SetMoveDir         = (fn_Ch_SetMoveDir)        Rva(RVA_FFX_Ch_SetMoveDir);
+    G.SetFlags1Bit400    = (fn_Ch_SetFlags1Bit400)   Rva(RVA_FFX_Ch_SetFlags1Bit400);
+    G.GetPlayerChr       = (fn_Ch_GetPlayerChr)      Rva(RVA_FFX_Ch_GetPlayerChr);
+    G.WalkmeshMove       = (fn_Ch_WalkmeshMove)      Rva(RVA_FFX_Ch_WalkmeshMove);
+    G.SetGroundMode      = (fn_Ch_SetGroundMode)     Rva(RVA_FFX_Ch_SetGroundMode);
+    G.pChrArray          = (CHRPtr *)Rva(RVA_g_ffxChrArray);
+    G.pChrCount          = (int *)   Rva(RVA_g_ffxChrCount);
+    G.pTidusChr          = (CHRPtr *)Rva(RVA_g_ffxTidusChr);
+    G.pControlledChr     = (CHRPtr *)Rva(RVA_g_ffxControlledChr);
+    G.pCameActiveSlot    = (BYTE **) Rva(RVA_g_ffxCameActiveSlot);
+    G.cameSlots          = (BYTE *)  Rva(RVA_g_ffxCameSlots);
+    G.pApplication       = (BYTE **) Rva(RVA_g_pApplication);
+    G.pGfxCtx            = (BYTE **) Rva(RVA_g_ffxGfxCtx);
+    G.pWalkmeshTris      = (void **) Rva(RVA_g_ffxWalkmeshTris);
+    G.pWalkmeshTriCount  = (int *)   Rva(RVA_g_ffxWalkmeshTriCount);
+    G.pWalkmeshScale     = (float *) Rva(RVA_g_ffxWalkmeshScale);
+    G.pMotionKillSwitch  = (BYTE *)  Rva(RVA_g_ffxMotionKillSwitch);
+}
+
+// ---------------------------------------------------------------------------
+// CHR helpers. The pool is a flat array at stride 0x880, so a slot index is a
+// stable identity across a frame and the natural network id later. A raw CHR *
+// is NOT stable across a map transition, because the pool is freed and
+// reallocated, which is exactly why cloneSlot holds an index and not a pointer.
+// ---------------------------------------------------------------------------
+
+static inline BYTE  *ChrField(CHRPtr chr, DWORD off) { return (BYTE *)chr + off; }
+static inline float  ChrF(CHRPtr chr, DWORD off)     { return *(volatile float *)ChrField(chr, off); }
+static inline DWORD  ChrD(CHRPtr chr, DWORD off)     { return *(volatile DWORD *)ChrField(chr, off); }
+
+static CHRPtr ChrFromSlot(LONG slot)
+{
+    if (slot < 0) return NULL;
+    CHRPtr arr = *G.pChrArray;
+    if (!arr) return NULL;
+    if (slot >= *G.pChrCount) return NULL;
+    return (CHRPtr)((BYTE *)arr + CHR_STRIDE * (DWORD)slot);
+}
+
+static LONG SlotFromChr(CHRPtr chr)
+{
+    CHRPtr arr = *G.pChrArray;
+    if (!arr || !chr) return -1;
+    ptrdiff_t d = (BYTE *)chr - (BYTE *)arr;
+    if (d < 0 || (d % CHR_STRIDE) != 0) return -1;
+    LONG slot = (LONG)(d / CHR_STRIDE);
+    return (slot < *G.pChrCount) ? slot : -1;
+}
+
+// FFX_Ch_Allocate memsets through a NULL pointer when every slot is taken. Its
+// own slot search is "first entry whose in-use byte at +2 is zero", so we run
+// exactly that search first and refuse to call it if there is no free slot.
+// This is not belt and braces, it is the documented precondition.
+static bool PoolHasFreeSlot(void)
+{
+    CHRPtr arr = *G.pChrArray;
+    int count = *G.pChrCount;
+    if (!arr || count <= 0) return false;
+    for (int i = 0; i < count; ++i) {
+        BYTE *p = (BYTE *)arr + CHR_STRIDE * (DWORD)i;
+        if (*(volatile BYTE *)(p + OFF_chr_inUse) == 0) return true;
+    }
+    return false;
+}
+
+static LONG InstanceMeshCount(CHRPtr chr, LONG *outNoNode);
+static bool IsOurClone(CHRPtr chr);
+static bool Readable(const void *p, SIZE_T bytes);
+static const char *HideFlagNames(BYTE f);
+static const char *FirstFailingDrawGate(CHRPtr chr);
+
+// ---------------------------------------------------------------------------
+// Clone bookkeeping
+//
+// Nothing here touches the game. It is all about which of our clones is which.
+
+// Which entry of cloneSlots is free, or -1 if we are at the cap.
+static LONG FreeCloneEntry(void)
+{
+    for (LONG i = 0; i < MAX_CLONES; ++i)
+        if (S.cloneSlots[i] < 0) return i;
+    return -1;
+}
+
+static LONG LiveCloneCount(void)
+{
+    LONG n = 0;
+    for (LONG i = 0; i < MAX_CLONES; ++i)
+        if (S.cloneSlots[i] >= 0) ++n;
+    return n;
+}
+
+static CHRPtr ActiveClone(void)
+{
+    LONG i = S.activeClone;
+    if (i < 0 || i >= MAX_CLONES) return NULL;
+    return ChrFromSlot(S.cloneSlots[i]);
+}
+
+// Move the input focus to the next live clone, so the arrow keys drive that one.
+// Wraps, and does nothing if there is only one or none.
+static void CycleActiveClone(void)
+{
+    LONG start = S.activeClone;
+    for (LONG step = 1; step <= MAX_CLONES; ++step) {
+        LONG i = (start + step) % MAX_CLONES;
+        if (S.cloneSlots[i] >= 0) {
+            InterlockedExchange(&S.activeClone, i);
+            SetStatus("driving clone %ld of %ld", i + 1, LiveCloneCount());
+            Log("input focus moved to clone %ld (pool slot %ld)", i + 1, S.cloneSlots[i]);
+            return;
+        }
+    }
+    SetStatus("no live clone to drive");
+}
+
+// ---------------------------------------------------------------------------
+// Inline detours
+//
+// Memory patching is on the table for this project, so this is the small
+// reusable piece rather than a one-off. It is a plain 5-byte jmp detour with a
+// trampoline, which is all that is needed for the hooks this mod wants.
+//
+// THE RULES THIS FOLLOWS, because an inline hook that gets any of them wrong
+// corrupts the process in ways that are painful to debug:
+//
+//  1. VERIFY THE BYTES FIRST. Every detour carries the exact original prologue
+//     bytes it expects and refuses to install if memory does not match. That is
+//     the same discipline as VerifyLayout, applied per hook. A silently wrong
+//     patch on the wrong build is the worst outcome available here.
+//  2. THE STOLEN BYTES MUST BE POSITION INDEPENDENT. We relocate them to the
+//     trampoline unchanged, so a rel8/rel32 branch or a rip-relative operand
+//     among them would end up pointing somewhere meaningless. Every target's
+//     stolen range is checked by eye in IDA and recorded in the table. No
+//     length disassembler is used, so the length is explicit, not guessed.
+//  3. STOLEN LENGTH >= 5. The jmp rel32 needs 5 bytes, and anything left over
+//     is padded with 0x90 so a disassembler following the original still lands
+//     on instruction boundaries.
+//  4. INSTALL ONCE, GATE AT RUNTIME. Hooks go in at startup and stay in. A
+//     toggle is a flag the hook body reads, never a patch and unpatch cycle,
+//     which would be a race against the game thread for no benefit.
+// ---------------------------------------------------------------------------
+
+struct Detour {
+    const char *name;
+    DWORD       rva;
+    void       *replacement;
+    const BYTE *expect;      // exact bytes we expect to overwrite
+    DWORD       stolen;      // how many bytes we relocate, >= 5
+    void       *trampoline;  // call this to run the original
+    bool        installed;
+};
+
+static bool InstallDetour(Detour *d)
+{
+    BYTE *target = (BYTE *)Rva(d->rva);
+
+    if (!Readable(target, d->stolen)) {
+        Log("detour %s: target RVA 0x%08X is not readable, refusing", d->name, d->rva);
+        return false;
+    }
+    if (memcmp(target, d->expect, d->stolen) != 0) {
+        char got[64] = { 0 }, want[64] = { 0 };
+        for (DWORD i = 0; i < d->stolen && i < 10; ++i) {
+            char t[8];
+            _snprintf_s(t, sizeof(t), _TRUNCATE, "%02X ", target[i]);
+            strcat_s(got, sizeof(got), t);
+            _snprintf_s(t, sizeof(t), _TRUNCATE, "%02X ", d->expect[i]);
+            strcat_s(want, sizeof(want), t);
+        }
+        Log("detour %s: PROLOGUE MISMATCH at RVA 0x%08X. got [%s] want [%s]. "
+            "Refusing to patch - re-derive this detour from the IDB.",
+            d->name, d->rva, got, want);
+        return false;
+    }
+
+    // Trampoline: the stolen bytes, then a jmp back to the rest of the original.
+    BYTE *tramp = (BYTE *)VirtualAlloc(NULL, d->stolen + 5, MEM_COMMIT | MEM_RESERVE,
+                                       PAGE_EXECUTE_READWRITE);
+    if (!tramp) {
+        Log("detour %s: VirtualAlloc for the trampoline failed, GetLastError=%lu",
+            d->name, GetLastError());
+        return false;
+    }
+    memcpy(tramp, target, d->stolen);
+    tramp[d->stolen] = 0xE9;
+    INT32 backRel = (INT32)((target + d->stolen) - (tramp + d->stolen + 5));
+    memcpy(tramp + d->stolen + 1, &backRel, sizeof(backRel));
+
+    DWORD old = 0;
+    if (!VirtualProtect(target, d->stolen, PAGE_EXECUTE_READWRITE, &old)) {
+        Log("detour %s: VirtualProtect failed, GetLastError=%lu", d->name, GetLastError());
+        VirtualFree(tramp, 0, MEM_RELEASE);
+        return false;
+    }
+    target[0] = 0xE9;
+    INT32 fwdRel = (INT32)((BYTE *)d->replacement - (target + 5));
+    memcpy(target + 1, &fwdRel, sizeof(fwdRel));
+    for (DWORD i = 5; i < d->stolen; ++i) target[i] = 0x90;
+    DWORD ignored = 0;
+    VirtualProtect(target, d->stolen, old, &ignored);
+    FlushInstructionCache(GetCurrentProcess(), target, d->stolen);
+
+    d->trampoline = tramp;
+    d->installed  = true;
+    Log("detour %s installed: RVA 0x%08X -> 0x%08X, trampoline 0x%08X, %lu bytes stolen",
+        d->name, d->rva, (unsigned)(UINT_PTR)d->replacement,
+        (unsigned)(UINT_PTR)tramp, (unsigned long)d->stolen);
+    return true;
+}
+
+// ---- the one detour so far -------------------------------------------------
+//
+// FFX_Ch_UpdateCameLenAndZClip is what sets m_hideFlags bit 8 (Disp), and it is
+// the only thing that does. The hook runs the original and then, for our clone
+// only, takes Disp and Z back off.
+//
+// WHY A HOOK AND NOT A POKE FROM THE ANIMATE HOOK. Ordering. This function runs
+// inside FFX_Ch_StepAll, and FFX_Ch_UpdateRenderAll reads m_hideFlags later in
+// the same FFX_MainStep. Clearing the bit from our per-frame hook would land
+// after both and be re-set before it ever mattered. Clearing it here puts it
+// between the writer and the reader, which is the only place it works.
+//
+// WHAT THIS IS TESTING. Bit 8 means "no sub-mesh of this instance is visible to
+// the camera". The thing that moves a character's cull volume is the skin matrix
+// build in FFX_Ch_UpdateRenderJob, which is skipped while m_hideFlags != 0. That
+// is a deadlock: stale volume -> culled -> never updated -> stale volume. If
+// that is really what is happening, forcing a few frames of rendering should
+// break it, and the clone should then stay visible after the force is switched
+// back off. If it only stays visible while forced, the volume is not the issue
+// and something else is wrong with the instance.
+typedef int (__cdecl *fn_Ch_UpdateCameLenAndZClip)(CHRPtr);
+static Detour g_detourCameLen;
+static int __cdecl Hook_UpdateCameLenAndZClip(CHRPtr chr);
+static const BYTE k_cameLenPrologue[] = {
+    0x55,             // push ebp
+    0x8B, 0xEC,       // mov  ebp, esp
+    0x83, 0xEC, 0x28  // sub  esp, 28h
+};  // 6 bytes, all position independent, verified in IDA at 0x82E220
+
+// ---------------------------------------------------------------------------
+// The invisibility diagnostic
+//
+// WHY THIS EXISTS. The clone used to allocate and simulate correctly but never
+// draw in the field. THAT IS NOW FIXED: the cause was that nothing bound the new
+// CHR to a walkmesh triangle, so m_groundHeight stayed 0 and ground mode 1 (which
+// FFX_Ch_Allocate sets) dragged it to Y=0 and out of sight. See BindWalkmesh.
+//
+// This diagnostic block is kept because it is how the answer was found and
+// because it is the fastest way to recognise a render failure next time. A
+// healthy clone reads: hide=0(visible), a bound wmesh, f354=1.000, and
+// "drawing: 1 of 1 sub-meshes linked, shown=1".
+//
+// WHAT THE LOGGING ESTABLISHED ALONG THE WAY, so nobody re-derives it:
+//
+//  - m_instance (+0x830) was non-zero on all 48 spawns, immediately at
+//    post-alloc. The model attach always completes and it completes
+//    synchronously. The deferred-attachment theory is dead.
+//  - m_hideFlags is 0 at spawn and becomes 8 on the very next frame. Bit 8 is
+//    what the game's own debug GUI calls "Disp". FFX_Ch_UpdateRenderJob skips
+//    the entire per-CHR render update when m_hideFlags != 0 and CHR+0x181 == 0,
+//    which is why nothing poses or draws after frame 0.
+//  - It is NOT the duplicate chr id. Spawning id 103 while the player is id 1
+//    fails identically, and those are different models entirely.
+//  - It is NOT the walkmesh. id 4 sat on triangle 56 for 90 frames while still
+//    hidden, and id 2 drew fine with m_walkmeshTri == -1.
+//  - flags2 bit 0 correlates perfectly with visibility, 658 samples and no
+//    exceptions, but it is an EFFECT: the only instruction that sets it is in
+//    FFX_Ch_StepAll loop D, immediately after the work it reports on, and
+//    nothing in the draw path reads it. Good diagnostic, useless as a lever.
+//  - The alpha is not involved. FFX_Ch_Allocate already calls
+//    FFX_Ch_SetShadeAlpha(chr, 1.0, 0), so CHR+0x354 is 1.0 from the start.
+//
+// WHAT BIT 8 ACTUALLY MEANS. FFX_Ch_UpdateCameLenAndZClip sets it when the
+// instance has no mesh that is currently visible to the camera, so it is a
+// frustum cull result and not a missing mesh. See the comment on
+// RVA_g_ffxGfxCtx for the exact predicate.
+//
+// AND A WARNING ABOUT THE gfxCtx+0x10D8C OVERRIDE (F6), which looked like a
+// clean way to rule culling in or out and is not. That field is read in exactly
+// one function, FFX_Gfx_IsMeshInstanceVisible, and that function exists only to
+// maintain m_hideFlags. The real render passes call the frustum test directly
+// (sub_652A10 at 0x652D35 and 0x652EBC) and never consult it. So forcing it on
+// clears the hide bit and changes nothing about what is drawn, which is exactly
+// what happened when it was tested. It is kept only because it is still a
+// legitimate way to isolate "the hide bookkeeping" from "the actual cull".
+// ---------------------------------------------------------------------------
+
+// The game's own labels for m_hideFlags, lifted from SG_DebugGui_ChrInfoWindowProc
+// at 0x85393C, which prints "Hide : %x" and then appends one of these per bit.
+static const char *HideFlagNames(BYTE f)
+{
+    static char buf[40];
+    buf[0] = 0;
+    if (!f) return "visible";
+    if (f & 0x01) strcat_s(buf, sizeof(buf), "Ev ");    // an event script hid it
+    if (f & 0x02) strcat_s(buf, sizeof(buf), "Eff ");   // an effect hid it
+    if (f & 0x08) strcat_s(buf, sizeof(buf), "Disp ");  // nothing of it is visible
+    if (f & 0x10) strcat_s(buf, sizeof(buf), "Btl ");   // battle hid it
+    if (f & 0x20) strcat_s(buf, sizeof(buf), "Z ");     // past m_clipZ
+    return buf;
+}
+
+static int SelectedChrId(void)
+{
+    LONG i = S.idIndex;
+    if (i < 0 || i >= SPAWNABLE_COUNT) i = 0;
+    return SPAWNABLE_IDS[i];
+}
+
+// One line per call, cheap enough to run every frame for a few seconds.
+static void LogChrDiag(const char *tag, CHRPtr chr)
+{
+    if (!chr) { Log("diag %-10s <null>", tag); return; }
+    LONG noCull = 0;
+    LONG meshes = InstanceMeshCount(chr, &noCull);
+    Log("diag %-10s id=%-5d inUse=%u instance=0x%08X meshes=%ld nocullvol=%ld "
+        "hide=%u(%s) b181=%u party=%ld flags1=0x%08X flags2=0x%08X f354=%.3f wmesh=%d",
+        tag,
+        (int)*(volatile short *)ChrField(chr, OFF_chr_id),
+        *(volatile BYTE *)ChrField(chr, OFF_chr_inUse),
+        ChrD(chr, OFF_chr_instance), meshes, noCull,
+        *(volatile BYTE *)ChrField(chr, OFF_chr_hideFlags),
+        HideFlagNames(*(volatile BYTE *)ChrField(chr, OFF_chr_hideFlags)),
+        *(volatile BYTE *)ChrField(chr, OFF_chr_b181),
+        (long)ChrD(chr, OFF_chr_partyIdx),
+        ChrD(chr, OFF_chr_flags1), ChrD(chr, OFF_chr_flags2),
+        (double)ChrF(chr, OFF_chr_f354),
+        (int)*(volatile short *)ChrField(chr, OFF_chr_wmeshTri));
+    // The verdict, so the log says what is wrong instead of needing to be read.
+    Log("     %-10s draw gate: %s", tag, FirstFailingDrawGate(chr));
+}
+
+static bool LooksLikePointer(DWORD v)
+{
+    return v >= 0x00010000u && v < 0x80000000u;
+}
+
+// Never dereference a game pointer we have not checked. The instance and its
+// sub-mesh array are engine allocations, so a stale or half-built record is a
+// real possibility and a fault here would take the game down.
+static bool Readable(const void *p, SIZE_T bytes)
+{
+    if (!LooksLikePointer((DWORD)(UINT_PTR)p)) return false;
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!VirtualQuery(p, &mbi, sizeof(mbi))) return false;
+    if (mbi.State != MEM_COMMIT) return false;
+    if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) return false;
+    SIZE_T avail = (SIZE_T)((BYTE *)mbi.BaseAddress + mbi.RegionSize - (BYTE *)p);
+    return avail >= bytes;
+}
+
+// How many sub-meshes does this instance have, and how many of them have no Phyre
+// node at all? -1 means unreadable.
+//
+// A mesh with no node can never be linked into the render graph, because the link
+// is a store through that node pointer. It is also the case that the visibility
+// predicate treats a null node as "always visible", so the two readings differ
+// and it is worth counting separately rather than assuming.
+static LONG InstanceMeshCount(CHRPtr chr, LONG *outNoNode)
+{
+    if (outNoNode) *outNoNode = 0;
+    if (!chr) return -1;
+    BYTE *inst = (BYTE *)(UINT_PTR)ChrD(chr, OFF_chr_instance);
+    if (!Readable(inst, 0x20)) return -1;
+    DWORD count = *(volatile DWORD *)(inst + OFF_inst_count) & 0x7FFFFFFFu;
+    if (count > 256) return -2;                 // nonsense, do not walk it
+    BYTE **meshes = *(BYTE ***)(inst + OFF_inst_meshes);
+    if (count && !Readable(meshes, 4 * count)) return -3;
+    for (DWORD i = 0; i < count && outNoNode; ++i) {
+        BYTE *m = meshes[i];
+        if (!Readable(m, OFF_mesh_node + 4)) continue;
+        if (*(volatile DWORD *)(m + OFF_mesh_node) == 0) ++*outNoNode;
+    }
+    return (LONG)count;
+}
+
+// The engine's own cull override. Holding this on makes IsMeshVisible return 1
+// for every mesh in the game, so it costs performance and is strictly a test
+// switch. It is restored when switched off and on unload.
+static DWORD *CullOverrideSlot(void)
+{
+    if (!G.pGfxCtx) return NULL;
+    BYTE *ctx = *G.pGfxCtx;
+    if (!Readable(ctx, OFF_gfx_disableCull + 4)) return NULL;
+    return (DWORD *)(ctx + OFF_gfx_disableCull);
+}
+
+// RE-ASSERTED EVERY FRAME ON PURPOSE. The first version of this wrote the dword
+// once, on the off-to-on transition, which made the experiment worthless if the
+// engine rewrites the field itself: the override would hold for an instant and
+// then quietly lapse, and the test would look like a clean negative when it had
+// really just stopped being applied. So now it is written every frame while on,
+// and the number of times it was found already cleared is counted and reported.
+// If resetsSeen climbs, the engine owns that field and a one-shot poke to it can
+// never work.
+static void ApplyCullOverride(void)
+{
+    static DWORD saved = 0;
+    static LONG  resetsSeen = 0;
+    DWORD *slot = CullOverrideSlot();
+    if (!slot) {
+        if (S.disableCull) {
+            Log("cull override: g_ffxGfxCtx is not readable yet, cannot force it");
+            InterlockedExchange(&S.disableCull, 0);
+        }
+        return;
+    }
+    if (S.disableCull) {
+        if (!S.cullWasForced) {
+            saved = *slot;
+            resetsSeen = 0;
+            InterlockedExchange(&S.cullWasForced, 1);
+            Log("cull override ON: gfxCtx+0x%X was %lu. Re-asserting it every frame.",
+                OFF_gfx_disableCull, (unsigned long)saved);
+        } else if (*slot == 0) {
+            // The engine put it back. Worth knowing, and worth knowing how often.
+            if (++resetsSeen <= 3 || (resetsSeen % 600) == 0)
+                Log("cull override: the engine cleared gfxCtx+0x%X again (%ld times so far), "
+                    "re-asserting. A one-shot write to this field is not enough.",
+                    OFF_gfx_disableCull, resetsSeen);
+        }
+        *slot = 1;
+    } else if (S.cullWasForced) {
+        *slot = saved;
+        InterlockedExchange(&S.cullWasForced, 0);
+        Log("cull override OFF: gfxCtx+0x%X restored to %lu, it had been cleared by the "
+            "engine %ld times while on", OFF_gfx_disableCull, (unsigned long)saved, resetsSeen);
+    }
+}
+
+// How many of this instance's sub-meshes are actually linked into the Phyre
+// render graph, and does the instance's own shown byte agree?
+//
+// This is the end-to-end test, downstream of every FFX-side gate, so it answers
+// "is the engine drawing this at all" without any inference. See the comment on
+// OFF_mesh_node for the pointer store this reads back.
+static LONG CountLinkedMeshes(CHRPtr chr, LONG *outShown)
+{
+    if (outShown) *outShown = -1;
+    if (!chr) return -1;
+    BYTE *inst = (BYTE *)(UINT_PTR)ChrD(chr, OFF_chr_instance);
+    if (!Readable(inst, 0x20)) return -1;
+    if (outShown) *outShown = *(volatile BYTE *)(inst + OFF_inst_shown);
+    DWORD count = *(volatile DWORD *)(inst + OFF_inst_count) & 0x7FFFFFFFu;
+    if (count > 256) return -2;
+    BYTE **meshes = *(BYTE ***)(inst + OFF_inst_meshes);
+    if (count && !Readable(meshes, 4 * count)) return -3;
+    LONG linked = 0;
+    for (DWORD i = 0; i < count; ++i) {
+        BYTE *m = meshes[i];
+        if (!Readable(m, OFF_mesh_node + 4)) continue;
+        BYTE *node = *(BYTE **)(m + OFF_mesh_node);
+        if (!Readable(node, OFF_node_meshBack + 4)) continue;
+        if (*(BYTE **)(node + OFF_node_meshBack) == m) ++linked;
+    }
+    return linked;
+}
+
+// Dump the render geometry of one CHR's instance: the bounds box the frustum test
+// uses, the transform that positions it, and the link state.
+//
+// WHY THIS IS THE DECISIVE PROBE. Static analysis gets us this far and no
+// further. The chain is
+//
+//   FFX_Ch_StepAll loop 1   (gated on m_hideFlags == 0)
+//     -> sub_63C3E0(instance, worldMatrix)
+//       -> sub_66D810: stores the matrix into mesh+0x04, sets bounds+0x0C
+//   FFX_Ch_StepAll loop 3
+//     -> FFX_Ch_UpdateCameLenAndZClip
+//       -> sub_63B230 -> sub_6603C0 -> sub_663CC0(bounds, frustum)
+//         -> sub_663A30: 8 OBB corners from bounds+0x00 (corner) and
+//            bounds+0x10 (extents), transformed by frustum * bounds+0x0C
+//
+// and the measurement that matters is whether this CHR's box is where the CHR is.
+// Three outcomes, each pointing somewhere different:
+//
+//   extents all zero          -> the template bounds were never copied in
+//   bounds+0x0C != mesh+0x04  -> the transform link is broken
+//   transform is identity or
+//     at the origin           -> loop 1 never pushed the matrix for this CHR,
+//                                which is what being hidden since frame 0 does
+//
+// The player CHR is logged next to it as the control, because every one of these
+// numbers is only meaningful by comparison.
+static void DumpInstanceGeometry(CHRPtr chr, const char *label)
+{
+    if (!chr) { Log("  geom %-8s <null CHR>", label); return; }
+
+    BYTE *inst = (BYTE *)(UINT_PTR)ChrD(chr, OFF_chr_instance);
+    if (!Readable(inst, 0x20)) { Log("  geom %-8s instance unreadable", label); return; }
+
+    DWORD n = *(volatile DWORD *)(inst + OFF_inst_count) & 0x7FFFFFFFu;
+    Log("  geom %-8s inst=0x%08X meshes=%lu shown=%u passId=%u", label,
+        (unsigned)(UINT_PTR)inst, (unsigned long)n,
+        *(volatile BYTE *)(inst + OFF_inst_shown),
+        *(volatile BYTE *)(inst + OFF_inst_passId));
+
+    // What loop 1 should have pushed, for comparison with what the transform holds.
+    const float *rj = (const float *)ChrField(chr, OFF_chr_rootJoint8 + OFF_xform_col3);
+    if (Readable(rj, 12))
+        Log("  geom %-8s CHR m_rootJoint[8] translation = (%.2f %.2f %.2f)",
+            label, (double)rj[0], (double)rj[1], (double)rj[2]);
+
+    if (n > 32) { Log("  geom %-8s mesh count looks wrong, not walking it", label); return; }
+    BYTE **meshes = *(BYTE ***)(inst + OFF_inst_meshes);
+    if (n && !Readable(meshes, 4 * n)) { Log("  geom %-8s mesh array unreadable", label); return; }
+
+    for (DWORD i = 0; i < n; ++i) {
+        BYTE *m = meshes[i];
+        if (!Readable(m, 0x20)) { Log("    [%lu] mesh unreadable", (unsigned long)i); continue; }
+        BYTE *xf  = *(BYTE **)(m + OFF_mesh_xform);
+        BYTE *bnd = *(BYTE **)(m + OFF_mesh_node);
+
+        if (!Readable(bnd, 0x20)) {
+            Log("    [%lu] mesh=0x%08X xform=0x%08X bounds=0x%08X  "
+                "NO BOUNDS OBJECT, so it can never be linked and never drawn",
+                (unsigned long)i, (unsigned)(UINT_PTR)m, (unsigned)(UINT_PTR)xf,
+                (unsigned)(UINT_PTR)bnd);
+            continue;
+        }
+
+        const float *corner  = (const float *)(bnd + OFF_bounds_corner);
+        const float *extents = (const float *)(bnd + OFF_bounds_extents);
+        BYTE *bndXf = *(BYTE **)(bnd + OFF_bounds_xform);
+        BYTE *back  = *(BYTE **)(bnd + OFF_node_meshBack);
+
+        Log("    [%lu] mesh=0x%08X bounds=0x%08X corner=(%.2f %.2f %.2f) "
+            "extents=(%.2f %.2f %.2f)%s",
+            (unsigned long)i, (unsigned)(UINT_PTR)m, (unsigned)(UINT_PTR)bnd,
+            (double)corner[0], (double)corner[1], (double)corner[2],
+            (double)extents[0], (double)extents[1], (double)extents[2],
+            (extents[0] == 0.0f && extents[1] == 0.0f && extents[2] == 0.0f)
+                ? "   <-- EXTENTS ARE ZERO, the template box was never copied in" : "");
+
+        Log("         bounds+0x0C=0x%08X %s mesh+0x04=0x%08X    linked=%s",
+            (unsigned)(UINT_PTR)bndXf, bndXf == xf ? "==" : "!=",
+            (unsigned)(UINT_PTR)xf,
+            back == m ? "yes" : (back ? "no, points elsewhere" : "no, null"));
+
+        if (Readable(xf, OFF_xform_col3 + 12)) {
+            const float *t = (const float *)(xf + OFF_xform_col3);
+            Log("         transform translation = (%.2f %.2f %.2f)%s",
+                (double)t[0], (double)t[1], (double)t[2],
+                (t[0] == 0.0f && t[1] == 0.0f && t[2] == 0.0f)
+                    ? "   <-- AT THE ORIGIN, loop 1 never pushed a matrix for this CHR" : "");
+        }
+    }
+}
+
+// Which gate in the REAL draw path is rejecting this CHR?
+//
+// CORRECTION, and it matters. An earlier version of this read the gate chain in
+// FFX_Ch_UpdateRenderAll, which looked right and was wrong: that function has a
+// single caller, maybe_FFX_Ch_UpdateRenderIfNeeded 0x826950, which only calls it
+// when MagicFile__getMagicId() == 573. It is a bone-matrix refresh for one magic
+// effect and it does not run in normal play. It merely happens to carry a gate
+// chain that resembles the real one.
+//
+// The real per-frame draw submission is FFX_Ch_StepAll loop C, 0x82F224..0x82F82C,
+// and its chain is:
+//
+//   0082F224  m_inUse == 0                      -> skip
+//   0082F242  m_flags2 & 0x20                   -> skip
+//   0082F256  FFX_Ch_UpdateCameLenAndZClip != 0 -> HIDE  (this sets m_hideFlags)
+//   0082F4C3  m_animShadeA.m_cur == 0.0         -> HIDE
+//   0082F54D  m_hideFlags != 0 ? SetHidden(inst, 0) : SetHidden(inst, 1)
+//
+// and FFX_Ch_UpdateCameLenAndZClip itself returns non-zero when any hide bit is
+// already set, when the instance has no visible renderable (sets Disp 0x08), or
+// when m_cameLen > m_clipZ (sets Z 0x20).
+static const char *FirstFailingDrawGate(CHRPtr chr)
+{
+    static char buf[128];
+    if (!chr) return "no CHR";
+    if (*(volatile BYTE *)ChrField(chr, OFF_chr_inUse) == 0) return "m_inUse is 0";
+    if (ChrD(chr, OFF_chr_flags2) & 0x20u)
+        return "m_flags2 bit 0x20 set, the model packet was purged";
+    if (ChrD(chr, OFF_chr_instance) == 0) return "m_instance is null, no model attached";
+    if ((ChrD(chr, OFF_chr_flags1) & 0x800u) == 0)
+        return "m_flags1 bit 0x800 clear, so the z-clip check is skipped entirely";
+    if (ChrF(chr, OFF_chr_f354) == 0.0f) return "m_animShadeA.m_cur is 0.0, fully transparent";
+
+    BYTE hf = *(volatile BYTE *)ChrField(chr, OFF_chr_hideFlags);
+    if (hf != 0) {
+        if (hf & HIDE_Z)
+            _snprintf_s(buf, sizeof(buf), _TRUNCATE,
+                        "hide 0x%02X (%s) cameLen %.0f vs clipZ %.0f", hf, HideFlagNames(hf),
+                        (double)ChrF(chr, OFF_chr_cameLen), (double)ChrF(chr, OFF_chr_clipZ));
+        else
+            _snprintf_s(buf, sizeof(buf), _TRUNCATE, "hide 0x%02X (%s)", hf, HideFlagNames(hf));
+        return buf;
+    }
+
+    LONG shown = -1;
+    LONG linked = CountLinkedMeshes(chr, &shown);
+    LONG total  = InstanceMeshCount(chr, NULL);
+    if (linked <= 0) {
+        _snprintf_s(buf, sizeof(buf), _TRUNCATE,
+                    "passes every FFX gate, but %ld of %ld sub-meshes are linked "
+                    "(instance shown byte = %ld) - the problem is downstream of FFX",
+                    linked, total, shown);
+        return buf;
+    }
+    _snprintf_s(buf, sizeof(buf), _TRUNCATE,
+                "drawing: %ld of %ld sub-meshes linked, shown=%ld", linked, total, shown);
+    return buf;
+}
+
+// Field by field against the real player CHR, which is the control: it is the
+// same chr id, allocated by the same function, and it draws.
+//
+// The whole 0x880 is not worth printing, because the middle is matrices and
+// bone state that legitimately differ every frame. So three sections:
+//   A  0x000..0x200   the id, flags and state block
+//   B  0x700..0x880   the tail, where the instance pointers live
+//   C  the whole struct, but only dwords where one side holds a pointer and the
+//      other holds zero. That is the "something was not allocated for me"
+//      detector, and it is the one that finds a missing mesh.
+static void DumpChrDiff(void)
+{
+    CHRPtr clone  = ChrFromSlot(S.cloneSlot);
+    CHRPtr player = G.GetPlayerChr();
+
+    if (!clone || G.IsLiveChr(clone) != 0) { Log("diff: no live clone"); return; }
+    if (!player || G.IsLiveChr(player) != 0) { Log("diff: no live player CHR to compare against"); return; }
+    if (clone == player) { Log("diff: the clone IS the player CHR, nothing to compare"); return; }
+
+    Log("---- CHR diff: player 0x%08X (slot %ld) vs clone 0x%08X (slot %ld) ----",
+        (unsigned)(UINT_PTR)player, SlotFromChr(player),
+        (unsigned)(UINT_PTR)clone,  S.cloneSlot);
+    LogChrDiag("player", player);
+    LogChrDiag("clone",  clone);
+
+    const volatile DWORD *a = (const volatile DWORD *)player;
+    const volatile DWORD *b = (const volatile DWORD *)clone;
+
+    struct { DWORD lo, hi; const char *name; } ranges[2] = {
+        { 0x000, 0x200, "A  0x000..0x200  id, flags and state" },
+        { 0x700, 0x880, "B  0x700..0x880  the tail, instances live here" },
+    };
+
+    for (int r = 0; r < 2; ++r) {
+        Log("  section %s", ranges[r].name);
+        int shown = 0;
+        for (DWORD off = ranges[r].lo; off < ranges[r].hi; off += 4) {
+            DWORD va = a[off / 4], vb = b[off / 4];
+            if (va == vb) continue;
+            if (++shown > 96) { Log("    (more, truncated)"); break; }
+            Log("    +0x%03X  player 0x%08X (%g)   clone 0x%08X (%g)",
+                off, va, (double)*(const float *)&va, vb, (double)*(const float *)&vb);
+        }
+        if (!shown) Log("    identical");
+    }
+
+    // The render geometry, side by side. This is the part worth reading first.
+    Log("  ---- render geometry ----");
+    DumpInstanceGeometry(player, "player");
+    DumpInstanceGeometry(clone,  "clone");
+
+    Log("  section C  pointer set on one side and zero on the other, whole struct");
+    int holes = 0;
+    for (DWORD off = 0; off < CHR_STRIDE; off += 4) {
+        DWORD va = a[off / 4], vb = b[off / 4];
+        if (LooksLikePointer(va) && vb == 0) {
+            Log("    +0x%03X  player 0x%08X, CLONE IS NULL   <-- missing allocation", off, va);
+            ++holes;
+        } else if (va == 0 && LooksLikePointer(vb)) {
+            Log("    +0x%03X  player NULL, clone 0x%08X", off, vb);
+            ++holes;
+        }
+    }
+    if (!holes) Log("    none, every pointer-shaped field is set on both or neither");
+    Log("---- end CHR diff ----");
+}
+
+// Bind the clone to a walkmesh triangle.
+//
+// WHY THIS IS NEEDED, and it is a real deadlock rather than a tidy-up:
+//
+//  - FFX_Ch_SetPos deliberately writes m_walkmeshTri = -1. That is the engine's
+//    "needs relocating" sentinel, not an error, and every placement path in the
+//    game leaves it that way.
+//  - The recovery normally happens inside FFX_Ch_UpdateMotionAll ->
+//    FFX_Ch_ResolveCollisionsAll -> FFX_Ch_WalkmeshMove on the next frame.
+//  - BUT FFX_Ch_UpdateMotionAll skips any CHR with m_hideFlags != 0 and
+//    m_b181 == 0. So a hidden CHR never gets relocated.
+//  - And FFX_Ch_Allocate sets m_groundMode = 1, which makes the motion pass write
+//    m_posY = m_groundHeight unconditionally. While unbound, m_groundHeight is
+//    still the 0.0 that Allocate's memset left, so the CHR is dragged to Y=0.
+//
+// Put together: spawn -> dragged to Y=0 -> fails the camera test -> hidden ->
+// motion pass skips it -> never relocated -> stays at Y=0 forever. Calling
+// WalkmeshMove ourselves breaks the cycle, and it is exactly what the engine
+// would have done anyway, just not skipped.
+//
+// Velocity is zeroed first because WalkmeshMove adds m_velX/m_velZ to the
+// position before resolving, so with zero velocity the position round-trips and
+// this is a pure bind.
+static void BindWalkmesh(CHRPtr chr, const char *why)
+{
+    if (!chr || !G.WalkmeshMove) return;
+    if (!*G.pWalkmeshTris) {
+        Log("walkmesh bind (%s) skipped: g_ffxWalkmeshTris is null, no walkmesh is loaded", why);
+        return;
+    }
+    short before = *(volatile short *)ChrField(chr, OFF_chr_wmeshTri);
+    float yBefore = 0.0f, x = 0, z = 0;
+    G.GetPos(chr, &x, &yBefore, &z);
+
+    *(volatile float *)ChrField(chr, OFF_chr_velX) = 0.0f;
+    *(volatile float *)ChrField(chr, OFF_chr_velZ) = 0.0f;
+    G.WalkmeshMove(chr);
+    InterlockedIncrement(&S.binds);
+
+    short after = *(volatile short *)ChrField(chr, OFF_chr_wmeshTri);
+    float yAfter = 0.0f;
+    G.GetPos(chr, &x, &yAfter, &z);
+    if (before != after || why[0] == 's') {   // always log the spawn-time one
+        Log("walkmesh bind (%s): tri %d -> %d, groundHeight %.2f, Y %.2f -> %.2f, "
+            "tris=0x%08X count=%d scale=%.4f",
+            why, before, after, (double)ChrF(chr, OFF_chr_groundH),
+            (double)yBefore, (double)yAfter,
+            (unsigned)(UINT_PTR)*G.pWalkmeshTris, *G.pWalkmeshTriCount,
+            (double)*G.pWalkmeshScale);
+    }
+}
+
+// Is this CHR one of ours? The detour must never touch a CHR the game owns, and
+// with several clones live a pointer compare against one slot is not enough.
+static bool IsOurClone(CHRPtr chr)
+{
+    if (!chr) return false;
+    for (LONG i = 0; i < MAX_CLONES; ++i) {
+        LONG sl = S.cloneSlots[i];
+        if (sl >= 0 && ChrFromSlot(sl) == chr) return true;
+    }
+    return false;
+}
+
+// The hook body. Kept deliberately tiny: this runs once per live CHR per frame.
+static int __cdecl Hook_UpdateCameLenAndZClip(CHRPtr chr)
+{
+    fn_Ch_UpdateCameLenAndZClip orig =
+        (fn_Ch_UpdateCameLenAndZClip)g_detourCameLen.trampoline;
+    int r = orig(chr);
+
+    if (S.forceVisible && IsOurClone(chr)) {
+        BYTE *hf = ChrField(chr, OFF_chr_hideFlags);
+        if (*hf & (HIDE_DISP | HIDE_Z)) {
+            *hf &= (BYTE)~(HIDE_DISP | HIDE_Z);
+            InterlockedIncrement(&S.forcedFrames);
+        }
+    }
+    return r;
+}
+
+// ---------------------------------------------------------------------------
+// Spawn
+//
+// This is the recipe from PHASE1_CLONE.md. It must run on the game thread.
+// ---------------------------------------------------------------------------
+
+static bool SpawnClone(void)
+{
+    InterlockedIncrement(&S.spawnAttempts);
+    const int chrId = SelectedChrId();
+
+    if (!*G.pChrArray || *G.pChrCount <= 0) {
+        SetStatus("pool not up yet, load a map first");
+        return false;
+    }
+    LONG entry = FreeCloneEntry();
+    if (entry < 0) {
+        SetStatus("at the clone cap of %d, despawn one first", MAX_CLONES);
+        Log("spawn refused: all %d clone entries are in use", MAX_CLONES);
+        return false;
+    }
+    if (!PoolHasFreeSlot()) {
+        SetStatus("pool full (%d/%d), cannot allocate", G.CountLive(), *G.pChrCount);
+        Log("spawn refused: pool full, %d live of %d", G.CountLive(), *G.pChrCount);
+        return false;
+    }
+
+    // Page in Tidus's data and his field motion set. Both calls are idempotent
+    // and both are already resident whenever Tidus is on screen, so in practice
+    // these return ready on the first try. They matter for the case where the
+    // player is controlling somebody else.
+    G.RomRead(chrId);
+    int dataState = G.DataReadSync(chrId);
+    if (dataState == 1) {
+        SetStatus("chr data still loading, press F9 again");
+        return false;
+    }
+    if (dataState == 2) {
+        // 2 means no cache entry, and the game pops an error box for it. Bail
+        // rather than push on into FFX_Ch_Allocate's fallback path.
+        SetStatus("id %d has no chr cache entry, try an id that is on this map", chrId);
+        Log("spawn refused: FFX_Ch_DataReadSync(%d) returned 2, no cache entry. "
+            "That id's data is not resident on this map.", chrId);
+        return false;
+    }
+    G.MotionSetReadStart(chrId, 0);
+    if (G.MotionSetReadSync(chrId, 0) == 1) {
+        SetStatus("motion set still loading, press F9 again");
+        return false;
+    }
+
+    // Where to put it: next to whoever player 1 is driving.
+    float px = 0.0f, py = 0.0f, pz = 0.0f, pyaw = 0.0f;
+    CHRPtr player = G.GetPlayerChr();
+    if (player && G.IsLiveChr(player) == 0) {
+        G.GetPos(player, &px, &py, &pz);
+        pyaw = ChrF(player, OFF_chr_rotY);
+    } else {
+        Log("spawn: no live player CHR, spawning at the origin");
+    }
+
+    // THE ONE SINGLE-INSTANCE ASSUMPTION IN THE WHOLE PATH.
+    //
+    // FFX_Ch_BindChrData, called from inside FFX_Ch_Allocate, writes
+    // g_ffxTidusChr unconditionally for any CHR whose CHRDATA name is "c001" or
+    // "c101". It is a one-slot cache with no guard, so allocating a second Tidus
+    // silently repoints it at our clone. That matters because FFX_Ch_Dispose
+    // does this:
+    //
+    //     if (GetPlayerChr() == chr || g_ffxTidusChr == chr) {
+    //         SetPlayerChr(nullptr);
+    //         g_ffxTidusChr = nullptr;
+    //     }
+    //
+    // So disposing the clone later would also null player 1's pad binding and
+    // drop their control. Save the real one across the allocation and put it
+    // back. One dword, and it is the entire difference between this working and
+    // breaking player 1 on despawn.
+    // Only ids 1 and 101 can repoint the cache, because FFX_Ch_BindChrData
+    // strcmp's for exactly those two names, but saving it is a dword and costs
+    // nothing for the other ids.
+    CHRPtr realTidus = *G.pTidusChr;
+
+    CHRPtr clone = G.Allocate(chrId);
+
+    if (*G.pTidusChr != realTidus) {
+        Log("note: FFX_Ch_Allocate(%d) repointed g_ffxTidusChr 0x%08X -> 0x%08X, putting it back",
+            chrId, (unsigned)(UINT_PTR)realTidus, (unsigned)(UINT_PTR)*G.pTidusChr);
+    }
+    *G.pTidusChr = realTidus;
+
+    if (!clone) {
+        SetStatus("FFX_Ch_Allocate(%d) returned null", chrId);
+        Log("spawn failed: FFX_Ch_Allocate(%d) returned null", chrId);
+        return false;
+    }
+
+    // Straight after the allocation, before we touch anything. If the attach
+    // completed synchronously then instance is already non-zero here, and if it
+    // was deferred it is still 0 and should fill in within a frame or two.
+    LogChrDiag("post-alloc", clone);
+
+    G.LoadMotionSetSync(chrId, 0);
+    G.SetByte184(clone, 15);        // what field CHRs get, footstep sound selection
+    G.SetPartyIndex(clone, (int)S.spawnPartyIdx);
+    // SPAWN OFFSET. This was +60.0 and that was my own unforced error: 60 world
+    // units to the side can land inside geometry or outside the view, which would
+    // make the clone invisible for an entirely mundane reason. A few units beside
+    // the player is close enough to see and far enough not to interpenetrate.
+    // Fan successive clones out so number two does not land inside number one.
+    const float off = S.spawnOffset * (float)(LiveCloneCount() + 1);
+    G.SetPos(clone, px + off, py, pz);
+    G.SetRot(clone, pyaw);
+
+    // Bind the walkmesh now rather than waiting for a next-frame recovery that
+    // will not come if the CHR is hidden. See BindWalkmesh for why.
+    BindWalkmesh(clone, "spawn");
+
+    LONG slot = SlotFromChr(clone);
+    InterlockedExchange(&S.cloneSlots[entry], slot);
+    InterlockedExchange(&S.activeClone, entry);   // drive the one just spawned
+    InterlockedExchange(&S.cloneSlot, slot);
+    InterlockedExchange(&S.cloneCount, LiveCloneCount());
+    InterlockedExchange(&S.spawnedId, chrId);
+    InterlockedExchange(&S.autoDiffDone, 0);
+    InterlockedExchange(&S.diagUntilFrame, S.frames + 150);
+
+    Log("spawned clone: id=%d CHR=0x%08X slot=%ld at (%.1f %.1f %.1f) yaw=%.3f  pool %d/%d  "
+        "g_ffxTidusChr 0x%08X  partyIdx=%ld  offset=%.1f  motionKill=%u",
+        chrId, (unsigned)(UINT_PTR)clone, slot, px + off, py, pz, pyaw,
+        G.CountLive(), *G.pChrCount, (unsigned)(UINT_PTR)realTidus, S.spawnPartyIdx,
+        (double)off, *G.pMotionKillSwitch);
+    if (player && G.IsLiveChr(player) == 0)
+        LogChrDiag("the player", player);
+    LogChrDiag("post-setup", clone);
+    DumpInstanceGeometry(clone, "clone");
+    if (player && G.IsLiveChr(player) == 0)
+        DumpInstanceGeometry(player, "player");
+    SetStatus("clone %ld of %ld live, id %d", entry + 1, LiveCloneCount(), chrId);
+    return true;
+}
+
+static void DespawnCloneEntry(LONG entry)
+{
+    if (entry < 0 || entry >= MAX_CLONES) return;
+    LONG slot = S.cloneSlots[entry];
+    CHRPtr chr = ChrFromSlot(slot);
+    if (!chr || G.IsLiveChr(chr) != 0) {
+        InterlockedExchange(&S.cloneSlots[entry], -1);
+        InterlockedExchange(&S.cloneCount, LiveCloneCount());
+        SetStatus("clone %ld was already gone", entry + 1);
+        return;
+    }
+    // Stop it moving first, so the last thing the engine sees is a still CHR.
+    G.SetMoveSpeed(chr, 0.0f);
+
+    // Same hazard as on spawn, from the other side: FFX_Ch_Dispose nulls
+    // g_ffxTidusChr and the player binding if either points at the CHR being
+    // disposed. We restored g_ffxTidusChr on spawn so it should point at the
+    // real Tidus, but check rather than trust, because an intervening map load
+    // or a second spawn could have changed it.
+    CHRPtr realTidus = *G.pTidusChr;
+    bool cacheWasOurs = (realTidus == chr);
+    if (cacheWasOurs)
+        Log("despawn: g_ffxTidusChr unexpectedly points at the clone, clearing it first");
+
+    G.DisposeIfLive(chr);
+    InterlockedExchange(&S.cloneSlots[entry], -1);
+    InterlockedExchange(&S.cloneCount, LiveCloneCount());
+    Log("despawned clone %ld from pool slot %ld, pool now %d/%d",
+        entry + 1, slot, G.CountLive(), *G.pChrCount);
+    SetStatus("despawned clone %ld, %ld left", entry + 1, LiveCloneCount());
+
+    // Move the input focus to something that still exists.
+    if (S.activeClone == entry && LiveCloneCount() > 0) CycleActiveClone();
+}
+
+// F10 despawns whichever clone the input is driving.
+static void DespawnClone(void)
+{
+    if (LiveCloneCount() == 0) { SetStatus("no live clone to despawn"); return; }
+    DespawnCloneEntry(S.activeClone);
+}
+
+// Shift+F10 clears the lot. Useful before a map change, since the pool is
+// reallocated and the slots stop meaning anything.
+static void DespawnAllClones(void)
+{
+    LONG n = LiveCloneCount();
+    if (!n) { SetStatus("no clones to despawn"); return; }
+    for (LONG i = 0; i < MAX_CLONES; ++i)
+        if (S.cloneSlots[i] >= 0) DespawnCloneEntry(i);
+    Log("despawned all %ld clones", n);
+    SetStatus("despawned all %ld", n);
+}
+
+// ---------------------------------------------------------------------------
+// Input and the per-frame drive
+//
+// HEADING CONVENTION, which is the thing to get right.
+//   FFX_Ch_UpdateMotionAll integrates as
+//       m_velX = cos(m_moveDir) * k
+//       m_velZ = sin(m_moveDir) * k
+//   so m_moveDir is a radian angle in the XZ plane with 0 along +X and pi/2
+//   along +Z. Our arrow keys produce a world direction (dx, dz) and the heading
+//   is therefore atan2f(dz, dx).
+//
+//   Which arrow should mean which world direction depends on where the camera is
+//   pointing, and this prototype does NOT yet read the camera. So the mapping
+//   below is world-relative with a yaw bias you can dial in live from the control
+//   window. Set the bias until up on the keyboard is up on the screen for the map
+//   you are standing in. Making this properly camera-relative is the next step
+//   and the window is where it will be switched on.
+//
+//   Speed selects the animation on its own: FFX_Ch_AutoLocomotionAnim plays idle
+//   at exactly 0.0, walk below m_runThreshold (18.0 by default) and run above
+//   it. So the walk and run speeds in the window are also the gait control, and
+//   there is nothing else to drive.
+// ---------------------------------------------------------------------------
+
+static bool GameHasFocus(void)
+{
+    if (!S.requireForeground) return true;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+    return pid == GetCurrentProcessId();
+}
+
+// The active camera's yaw, in the same convention as m_moveDir.
+//
+// This is lifted from the game's own FFX_Came_GetYaw 0x7BCF20, which is:
+//
+//     ecx = g_ffxCameActiveSlot
+//     FFX_Came_VecToPolar(ecx + 0x50, ecx + 0x66C, &theta, NULL, NULL)
+//
+// and VecToPolar computes atan2(delta.z, delta.x) of (pos - origin), so the yaw
+// is atan2(ref.z - cam.z, ref.x - cam.x) with ref the look-at target at +0x50 and
+// cam the eye at +0x66C. m_moveDir uses the identical zero axis and direction
+// (verified in FFX_Ch_UpdateMotionAll: velX = cos(moveDir), velZ = sin(moveDir)),
+// so the two combine with no conversion at all.
+//
+// WHY WE DO THE atan2 OURSELVES rather than calling FFX_Came_GetYaw.
+//   VecToPolar does its arithmetic through fixed global scratch at 0xC8F7D0, which
+//   it shares with the look-at matrix builder. Calling it is fine from the game
+//   thread during the step phase and not fine from anywhere else. Reading the two
+//   vectors touches nothing, so it is safe unconditionally and one less thing to
+//   reason about later.
+//
+// WHY NOT g_ffxPlayerCamYaw 0x130079C, which is a plain float sitting right there.
+//   It is only refreshed inside stepControl's analogue-stick branch, so it is
+//   skipped when control is disabled, skipped when the dpad branch is taken, and
+//   in control mode 3 only refreshed past a 0.349 rad change. It goes stale during
+//   cutscenes. The slot is always current.
+//
+// The slot pointer is validated rather than trusted: it must land exactly on one
+// of the three slots. It should never be null once FFX_Came_Init has run, but we
+// attach mid-game and dereference +0x66C off it, so this is cheap insurance.
+static bool GetCameraYaw(float *outYaw)
+{
+    BYTE *slot = *G.pCameActiveSlot;
+    if (!slot) return false;
+    ptrdiff_t d = slot - G.cameSlots;
+    if (d < 0 || (d % CAME_SLOT_STRIDE) != 0) return false;
+    if ((DWORD)(d / CAME_SLOT_STRIDE) >= CAME_SLOT_COUNT) return false;
+
+    const volatile float *ref = (const volatile float *)(slot + OFF_came_refPos);
+    const volatile float *cam = (const volatile float *)(slot + OFF_came_camPos);
+    float dx = ref[0] - cam[0];
+    float dz = ref[2] - cam[2];
+    if (dx == 0.0f && dz == 0.0f) return false;   // degenerate, eye sits on target
+
+    *outYaw = atan2f(dz, dx);
+    return true;
+}
+
+// A second gamepad, read straight out of Phyre's pad slot.
+//
+// Reading the bytes rather than calling Phyre__PApplication__isPadButtonDown
+// 0x629CA0 is deliberate. That function decompiles to exactly
+// `*(BYTE *)(dev + semantic - 11 + 24) != 0` after two bounds checks, so the call
+// buys nothing, and going direct avoids a __thiscall thunk and any question about
+// when it is safe to call. The bounds checks are reproduced below.
+//
+// Freshness is not our problem: the device poll runs from _WinMain through
+// Phyre__PInput__updateAndCheck every frame, so these fields are current no
+// matter what FFX code path we are on.
+//
+// One caveat to be aware of rather than fix: slot assignment is DirectInput
+// enumeration order, nothing clears a slot on disconnect, and a device keeps its
+// slot for the life of the process. So which physical pad is slot 1 is not
+// something the game decides. The UI shows which slots are bound so it can be
+// checked rather than assumed.
+struct PadState {
+    bool  bound;
+    float lx, ly;      // -1..1, ly positive is DOWN as the engine stores it
+    bool  cross, circle, square, triangle, l1, r1;
+    bool  up, down, left, right;
+};
+
+static BYTE *PadDevice(LONG slot)
+{
+    if (slot < 0 || (DWORD)slot >= PAD_SLOT_COUNT) return NULL;
+    BYTE *app = *G.pApplication;
+    if (!app) return NULL;
+    BYTE *mapper = *(BYTE **)(app + OFF_app_inputMapper);
+    if (!mapper) return NULL;
+    return *(BYTE **)(mapper + OFF_mapper_pads + 4 * (DWORD)slot);
+}
+
+static bool PadButton(BYTE *dev, int semantic)
+{
+    if ((unsigned)(semantic - 11) >= 16) return false;
+    return *(volatile BYTE *)(dev + OFF_pad_buttonsLatched + (semantic - 11)) != 0;
+}
+
+static bool ReadPad(LONG slot, PadState *out)
+{
+    memset(out, 0, sizeof(*out));
+    BYTE *dev = PadDevice(slot);
+    if (!dev) return false;
+    if (*(volatile BYTE *)(dev + OFF_pad_connected) == 0) return false;
+
+    out->bound = true;
+    out->lx = (float)*(volatile int *)(dev + OFF_pad_axisLX) / 255.0f;
+    out->ly = (float)*(volatile int *)(dev + OFF_pad_axisLY) / 255.0f;
+    out->cross    = PadButton(dev, PAD_CROSS);
+    out->circle   = PadButton(dev, PAD_CIRCLE);
+    out->square   = PadButton(dev, PAD_SQUARE);
+    out->triangle = PadButton(dev, PAD_TRIANGLE);
+    out->l1       = PadButton(dev, PAD_L1);
+    out->r1       = PadButton(dev, PAD_R1);
+    out->up       = PadButton(dev, PAD_UP);
+    out->down     = PadButton(dev, PAD_DOWN);
+    out->left     = PadButton(dev, PAD_LEFT);
+    out->right    = PadButton(dev, PAD_RIGHT);
+    return true;
+}
+
+static LONG CountBoundPads(void)
+{
+    LONG n = 0;
+    for (DWORD i = 0; i < PAD_SLOT_COUNT; ++i)
+        if (PadDevice((LONG)i)) ++n;
+    return n;
+}
+
+static void DriveClone(CHRPtr chr)
+{
+    float fwd = 0.0f, right = 0.0f;
+    float mag = 0.0f;           // 0..1, only the pad produces a partial magnitude
+    bool  run = false;
+    bool  fromPad = false;
+
+    PadState pad;
+    bool padOk = ReadPad(S.padIndex, &pad);
+    S.padBound    = padOk;
+    S.padsPresent = CountBoundPads();
+
+    bool wantPad = (S.inputSource == 2) || (S.inputSource == 0 && padOk);
+
+    if (S.inputEnabled && (GameHasFocus() || wantPad)) {
+        if (wantPad && padOk) {
+            fromPad = true;
+            // The engine stores LY positive-down, so forward is -ly. The game's own
+            // deadzone is a per-axis band rather than radial, but a radial one feels
+            // better and nothing downstream cares, so this uses radial.
+            right = pad.lx;
+            fwd   = -pad.ly;
+            mag   = sqrtf(right * right + fwd * fwd);
+            if (mag < 0.25f) {
+                mag = 0.0f; right = 0.0f; fwd = 0.0f;
+            } else if (mag > 1.0f) {
+                mag = 1.0f;
+            }
+            // dpad is full deflection, same as the game treats it
+            if (pad.up || pad.down || pad.left || pad.right) {
+                fwd   = (pad.up ? 1.0f : 0.0f) - (pad.down ? 1.0f : 0.0f);
+                right = (pad.right ? 1.0f : 0.0f) - (pad.left ? 1.0f : 0.0f);
+                mag   = 1.0f;
+            }
+            // Cross is the WALK modifier in the shipped game, not the run button:
+            // stepControl picks 16.0 while it is held and 38.0 otherwise, and 16 is
+            // below the CHR run threshold of 18 while 38 is above it. Matched here.
+            run = !pad.cross;
+        } else if (GameHasFocus()) {
+            if (GetAsyncKeyState(VK_UP)    & 0x8000) fwd   += 1.0f;
+            if (GetAsyncKeyState(VK_DOWN)  & 0x8000) fwd   -= 1.0f;
+            if (GetAsyncKeyState(VK_RIGHT) & 0x8000) right += 1.0f;
+            if (GetAsyncKeyState(VK_LEFT)  & 0x8000) right -= 1.0f;
+            run = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+            mag = (fwd != 0.0f || right != 0.0f) ? 1.0f : 0.0f;
+        }
+    }
+    S.usingPad = fromPad;
+
+    float camYaw = 0.0f;
+    bool haveCam = GetCameraYaw(&camYaw);
+    S.camYaw      = camYaw;
+    S.camYawValid = haveCam;
+
+    if (fwd != 0.0f || right != 0.0f) {
+        // This is exactly what FFX_Player__stepControl does with the left stick:
+        //
+        //     desired  = atan2(right, forward)        note the argument order
+        //     m_moveDir = camYaw - desired
+        //
+        // confirmed at 0x82D658 for the atan2 and 0x82D786 for the subtraction and
+        // the fchs that negates it. The yaw bias stays available on top because it
+        // costs nothing and makes a wrong convention something you can dial out in
+        // game rather than rebuild for.
+        float desired = atan2f(right, fwd);
+        float heading = (S.cameraRelative && haveCam) ? (camYaw - desired) : desired;
+        heading += S.yawBiasDeg * 3.14159265358979f / 180.0f;
+
+        // Scale by stick deflection the way the game does, so a half-pushed stick
+        // walks. The keyboard always reports magnitude 1, so it is unaffected.
+        float speed = (run ? S.runSpeed : S.walkSpeed) * (mag > 0.0f ? mag : 1.0f);
+
+        G.SetMoveDir(chr, heading);
+        G.SetMoveSpeed(chr, speed);
+        // bit 0x400 is what enables turn-toward-heading, and the player path sets
+        // it every substep rather than once, so we do the same.
+        G.SetFlags1Bit400(chr, 1);
+    } else {
+        // Exactly 0.0 is what selects the idle animation, so this is both "stop"
+        // and "play idle".
+        G.SetMoveSpeed(chr, 0.0f);
+    }
+}
+
+static void PublishState(CHRPtr chr)
+{
+    S.poolLive  = G.CountLive();
+    S.poolTotal = *G.pChrCount;
+    if (!chr) {
+        S.meshLive = 0;
+        return;
+    }
+    float x = 0, y = 0, z = 0;
+    G.GetPos(chr, &x, &y, &z);
+    S.posX = x; S.posY = y; S.posZ = z;
+    S.curSpeed   = ChrF(chr, OFF_chr_speed);
+    S.curHeading = ChrF(chr, OFF_chr_moveDir);
+    S.curRotY    = ChrF(chr, OFF_chr_rotY);
+    S.wmeshTri   = (LONG)*(volatile short *)ChrField(chr, OFF_chr_wmeshTri);
+    S.meshLive   = ChrD(chr, OFF_chr_instance) != 0;
+    S.meshLive2  = ChrD(chr, OFF_chr_instance2) != 0;
+    S.hideFlags  = *(volatile BYTE *)ChrField(chr, OFF_chr_hideFlags);
+    S.flags1     = (LONG)ChrD(chr, OFF_chr_flags1);
+    S.flags2     = (LONG)ChrD(chr, OFF_chr_flags2);
+    S.partyIdx   = (LONG)ChrD(chr, OFF_chr_partyIdx);
+    LONG noCull = 0;
+    S.instCount = InstanceMeshCount(chr, &noCull);
+    CHRPtr player = G.GetPlayerChr();
+    S.instCountPlayer = (player && G.IsLiveChr(player) == 0)
+                      ? InstanceMeshCount(player, NULL) : -1;
+    S.f354    = ChrF(chr, OFF_chr_f354);
+    S.cameLen = ChrF(chr, OFF_chr_cameLen);
+    S.clipZ   = ChrF(chr, OFF_chr_clipZ);
+    LONG shown = -1;
+    S.meshesLinked = CountLinkedMeshes(chr, &shown);
+    S.instShown    = shown;
+    strcpy_s(S.drawGate, sizeof(S.drawGate), FirstFailingDrawGate(chr));
+}
+
+// ---------------------------------------------------------------------------
+// The per-frame hook: FFXApplication::animate, vtable slot +0x10.
+//
+// __thiscall, so __fastcall with a dummy second parameter is the binary
+// compatible way to express it. The return value is NOT optional: Phyre's
+// frameTick treats a non-zero return as fatal and tears the game down with
+// "App failed during animate". We always return the original result unchanged.
+// ---------------------------------------------------------------------------
+
+typedef int (__fastcall *AnimateFn)(void *self, void *edxUnused);
+static AnimateFn s_origAnimate = NULL;
+
+static void PollHotkeys(void)
+{
+    // Edge-detect so a held key fires once. Tracked here rather than with
+    // GetAsyncKeyState's low bit because that bit is cleared by whoever reads it
+    // first and the game is also polling.
+    static bool prevF4 = false;
+    static bool prevF5 = false, prevF6 = false, prevF7 = false, prevF8 = false;
+    static bool prevF9 = false, prevF10 = false, prevF11 = false;
+    bool f4  = (GetAsyncKeyState(VK_F4)  & 0x8000) != 0;
+    bool f5  = (GetAsyncKeyState(VK_F5)  & 0x8000) != 0;
+    bool f6  = (GetAsyncKeyState(VK_F6)  & 0x8000) != 0;
+    bool f7  = (GetAsyncKeyState(VK_F7)  & 0x8000) != 0;
+    bool f8  = (GetAsyncKeyState(VK_F8)  & 0x8000) != 0;
+    bool f9  = (GetAsyncKeyState(VK_F9)  & 0x8000) != 0;
+    bool f10 = (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
+    bool f11 = (GetAsyncKeyState(VK_F11) & 0x8000) != 0;
+
+    if (f7 && !prevF7) {
+        // Cycle which chr id F9 spawns. Shift walks backwards.
+        LONG step = (GetAsyncKeyState(VK_SHIFT) & 0x8000) ? (SPAWNABLE_COUNT - 1) : 1;
+        LONG next = (S.idIndex + step) % SPAWNABLE_COUNT;
+        InterlockedExchange(&S.idIndex, next);
+        SetStatus("next spawn: chr id %d", SPAWNABLE_IDS[next]);
+        Log("spawn id is now %d (index %ld of %d)", SPAWNABLE_IDS[next], next, SPAWNABLE_COUNT);
+    }
+    if (f5 && !prevF5) {
+        if (!g_detourCameLen.installed) {
+            SetStatus("force-visible needs the detour, which did not install");
+        } else {
+            InterlockedExchange(&S.forceVisible, !S.forceVisible);
+            SetStatus("force visible %s", S.forceVisible ? "ON" : "off");
+            Log("force visible %s (Disp/Z cleared on the clone only). forced frames so far: %ld",
+                S.forceVisible ? "ON" : "off", S.forcedFrames);
+        }
+    }
+    if (f6 && !prevF6) {
+        InterlockedExchange(&S.disableCull, !S.disableCull);
+        SetStatus("cull override %s", S.disableCull ? "ON" : "off");
+    }
+    if (f8  && !prevF8)  InterlockedExchange(&S.requestDiff, 1);
+    if (f9  && !prevF9)  InterlockedExchange(&S.requestSpawn, 1);
+    if (f10 && !prevF10) {
+        if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+            InterlockedExchange(&S.requestDespawnAll, 1);
+        else
+            InterlockedExchange(&S.requestDespawn, 1);
+    }
+    // F4 hands the arrow keys to the next clone. Safe to read without checking
+    // alt, because alt+F4 would have closed the window before we got here.
+    if (f4 && !prevF4) CycleActiveClone();
+    if (f11 && !prevF11) ToggleControlWindow();
+
+    prevF4 = f4; prevF5 = f5; prevF6 = f6; prevF7 = f7; prevF8 = f8;
+    prevF9 = f9; prevF10 = f10; prevF11 = f11;
+}
+
+static int __fastcall HookedAnimate(void *self, void *edxUnused)
+{
+    // Run the game first so we are writing into a CHR the engine has already
+    // stepped this frame, and so a fault in our code cannot stop the game from
+    // having run.
+    int result = s_origAnimate(self, edxUnused);
+
+    LONG n = InterlockedIncrement(&S.frames);
+
+    if (GameHasFocus())
+        PollHotkeys();
+
+    ApplyCullOverride();
+
+    if (InterlockedExchange(&S.requestDespawnAll, 0)) DespawnAllClones();
+    if (InterlockedExchange(&S.requestDespawn, 0))    DespawnClone();
+    if (InterlockedExchange(&S.requestSpawn, 0))      SpawnClone();
+
+    // Service every clone, then drive only the one holding the input focus. The
+    // others are explicitly stopped rather than left alone, because DriveClone is
+    // what writes m_speed and a clone that lost focus mid-stride would otherwise
+    // keep walking forever on its last speed.
+    LONG live = 0;
+    for (LONG i = 0; i < MAX_CLONES; ++i) {
+        LONG sl = S.cloneSlots[i];
+        if (sl < 0) continue;
+        CHRPtr c = ChrFromSlot(sl);
+        if (!c || G.IsLiveChr(c) != 0) {
+            // The pool is freed and reallocated on every map transition, so a
+            // clone does not survive one. Notice rather than keep writing into a
+            // slot that now belongs to somebody else.
+            Log("clone %ld (pool slot %ld) is no longer live (map change?), dropping it",
+                i + 1, sl);
+            InterlockedExchange(&S.cloneSlots[i], -1);
+            continue;
+        }
+        ++live;
+        // Keep it on the walkmesh. While a CHR is hidden the engine's own motion
+        // pass skips it, so this is the only thing that would relocate it, and
+        // without a binding its Y is forced to m_groundHeight by ground mode 1.
+        if (S.autoBindWalkmesh && *(volatile short *)ChrField(c, OFF_chr_wmeshTri) == -1)
+            BindWalkmesh(c, "auto");
+        if (i != S.activeClone)
+            G.SetMoveSpeed(c, 0.0f);
+    }
+    InterlockedExchange(&S.cloneCount, live);
+    if (live == 0 && S.cloneSlot >= 0)
+        SetStatus("clones lost on map change, press F9 again");
+
+    CHRPtr chr = ActiveClone();
+    InterlockedExchange(&S.cloneSlot, chr ? SlotFromChr(chr) : -1);
+
+    if (chr && G.IsLiveChr(chr) == 0) {
+        DriveClone(chr);
+        PublishState(chr);
+
+        // Watch the render fields for the first few seconds after a spawn. The
+        // question this answers is whether CHR+0x830 fills in late (a deferred
+        // attach that eventually drains) or never (an attach that silently did
+        // nothing). Log the first 10 frames then thin out, because a deferred
+        // attach should resolve inside one or two frames.
+        if (n <= S.diagUntilFrame) {
+            LONG age = n - (S.diagUntilFrame - 150);
+            if (age <= 10 || age == 20 || age == 30 || age == 60 || age == 90 || age == 150) {
+                char tag[24];
+                _snprintf_s(tag, sizeof(tag), _TRUNCATE, "f+%ld", age);
+                LogChrDiag(tag, chr);
+            }
+        }
+
+        // If the mesh never arrived, dump the diff by itself. The whole point is
+        // that the user should not have to press a key to catch this.
+        if (!S.autoDiffDone && n == S.diagUntilFrame) {
+            InterlockedExchange(&S.autoDiffDone, 1);
+            // 150 frames in, whatever state it has settled into is the interesting
+            // one. Dump it unconditionally rather than guessing which case applies.
+            Log("AUTO DUMP at f+150. draw gate: %s", FirstFailingDrawGate(chr));
+            DumpChrDiff();
+        }
+    } else {
+        PublishState(NULL);
+    }
+
+    // Serviced after the drive, so the diff sees a fully stepped frame.
+    if (InterlockedExchange(&S.requestDiff, 0)) DumpChrDiff();
+
+    if (n <= 3 || n == 300 || (n % 3600) == 0)
+        Log("animate #%ld  %ld clones live, driving #%ld  pool %ld/%ld",
+            n, S.cloneCount, S.activeClone + 1, S.poolLive, S.poolTotal);
+
+    return result;
+}
+
+static bool InstallAnimateHook(void)
+{
+    DWORD *slot = (DWORD *)Rva(RVA_vtslot_animate);
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(slot, sizeof(DWORD), PAGE_READWRITE, &oldProtect)) {
+        Log("VirtualProtect on the animate slot failed, GetLastError=%lu", GetLastError());
+        return false;
+    }
+    s_origAnimate = (AnimateFn)(UINT_PTR)*slot;
+    *slot = (DWORD)(UINT_PTR)&HookedAnimate;
+    DWORD ignored = 0;
+    VirtualProtect(slot, sizeof(DWORD), oldProtect, &ignored);
+    Log("animate hook installed: slot 0x%08X  0x%08X -> 0x%08X",
+        (unsigned)(UINT_PTR)slot, (unsigned)(UINT_PTR)s_origAnimate,
+        (unsigned)(UINT_PTR)&HookedAnimate);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// The control window
+//
+// WHY NOT IMGUI
+//   ImGui is the obvious choice, but drawing ImGui inside this game means hooking
+//   IDXGISwapChain::Present and the window procedure, building a D3D11 render
+//   backend, and vendoring the ImGui sources into this repo. That is a worthwhile
+//   second step and nothing here blocks it. For getting the clone moving today it
+//   is all risk and no information: if the game crashes you cannot tell whether
+//   the clone logic or the renderer hook did it. So this is a plain Win32 tool
+//   window on its own thread. Zero dependencies beyond user32, it cannot interact
+//   with the game's renderer at all, and it gives a live readout and live tuning,
+//   which is the part that actually matters while dialling the controls in.
+//
+//   When ImGui does go in, the state it shows and the requests it raises are
+//   exactly the Shared struct above, so only the drawing changes.
+//
+// THREADING
+//   This runs on its own thread with its own message loop. It reads the published
+//   state and writes tuning values and request flags. It NEVER calls a game
+//   function and never dereferences a CHR. Keep it that way.
+// ---------------------------------------------------------------------------
+
+#define ID_BTN_SPAWN     1001
+#define ID_BTN_DESPAWN   1002
+#define ID_BTN_YAW_M90   1010
+#define ID_BTN_YAW_M15   1011
+#define ID_BTN_YAW_P15   1012
+#define ID_BTN_YAW_P90   1013
+#define ID_BTN_YAW_ZERO  1014
+#define ID_BTN_WALK_DN   1020
+#define ID_BTN_WALK_UP   1021
+#define ID_BTN_RUN_DN    1022
+#define ID_BTN_RUN_UP    1023
+#define ID_CHK_INPUT     1030
+#define ID_CHK_FOCUS     1031
+#define ID_CHK_CAMREL    1032
+#define ID_BTN_SRC       1040
+#define ID_BTN_PAD_DN    1041
+#define ID_BTN_PAD_UP    1042
+#define ID_BTN_ID_DN     1060
+#define ID_BTN_ID_UP     1061
+#define ID_BTN_DIFF      1062
+#define ID_BTN_NOCULL     1064
+#define ID_BTN_FORCEVIS   1065
+#define ID_BTN_DESPAWNALL 1066
+#define ID_BTN_NEXTCLONE  1067
+#define ID_BTN_PIDX      1063
+#define ID_STATIC_STATE  1050
+#define ID_TIMER_REFRESH 1
+
+static HWND   g_hwnd     = NULL;
+static HWND   g_hState   = NULL;
+static HANDLE g_uiThread = NULL;
+static DWORD  g_uiTid    = 0;
+
+static HWND MakeChild(HWND parent, const char *cls, const char *text, DWORD style,
+                      int x, int y, int w, int h, int id)
+{
+    return CreateWindowExA(0, cls, text, WS_CHILD | WS_VISIBLE | style,
+                           x, y, w, h, parent, (HMENU)(UINT_PTR)id,
+                           (HINSTANCE)GetModuleHandleW(NULL), NULL);
+}
+
+static void RefreshStateText(void)
+{
+    if (!g_hState) return;
+    const char *gait = "idle";
+    if (S.curSpeed > 0.0f) gait = (S.curSpeed > 18.0f) ? "run" : "walk";
+
+    char buf[1200];
+    _snprintf_s(buf, sizeof(buf), _TRUNCATE,
+        "clones    : %ld of %d live, driving #%ld, last id %ld   (F4 cycles)\r\n"
+        "next spawn: chr id %d   (F7 cycles, shift+F7 back)\r\n"
+        "status    : %s\r\n"
+        "pool      : %ld live of %ld slots\r\n"
+        "mesh      : %s   sub-meshes: %ld   player has: %ld\r\n"
+        "hide      : 0x%02lX  %s\r\n"
+        "cull      : %s   (F6 toggles the engine override)\r\n"
+        "force vis : %s   cleared on %ld frames   (F5)\r\n"
+        "alpha     : %.3f   cameLen %.0f / clipZ %.0f\r\n"
+        "linked    : %ld of %ld sub-meshes   instance shown byte: %ld\r\n"
+        "walkmesh  : tri %ld   binds %ld   offset %.1f\r\n"
+        "DRAW GATE : %s\r\n"
+        "party idx : %ld\r\n"
+        "flags     : flags1 0x%08lX  flags2 0x%08lX\r\n"
+        "position  : %.1f  %.1f  %.1f\r\n"
+        "speed     : %.2f  (%s)\r\n"
+        "heading   : %.3f rad   facing %.3f rad\r\n"
+        "camera    : %s yaw %.3f rad   input: %s\r\n"
+        "pad       : slot %ld %s, %ld bound   driving with: %s\r\n"
+        "yaw bias  : %+.0f deg\r\n"
+        "walk/run  : %.1f / %.1f\r\n"
+        "frames    : %ld      spawn attempts: %ld",
+        S.cloneCount, MAX_CLONES, S.activeClone + 1, S.spawnedId,
+        SelectedChrId(),
+        (const char *)S.status,
+        S.poolLive, S.poolTotal,
+        S.meshLive ? "attached" : "NOT YET",
+        S.instCount, S.instCountPlayer,
+        (unsigned long)S.hideFlags, HideFlagNames((BYTE)S.hideFlags),
+        S.cullWasForced ? "OVERRIDDEN, everything visible" : "normal",
+        S.forceVisible ? "ON, clone only" : "off", S.forcedFrames,
+        S.f354, S.cameLen, S.clipZ,
+        S.meshesLinked, S.instCount, S.instShown,
+        S.wmeshTri, S.binds, S.spawnOffset,
+        S.drawGate,
+        S.partyIdx,
+        (unsigned long)S.flags1, (unsigned long)S.flags2,
+        S.posX, S.posY, S.posZ,
+        S.curSpeed, gait,
+        S.curHeading, S.curRotY,
+        S.camYawValid ? "ok " : "N/A", S.camYaw,
+        S.cameraRelative ? "camera-relative" : "world",
+        S.padIndex, S.padBound ? "connected" : "absent", S.padsPresent,
+        S.usingPad ? "gamepad" : "keyboard",
+        S.yawBiasDeg,
+        S.walkSpeed, S.runSpeed,
+        S.frames, S.spawnAttempts);
+    SetWindowTextA(g_hState, buf);
+}
+
+static LRESULT CALLBACK UiWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg) {
+    case WM_CREATE: {
+        int y = 8;
+        g_hState = MakeChild(hwnd, "STATIC", "", 0, 10, y, 380, 216, ID_STATIC_STATE);
+        y += 224;
+
+        MakeChild(hwnd, "BUTTON", "Spawn (F9)",    BS_PUSHBUTTON, 10,  y, 110, 26, ID_BTN_SPAWN);
+        MakeChild(hwnd, "BUTTON", "Despawn (F10)", BS_PUSHBUTTON, 128, y, 110, 26, ID_BTN_DESPAWN);
+        MakeChild(hwnd, "BUTTON", "Diff (F8)",     BS_PUSHBUTTON, 246, y, 110, 26, ID_BTN_DIFF);
+        y += 30;
+        MakeChild(hwnd, "BUTTON", "Despawn all",     BS_PUSHBUTTON, 10,  y, 110, 26, ID_BTN_DESPAWNALL);
+        MakeChild(hwnd, "BUTTON", "Next clone (F4)", BS_PUSHBUTTON, 128, y, 130, 26, ID_BTN_NEXTCLONE);
+        y += 30;
+        MakeChild(hwnd, "BUTTON", "no-cull override (F6)", BS_PUSHBUTTON, 10, y, 180, 24, ID_BTN_NOCULL);
+        MakeChild(hwnd, "BUTTON", "force visible (F5)", BS_PUSHBUTTON, 196, y, 160, 24, ID_BTN_FORCEVIS);
+        y += 34;
+
+        MakeChild(hwnd, "STATIC", "chr id", 0, 10, y + 5, 46, 18, 0);
+        MakeChild(hwnd, "BUTTON", "-", BS_PUSHBUTTON,  76, y, 30, 24, ID_BTN_ID_DN);
+        MakeChild(hwnd, "BUTTON", "+", BS_PUSHBUTTON, 110, y, 30, 24, ID_BTN_ID_UP);
+        MakeChild(hwnd, "STATIC", "party idx", 0, 160, y + 5, 60, 18, 0);
+        MakeChild(hwnd, "BUTTON", "cycle", BS_PUSHBUTTON, 226, y, 64, 24, ID_BTN_PIDX);
+        y += 32;
+
+        MakeChild(hwnd, "STATIC", "yaw bias", 0, 10, y + 5, 60, 18, 0);
+        MakeChild(hwnd, "BUTTON", "-90", BS_PUSHBUTTON,  76, y, 46, 24, ID_BTN_YAW_M90);
+        MakeChild(hwnd, "BUTTON", "-15", BS_PUSHBUTTON, 126, y, 46, 24, ID_BTN_YAW_M15);
+        MakeChild(hwnd, "BUTTON", "+15", BS_PUSHBUTTON, 176, y, 46, 24, ID_BTN_YAW_P15);
+        MakeChild(hwnd, "BUTTON", "+90", BS_PUSHBUTTON, 226, y, 46, 24, ID_BTN_YAW_P90);
+        MakeChild(hwnd, "BUTTON", "0",   BS_PUSHBUTTON, 276, y, 36, 24, ID_BTN_YAW_ZERO);
+        y += 32;
+
+        MakeChild(hwnd, "STATIC", "walk", 0, 10, y + 5, 40, 18, 0);
+        MakeChild(hwnd, "BUTTON", "-", BS_PUSHBUTTON,  76, y, 30, 24, ID_BTN_WALK_DN);
+        MakeChild(hwnd, "BUTTON", "+", BS_PUSHBUTTON, 110, y, 30, 24, ID_BTN_WALK_UP);
+        MakeChild(hwnd, "STATIC", "run", 0, 160, y + 5, 40, 18, 0);
+        MakeChild(hwnd, "BUTTON", "-", BS_PUSHBUTTON, 226, y, 30, 24, ID_BTN_RUN_DN);
+        MakeChild(hwnd, "BUTTON", "+", BS_PUSHBUTTON, 260, y, 30, 24, ID_BTN_RUN_UP);
+        y += 32;
+
+        HWND c1 = MakeChild(hwnd, "BUTTON", "arrow keys drive the clone",
+                            BS_AUTOCHECKBOX, 10, y, 240, 20, ID_CHK_INPUT);
+        SendMessageA(c1, BM_SETCHECK, S.inputEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+        y += 24;
+        HWND c2 = MakeChild(hwnd, "BUTTON", "only while the game has focus",
+                            BS_AUTOCHECKBOX, 10, y, 240, 20, ID_CHK_FOCUS);
+        SendMessageA(c2, BM_SETCHECK, S.requireForeground ? BST_CHECKED : BST_UNCHECKED, 0);
+        y += 24;
+        HWND c3 = MakeChild(hwnd, "BUTTON", "camera-relative (off = world axes)",
+                            BS_AUTOCHECKBOX, 10, y, 280, 20, ID_CHK_CAMREL);
+        SendMessageA(c3, BM_SETCHECK, S.cameraRelative ? BST_CHECKED : BST_UNCHECKED, 0);
+        y += 28;
+
+        MakeChild(hwnd, "STATIC", "input", 0, 10, y + 5, 40, 18, 0);
+        MakeChild(hwnd, "BUTTON", "source: auto", BS_PUSHBUTTON, 76, y, 120, 24, ID_BTN_SRC);
+        MakeChild(hwnd, "STATIC", "pad slot", 0, 206, y + 5, 56, 18, 0);
+        MakeChild(hwnd, "BUTTON", "-", BS_PUSHBUTTON, 266, y, 30, 24, ID_BTN_PAD_DN);
+        MakeChild(hwnd, "BUTTON", "+", BS_PUSHBUTTON, 300, y, 30, 24, ID_BTN_PAD_UP);
+
+        SetTimer(hwnd, ID_TIMER_REFRESH, 100, NULL);
+        return 0;
+    }
+
+    case WM_TIMER:
+        if (wp == ID_TIMER_REFRESH) RefreshStateText();
+        return 0;
+
+    case WM_COMMAND: {
+        int id = LOWORD(wp);
+        switch (id) {
+        // Button clicks only ever raise a request. The game thread does the work.
+        case ID_BTN_SPAWN:    InterlockedExchange(&S.requestSpawn, 1);   break;
+        case ID_BTN_DESPAWN:    InterlockedExchange(&S.requestDespawn, 1); break;
+        case ID_BTN_DESPAWNALL: InterlockedExchange(&S.requestDespawnAll, 1); break;
+        case ID_BTN_NEXTCLONE:  CycleActiveClone(); break;
+        case ID_BTN_DIFF:     InterlockedExchange(&S.requestDiff, 1);    break;
+        case ID_BTN_NOCULL:   InterlockedExchange(&S.disableCull, !S.disableCull); break;
+        case ID_BTN_FORCEVIS:
+            if (g_detourCameLen.installed)
+                InterlockedExchange(&S.forceVisible, !S.forceVisible);
+            break;
+        case ID_BTN_ID_DN:
+            InterlockedExchange(&S.idIndex, (S.idIndex + SPAWNABLE_COUNT - 1) % SPAWNABLE_COUNT);
+            break;
+        case ID_BTN_ID_UP:
+            InterlockedExchange(&S.idIndex, (S.idIndex + 1) % SPAWNABLE_COUNT);
+            break;
+        case ID_BTN_PIDX: {
+            // 255 is "not a party member", which is what the clone gets now. The
+            // others are here so the party index can be ruled in or out as the
+            // thing that gates drawing, without a rebuild.
+            static const LONG choices[] = { 255, 0, 1, 2, 7 };
+            LONG cur = S.spawnPartyIdx, next = 255;
+            for (int k = 0; k < 5; ++k)
+                if (choices[k] == cur) { next = choices[(k + 1) % 5]; break; }
+            InterlockedExchange(&S.spawnPartyIdx, next);
+            break;
+        }
+        case ID_BTN_YAW_M90:  S.yawBiasDeg -= 90.0f; break;
+        case ID_BTN_YAW_M15:  S.yawBiasDeg -= 15.0f; break;
+        case ID_BTN_YAW_P15:  S.yawBiasDeg += 15.0f; break;
+        case ID_BTN_YAW_P90:  S.yawBiasDeg += 90.0f; break;
+        case ID_BTN_YAW_ZERO: S.yawBiasDeg  =  0.0f; break;
+        case ID_BTN_WALK_DN:  if (S.walkSpeed > 1.0f)  S.walkSpeed -= 1.0f; break;
+        case ID_BTN_WALK_UP:  if (S.walkSpeed < 60.0f) S.walkSpeed += 1.0f; break;
+        case ID_BTN_RUN_DN:   if (S.runSpeed  > 1.0f)  S.runSpeed  -= 2.0f; break;
+        case ID_BTN_RUN_UP:   if (S.runSpeed  < 90.0f) S.runSpeed  += 2.0f; break;
+        case ID_CHK_INPUT:
+            InterlockedExchange(&S.inputEnabled,
+                SendMessageA(GetDlgItem(hwnd, ID_CHK_INPUT), BM_GETCHECK, 0, 0) == BST_CHECKED);
+            break;
+        case ID_CHK_FOCUS:
+            InterlockedExchange(&S.requireForeground,
+                SendMessageA(GetDlgItem(hwnd, ID_CHK_FOCUS), BM_GETCHECK, 0, 0) == BST_CHECKED);
+            break;
+        case ID_CHK_CAMREL:
+            InterlockedExchange(&S.cameraRelative,
+                SendMessageA(GetDlgItem(hwnd, ID_CHK_CAMREL), BM_GETCHECK, 0, 0) == BST_CHECKED);
+            break;
+        case ID_BTN_SRC: {
+            LONG next = (S.inputSource + 1) % 3;
+            InterlockedExchange(&S.inputSource, next);
+            static const char *label[3] = { "source: auto", "source: keys", "source: pad" };
+            SetWindowTextA(GetDlgItem(hwnd, ID_BTN_SRC), label[next]);
+            break;
+        }
+        case ID_BTN_PAD_DN:
+            if (S.padIndex > 0) InterlockedExchange(&S.padIndex, S.padIndex - 1);
+            break;
+        case ID_BTN_PAD_UP:
+            if (S.padIndex < 17) InterlockedExchange(&S.padIndex, S.padIndex + 1);
+            break;
+        }
+        if (id >= ID_BTN_YAW_M90 && id <= ID_BTN_YAW_ZERO) {   // yaw buttons only
+            // keep the bias in a readable range so the readout stays legible
+            while (S.yawBiasDeg >  180.0f) S.yawBiasDeg -= 360.0f;
+            while (S.yawBiasDeg < -180.0f) S.yawBiasDeg += 360.0f;
+        }
+        RefreshStateText();
+        return 0;
+    }
+
+    case WM_CLOSE:
+        // Hide rather than destroy, so F11 can bring it back.
+        ShowWindow(hwnd, SW_HIDE);
+        return 0;
+
+    case WM_DESTROY:
+        KillTimer(hwnd, ID_TIMER_REFRESH);
+        g_hwnd   = NULL;
+        g_hState = NULL;
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcA(hwnd, msg, wp, lp);
+}
+
+static DWORD WINAPI UiThreadProc(LPVOID)
+{
+    WNDCLASSEXA wc;
+    ZeroMemory(&wc, sizeof(wc));
+    wc.cbSize        = sizeof(wc);
+    wc.lpfnWndProc   = UiWndProc;
+    wc.hInstance     = (HINSTANCE)GetModuleHandleW(NULL);
+    wc.hCursor       = LoadCursorA(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = "FFXCoopCloneControl";
+    if (!RegisterClassExA(&wc)) {
+        Log("UI: RegisterClassExA failed, GetLastError=%lu", GetLastError());
+        return 1;
+    }
+
+    g_hwnd = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, wc.lpszClassName,
+                             "FFXCoop - clone control",
+                             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+                             40, 40, 420, 640, NULL, NULL, wc.hInstance, NULL);
+    if (!g_hwnd) {
+        Log("UI: CreateWindowExA failed, GetLastError=%lu", GetLastError());
+        return 1;
+    }
+
+    // Use the shell's default UI font rather than the ancient bitmap default.
+    HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    for (HWND c = GetWindow(g_hwnd, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT))
+        SendMessageA(c, WM_SETFONT, (WPARAM)font, TRUE);
+
+    ShowWindow(g_hwnd, SW_SHOW);
+    Log("UI: control window up on thread %lu", GetCurrentThreadId());
+
+    MSG msg;
+    while (GetMessageA(&msg, NULL, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+    Log("UI: message loop exited");
+    return 0;
+}
+
+static void ToggleControlWindow(void)
+{
+    if (!g_hwnd) return;
+    if (IsWindowVisible(g_hwnd)) {
+        ShowWindow(g_hwnd, SW_HIDE);
+    } else {
+        ShowWindow(g_hwnd, SW_SHOW);
+        SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DllMain
+//
+// We attach AFTER the exe's CRT startup, so FFXApplication already exists. That
+// is fine: patching a vtable slot is time-independent because the slot lives in
+// .rdata at a fixed RVA and the next frame picks it up. Do not add a hook on a
+// one-shot startup function here, it is a race you will lose.
+//
+// DllMain runs under the loader lock, so no LoadLibrary and no waiting on other
+// threads. VirtualProtect, a dword store and CreateThread are all fine.
+// ---------------------------------------------------------------------------
+
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID)
+{
+    if (reason != DLL_PROCESS_ATTACH)
+        return TRUE;
+
+    DisableThreadLibraryCalls(hModule);
+
+    InitializeCriticalSection(&g_logLock);
+    g_logLockReady = true;
+
+    g_base = (BYTE *)GetModuleHandleW(NULL);
+
+    // Defaults. m_runThreshold is 18.0, and FFX_Ch_AutoLocomotionAnim plays walk
+    // at or below it and run above it, so these two numbers pick the gait as well
+    // as the speed.
+    for (int i = 0; i < MAX_CLONES; ++i) S.cloneSlots[i] = -1;
+    S.activeClone       = 0;
+    S.cloneCount        = 0;
+    S.cloneSlot         = -1;
+    S.walkSpeed         = 12.0f;
+    S.runSpeed          = 30.0f;
+    S.yawBiasDeg        = 0.0f;
+    S.inputEnabled      = 1;
+    S.requireForeground = 1;
+    S.cameraRelative    = 1;
+    S.inputSource       = 0;    // auto: pad 1 if it is there, keyboard otherwise
+    S.padIndex          = 1;    // slot 0 is player 1's, so slot 1 is ours
+    S.idIndex           = 0;    // SPAWNABLE_IDS[0] is 1, Tidus
+    S.spawnPartyIdx     = 255;  // not a party member
+    S.spawnOffset       = 3.0f; // was 60.0, which could put it out of view entirely
+    S.autoBindWalkmesh  = 1;
+    S.spawnedId         = 0;
+    SetStatus("not spawned");
+
+    wchar_t exePath[MAX_PATH] = { 0 };
+    GetModuleFileNameW(NULL, exePath, MAX_PATH);
+    Log("=== FFXCoop clone plugin ===");
+    Log("host       : %S", exePath);
+    Log("module base: 0x%08X (preferred 0x00400000, ASLR slide %+d)",
+        (unsigned)(UINT_PTR)g_base, (int)((INT_PTR)g_base - 0x00400000));
+
+    const wchar_t *name = exePath;
+    for (const wchar_t *p = exePath; *p; ++p)
+        if (*p == L'\\' || *p == L'/') name = p + 1;
+    if (_wcsicmp(name, L"FFX.exe") != 0) {
+        Log("host '%S' is not FFX.exe - doing nothing", name);
+        return TRUE;
+    }
+
+    if (!VerifyLayout()) {
+        Log("LAYOUT CHECK FAILED - this is not the analysed build. Refusing to hook. "
+            "Re-derive the RVAs from the IDB before continuing.");
+        return TRUE;
+    }
+    Log("layout check passed");
+
+    BindGameFunctions();
+    Log("pool: g_ffxChrArray at 0x%08X holds 0x%08X, g_ffxChrCount=%d",
+        (unsigned)(UINT_PTR)G.pChrArray, (unsigned)(UINT_PTR)*G.pChrArray, *G.pChrCount);
+    Log("camera: g_ffxCameActiveSlot=0x%08X -> 0x%08X, slots base 0x%08X",
+        (unsigned)(UINT_PTR)G.pCameActiveSlot, (unsigned)(UINT_PTR)*G.pCameActiveSlot,
+        (unsigned)(UINT_PTR)G.cameSlots);
+    Log("g_ffxTidusChr=0x%08X g_ffxControlledChr=0x%08X",
+        (unsigned)(UINT_PTR)*G.pTidusChr, (unsigned)(UINT_PTR)*G.pControlledChr);
+
+    if (!InstallAnimateHook()) {
+        Log("could not install the animate hook, giving up");
+        return TRUE;
+    }
+
+    g_detourCameLen.name        = "FFX_Ch_UpdateCameLenAndZClip";
+    g_detourCameLen.rva         = RVA_FFX_Ch_UpdateCameLenAndZClip;
+    g_detourCameLen.replacement = (void *)&Hook_UpdateCameLenAndZClip;
+    g_detourCameLen.expect      = k_cameLenPrologue;
+    g_detourCameLen.stolen      = sizeof(k_cameLenPrologue);
+    if (!InstallDetour(&g_detourCameLen))
+        Log("the force-visible experiment (F5) is unavailable without that detour");
+
+    g_uiThread = CreateThread(NULL, 0, UiThreadProc, NULL, 0, &g_uiTid);
+    if (!g_uiThread)
+        Log("CreateThread for the UI failed, GetLastError=%lu - hotkeys still work", GetLastError());
+
+    {
+        LONG n = CountBoundPads();
+        Log("pads: %ld of %d Phyre slots bound, clone will use slot %ld",
+            n, PAD_SLOT_COUNT, S.padIndex);
+        for (DWORD i = 0; i < PAD_SLOT_COUNT; ++i) {
+            BYTE *d = PadDevice((LONG)i);
+            if (d)
+                Log("  pad slot %u: device 0x%08X, connected=%d",
+                    i, (unsigned)(UINT_PTR)d, *(volatile BYTE *)(d + OFF_pad_connected));
+        }
+    }
+    Log("ready. F9 spawns a clone, up to %d at once. F10 despawns the one you are "
+        "driving and shift+F10 despawns all. F4 hands the input to the next clone.",
+        MAX_CLONES);
+    Log("       arrow keys or pad slot 1 to move, shift to run, "
+        "F11 toggles the window. F7 cycles which chr id spawns, F8 dumps a CHR diff, "
+        "F6 forces the engine's no-cull override, F5 clears the clone's Disp bit "
+        "through the detour.");
+    // No DLL_PROCESS_DETACH handler exists here on purpose: this plugin is loaded
+    // for the life of the process. The one piece of engine state we modify, the
+    // cull override, is restored whenever F6 turns it back off.
+    return TRUE;
+}

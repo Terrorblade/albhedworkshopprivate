@@ -1,0 +1,8648 @@
+{
+ "sizes": {
+  "PClassMember": [
+   20,
+   4
+  ],
+  "PClassDescriptor": [
+   148,
+   16
+  ],
+  "PNamespace": [
+   28,
+   16
+  ],
+  "PCluster": [
+   80,
+   16
+  ],
+  "PWorld": [
+   16,
+   4
+  ],
+  "PTypedObject": [
+   8,
+   4
+  ],
+  "PString": [
+   4,
+   4
+  ],
+  "PClassDataMemberDynamic": [
+   48,
+   4
+  ],
+  "PClassDescriptorDynamic": [
+   184,
+   4
+  ],
+  "PClusterDependencyList": [
+   8,
+   4
+  ],
+  "PComponent": [
+   12,
+   4
+  ],
+  "PEntity": [
+   28,
+   4
+  ],
+  "PWorldMatrix": [
+   48,
+   4
+  ],
+  "PCamera": [
+   332,
+   4
+  ],
+  "PCameraProjection": [
+   340,
+   16
+  ],
+  "PCameraOrthographic": [
+   344,
+   4
+  ],
+  "PCameraPerspective": [
+   344,
+   4
+  ],
+  "PInstancesComponent": [
+   20,
+   4
+  ],
+  "PNameComponent": [
+   24,
+   4
+  ],
+  "PAssetReference": [
+   40,
+   4
+  ],
+  "PAssetReferenceImport": [
+   12,
+   4
+  ],
+  "PRandomGenerator": [
+   1,
+   1
+  ],
+  "PClusterHeader": [
+   84,
+   4
+  ],
+  "PClusterHeaderBase": [
+   72,
+   4
+  ],
+  "PClusterHeaderD3D11": [
+   84,
+   4
+  ],
+  "PInstanceListHeader": [
+   36,
+   4
+  ],
+  "PVertexStream": [
+   12,
+   4
+  ],
+  "PDataBlock": [
+   64,
+   4
+  ],
+  "PDataBlockBase": [
+   24,
+   4
+  ],
+  "PDynamicDataBlock": [
+   24,
+   4
+  ],
+  "PIndexDataBlock": [
+   60,
+   4
+  ],
+  "PIndexDataBlockBase": [
+   20,
+   4
+  ],
+  "PMeshSegment": [
+   108,
+   4
+  ],
+  "PMeshSegmentBase": [
+   40,
+   4
+  ],
+  "PSkinBoneRemap": [
+   4,
+   2
+  ],
+  "PMaterialSet": [
+   8,
+   4
+  ],
+  "PMesh": [
+   56,
+   4
+  ],
+  "PSkeletonJointBounds": [
+   32,
+   4
+  ],
+  "PDynamicMesh": [
+   28,
+   16
+  ],
+  "PDynamicSegmentDesc": [
+   16,
+   4
+  ],
+  "PShape": [
+   28,
+   4
+  ],
+  "PLight": [
+   52,
+   4
+  ],
+  "PConstantBuffer": [
+   60,
+   4
+  ],
+  "PConstantBufferBase": [
+   12,
+   4
+  ],
+  "PShaderParameterCaptureBufferLocation": [
+   2,
+   2
+  ],
+  "PShaderParameterCaptureBufferLocationSize": [
+   4,
+   2
+  ],
+  "PShaderParameterCaptureBufferLocationType": [
+   4,
+   2
+  ],
+  "PShaderParameterCaptureBufferLocationTypeConstantBuffer": [
+   16,
+   4
+  ],
+  "PShaderParameterDefinition": [
+   16,
+   4
+  ],
+  "PShaderComputeProgram": [
+   1252,
+   4
+  ],
+  "PShaderFragmentProgram": [
+   1252,
+   4
+  ],
+  "PShaderGeometryProgram": [
+   1252,
+   4
+  ],
+  "PShaderParameterCaptureBufferByteAddressBuffer": [
+   20,
+   4
+  ],
+  "PShaderParameterCaptureBufferDataBlock": [
+   16,
+   4
+  ],
+  "PShaderParameterCaptureBufferIndexDataBlock": [
+   16,
+   4
+  ],
+  "PShaderParameterCaptureBufferRWByteAddressBuffer": [
+   24,
+   4
+  ],
+  "PShaderParameterCaptureBufferRWStructuredBuffer": [
+   20,
+   4
+  ],
+  "PShaderParameterCaptureBufferRWTexture2D": [
+   16,
+   4
+  ],
+  "PShaderParameterCaptureBufferRWTexture3D": [
+   16,
+   4
+  ],
+  "PShaderParameterCaptureBufferSampler": [
+   16,
+   4
+  ],
+  "PShaderParameterCaptureBufferStream": [
+   12,
+   4
+  ],
+  "PShaderParameterCaptureBufferStructuredBuffer": [
+   20,
+   4
+  ],
+  "PShaderParameterCaptureBufferTexture2D": [
+   16,
+   4
+  ],
+  "PShaderParameterCaptureBufferTexture3D": [
+   16,
+   4
+  ],
+  "PShaderParameterCaptureBufferTextureBase": [
+   12,
+   4
+  ],
+  "PShaderParameterCaptureBufferTextureCubeMap": [
+   16,
+   4
+  ],
+  "PShaderParameterCaptureConstantBuffer": [
+   16,
+   4
+  ],
+  "PShaderProgramBase": [
+   1,
+   1
+  ],
+  "PShaderProgramParamsAndStreams": [
+   16,
+   4
+  ],
+  "PShaderSource": [
+   20,
+   4
+  ],
+  "PShaderStreamDefinition": [
+   16,
+   4
+  ],
+  "PShaderVertexProgram": [
+   1264,
+   4
+  ],
+  "PShaderPass": [
+   596,
+   4
+  ],
+  "PShaderPassBase": [
+   24,
+   4
+  ],
+  "PShaderPassParameterLocationTypes": [
+   24,
+   4
+  ],
+  "PShaderPassParameterLocationTypesBase": [
+   16,
+   2
+  ],
+  "PShaderPassParameterLocationTypesConstantBuffer": [
+   24,
+   4
+  ],
+  "PShaderPassStateBase": [
+   4,
+   4
+  ],
+  "PShader": [
+   32,
+   4
+  ],
+  "PSamplerState": [
+   36,
+   4
+  ],
+  "PSamplerStateBase": [
+   32,
+   4
+  ],
+  "PTextureCommonBase": [
+   28,
+   4
+  ],
+  "PTexture2D": [
+   116,
+   4
+  ],
+  "PTexture2DBase": [
+   36,
+   4
+  ],
+  "PTexture3D": [
+   104,
+   4
+  ],
+  "PTexture3DBase": [
+   40,
+   4
+  ],
+  "PTextureCubeMap": [
+   104,
+   4
+  ],
+  "PTextureCubeMapBase": [
+   32,
+   4
+  ],
+  "PRenderTarget": [
+   40,
+   4
+  ],
+  "PRenderTargetBase": [
+   16,
+   16
+  ],
+  "PShadowCaster": [
+   104,
+   4
+  ],
+  "PShadowSplit": [
+   224,
+   4
+  ],
+  "PNodeContext": [
+   8,
+   4
+  ],
+  "PMeshSegmentContext": [
+   20,
+   4
+  ],
+  "PParameterBuffer": [
+   16,
+   4
+  ],
+  "PParameterBufferBase": [
+   4,
+   16
+  ],
+  "PMaterial": [
+   24,
+   4
+  ],
+  "PMaterialSwitch": [
+   8,
+   4
+  ],
+  "PContextVariantFoldingTable": [
+   20,
+   4
+  ],
+  "PSceneRenderPass": [
+   40,
+   4
+  ],
+  "PShaderPassInfo": [
+   32,
+   4
+  ],
+  "PEffectVariant": [
+   52,
+   4
+  ],
+  "PEffect": [
+   64,
+   4
+  ],
+  "PMeshInstance": [
+   132,
+   4
+  ],
+  "PMeshInstanceSegmentContext": [
+   36,
+   4
+  ],
+  "PMeshInstanceSegmentStreamBinding": [
+   12,
+   4
+  ],
+  "PDynamicMeshInstance": [
+   12,
+   4
+  ],
+  "PModifierNetworkDynamicMeshInstance": [
+   20,
+   4
+  ],
+  "PSceneWideParameterBuffer": [
+   8,
+   4
+  ],
+  "PMeshInstanceBounds": [
+   36,
+   4
+  ],
+  "PMeshInstanceAttachPoint": [
+   12,
+   4
+  ],
+  "PStructuredBuffer": [
+   72,
+   4
+  ],
+  "PStructuredBufferBase": [
+   20,
+   4
+  ],
+  "PIndirectArgsBuffer": [
+   24,
+   4
+  ],
+  "PIndirectArgsBufferBase": [
+   8,
+   4
+  ],
+  "PNode": [
+   84,
+   4
+  ],
+  "PAnimationSlotArray": [
+   4,
+   4
+  ],
+  "PAnimationSlotListIndex": [
+   16,
+   4
+  ],
+  "PAnimationChannelTimes": [
+   12,
+   4
+  ],
+  "PAnimationChannelTarget": [
+   28,
+   4
+  ],
+  "PAnimationChannelBase": [
+   36,
+   4
+  ],
+  "PAnimationChannel": [
+   52,
+   4
+  ],
+  "PAnimationConstantChannel": [
+   52,
+   4
+  ],
+  "PAnimationClipBinding": [
+   8,
+   4
+  ],
+  "PAnimationClipBindingChannelMap": [
+   4,
+   2
+  ],
+  "PAnimationClipBindingDataBlockCache": [
+   16,
+   4
+  ],
+  "PAnimationClip": [
+   32,
+   4
+  ],
+  "PAnimationSet": [
+   24,
+   4
+  ],
+  "PAnimationEvent": [
+   8,
+   4
+  ],
+  "PAnimationEventList": [
+   8,
+   4
+  ],
+  "PAnimationHierarchyNode": [
+   8,
+   16
+  ],
+  "PTimeController": [
+   8,
+   4
+  ],
+  "PTimeIntervalController": [
+   24,
+   4
+  ],
+  "PTimeScaleOffsetController": [
+   20,
+   4
+  ],
+  "PAnimationDataSource": [
+   12,
+   16
+  ],
+  "PAnimationEventController": [
+   20,
+   4
+  ],
+  "PAnimationController": [
+   20,
+   4
+  ],
+  "PAnimationSlotFilter": [
+   32,
+   4
+  ],
+  "PAnimationSlotFilterDeferredLoad": [
+   8,
+   4
+  ],
+  "PAnimationBlenderController": [
+   20,
+   16
+  ],
+  "PAnimationWeightedBlenderController": [
+   28,
+   4
+  ],
+  "PAnimationAdditiveBlenderController": [
+   28,
+   4
+  ],
+  "PAnimationSpuTargetBlenderController": [
+   16,
+   4
+  ],
+  "PAnimationTargetBlenderController": [
+   16,
+   4
+  ],
+  "PAnimationDataSourceListEntry": [
+   148,
+   4
+  ],
+  "PAnimationNetworkInstance": [
+   60,
+   4
+  ],
+  "PAnimationNetworkInstanceTarget": [
+   24,
+   4
+  ],
+  "PAnimatableComponent": [
+   132,
+   4
+  ],
+  "PBlendableAnimationSource": [
+   76,
+   4
+  ],
+  "PLocator": [
+   12,
+   4
+  ],
+  "PSpline": [
+   44,
+   4
+  ],
+  "PTrigger": [
+   68,
+   4
+  ],
+  "PTriggerReceiverTypeCallbackData": [
+   20,
+   4
+  ],
+  "PTriggerReceiverComponent": [
+   44,
+   4
+  ],
+  "PQuarryComponent": [
+   92,
+   4
+  ],
+  "PScriptableComponent": [
+   32,
+   16
+  ],
+  "PScriptedComponent": [
+   48,
+   4
+  ],
+  "PTimerComponent": [
+   44,
+   4
+  ],
+  "PSplineFollowerComponent": [
+   28,
+   4
+  ],
+  "PCameraControllerComponent": [
+   704,
+   4
+  ],
+  "PAttachableComponent": [
+   108,
+   4
+  ],
+  "PDataBlockBufferD3D11": [
+   20,
+   4
+  ],
+  "PDataBlockD3D11": [
+   64,
+   4
+  ],
+  "PIndexDataBlockBufferD3D11": [
+   20,
+   4
+  ],
+  "PIndexDataBlockD3D11": [
+   60,
+   4
+  ],
+  "PMeshSegmentD3D11": [
+   108,
+   4
+  ],
+  "PSpriteAnimationInfo": [
+   20,
+   4
+  ],
+  "PSpriteAnimationInfoChar": [
+   40,
+   4
+  ],
+  "PSpriteAttributes": [
+   48,
+   4
+  ],
+  "PSpriteCollection": [
+   220,
+   4
+  ],
+  "PSubTextureInfo": [
+   20,
+   4
+  ],
+  "PTextureAtlasInfo": [
+   12,
+   4
+  ],
+  "PSpriteAnimationInfoInstance": [
+   40,
+   8
+  ],
+  "PConstantBufferD3D11": [
+   60,
+   4
+  ],
+  "PIndirectArgsBufferD3D11": [
+   24,
+   4
+  ],
+  "PRenderTargetD3D11": [
+   40,
+   16
+  ],
+  "PSamplerStateD3D11": [
+   36,
+   4
+  ],
+  "PShaderComputeProgramD3D11": [
+   1252,
+   4
+  ],
+  "PShaderFragmentProgramD3D11": [
+   1252,
+   4
+  ],
+  "PShaderGeometryProgramD3D11": [
+   1252,
+   4
+  ],
+  "PShaderPassD3D11": [
+   596,
+   4
+  ],
+  "PShaderPassStateD3D11": [
+   380,
+   4
+  ],
+  "PShaderProgramD3D11": [
+   1248,
+   4
+  ],
+  "PShaderVertexProgramD3D11": [
+   1264,
+   4
+  ],
+  "PStreamInputDescD3D11": [
+   20,
+   4
+  ],
+  "PStreamInputLayoutD3D11": [
+   12,
+   4
+  ],
+  "PStructuredBufferD3D11": [
+   72,
+   4
+  ],
+  "PTexture2DD3D11": [
+   116,
+   4
+  ],
+  "PTexture3DD3D11": [
+   104,
+   4
+  ],
+  "PTextureCubeMapD3D11": [
+   104,
+   4
+  ],
+  "PLODGroup": [
+   72,
+   4
+  ],
+  "PLODLevel": [
+   36,
+   4
+  ],
+  "PModifierNetworkDynamicMesh": [
+   60,
+   4
+  ],
+  "PModifierNetworkDynamicMeshSegment": [
+   16,
+   4
+  ],
+  "PModifierNetworkInstance": [
+   20,
+   4
+  ],
+  "PModifierNetworkInstanceInput": [
+   20,
+   4
+  ],
+  "PModifierNetworkInstancePacketInput": [
+   8,
+   4
+  ],
+  "PModifierAndInputs": [
+   20,
+   4
+  ],
+  "PModifierNetwork": [
+   64,
+   4
+  ],
+  "PModifierNetworkBuffer": [
+   20,
+   4
+  ],
+  "PModifierNetworkInfoPacket": [
+   32,
+   16
+  ],
+  "PModifierNetworkInfoPacket_Buffer": [
+   2,
+   2
+  ],
+  "PModifierNetworkInfoPacket_ModifierCode": [
+   32,
+   16
+  ],
+  "PModifierNetworkInfoPacket_ModifierInstance": [
+   32,
+   16
+  ],
+  "PRenderStream": [
+   8,
+   4
+  ],
+  "PRenderStreamInput": [
+   8,
+   4
+  ],
+  "PMorphModifierWeightsUserDataObject": [
+   8,
+   4
+  ],
+  "PScheduler": [
+   644,
+   4
+  ],
+  "PScriptCallbackHandler": [
+   12,
+   4
+  ],
+  "PScript": [
+   40,
+   4
+  ],
+  "PPhysicsBox": [
+   112,
+   4
+  ],
+  "PPhysicsBoxBase": [
+   108,
+   4
+  ],
+  "PPhysicsBoxBullet": [
+   112,
+   4
+  ],
+  "PPhysicsCallbackData": [
+   20,
+   4
+  ],
+  "PPhysicsCapsule": [
+   112,
+   4
+  ],
+  "PPhysicsCapsuleBase": [
+   108,
+   4
+  ],
+  "PPhysicsCapsuleBullet": [
+   112,
+   4
+  ],
+  "PPhysicsCharacterCamera": [
+   512,
+   4
+  ],
+  "PPhysicsCharacterController": [
+   348,
+   4
+  ],
+  "PPhysicsCharacterControllerBase": [
+   268,
+   4
+  ],
+  "PPhysicsCharacterControllerBullet": [
+   348,
+   4
+  ],
+  "PPhysicsCylinder": [
+   108,
+   4
+  ],
+  "PPhysicsCylinderBase": [
+   104,
+   4
+  ],
+  "PPhysicsCylinderBullet": [
+   108,
+   4
+  ],
+  "PPhysicsInterface": [
+   76,
+   16
+  ],
+  "PPhysicsInterfaceBase": [
+   16,
+   4
+  ],
+  "PPhysicsInterfaceBullet": [
+   76,
+   4
+  ],
+  "PPhysicsMaterial": [
+   12,
+   4
+  ],
+  "PPhysicsMesh": [
+   108,
+   4
+  ],
+  "PPhysicsMeshBase": [
+   96,
+   4
+  ],
+  "PPhysicsMeshBullet": [
+   108,
+   4
+  ],
+  "PPhysicsModel": [
+   12,
+   4
+  ],
+  "PPhysicsPlane": [
+   112,
+   4
+  ],
+  "PPhysicsPlaneBase": [
+   108,
+   4
+  ],
+  "PPhysicsPlaneBullet": [
+   112,
+   4
+  ],
+  "PPhysicsRigidBody": [
+   228,
+   4
+  ],
+  "PPhysicsRigidBodyBase": [
+   220,
+   4
+  ],
+  "PPhysicsRigidBodyBullet": [
+   228,
+   4
+  ],
+  "PPhysicsShape": [
+   92,
+   4
+  ],
+  "PPhysicsShapeBase": [
+   88,
+   16
+  ],
+  "PPhysicsShapeBullet": [
+   92,
+   4
+  ],
+  "PPhysicsSphere": [
+   100,
+   4
+  ],
+  "PPhysicsSphereBase": [
+   96,
+   4
+  ],
+  "PPhysicsSphereBullet": [
+   100,
+   4
+  ],
+  "PPhysicsTaperedCapsule": [
+   112,
+   4
+  ],
+  "PPhysicsTaperedCylinder": [
+   112,
+   4
+  ],
+  "PPhysicsWorld": [
+   168,
+   4
+  ],
+  "PPhysicsWorldBase": [
+   84,
+   4
+  ],
+  "PPhysicsWorldBullet": [
+   168,
+   4
+  ],
+  "PRaycastResult": [
+   40,
+   4
+  ],
+  "PAsyncProcessHeader": [
+   20,
+   4
+  ],
+  "PClassCallableMethodScript": [
+   52,
+   4
+  ],
+  "PApplication": [
+   928,
+   16
+  ],
+  "PApplicationViewport": [
+   40,
+   4
+  ],
+  "PInputMapper": [
+   184,
+   4
+  ],
+  "ClassDynamicMesh": [
+   28,
+   4
+  ],
+  "ClassDynamicMeshInstance": [
+   16,
+   4
+  ],
+  "DistortionGridDynamicMesh": [
+   28,
+   4
+  ],
+  "DistortionGridDynamicMeshInstance": [
+   12,
+   4
+  ],
+  "RadialLineDynamicMeshInstance": [
+   12,
+   4
+  ],
+  "RadialLineDynamicMesh": [
+   32,
+   4
+  ],
+  "BrokenScreenPolygonDynamicMeshInstance": [
+   12,
+   4
+  ],
+  "BrokenScreenPolygonDynamicMesh": [
+   32,
+   4
+  ],
+  "ShadowDynamicMesh": [
+   492,
+   4
+  ],
+  "ClothInstancingDynamicMesh": [
+   40,
+   4
+  ],
+  "ClothInstancingDynamicMeshInstance": [
+   8208,
+   4
+  ],
+  "DynamicMeshDefaultImplmenetation": [
+   28,
+   4
+  ],
+  "ShadowDynamicMeshInstance": [
+   12,
+   4
+  ],
+  "PInputAction": [
+   16,
+   4
+  ],
+  "PInputMap": [
+   8,
+   4
+  ],
+  "PInputSource": [
+   24,
+   16
+  ],
+  "PInputSourceJoypadAxis": [
+   32,
+   4
+  ],
+  "PInputSourceJoypadButton": [
+   40,
+   4
+  ],
+  "PInputSourceKey": [
+   40,
+   4
+  ],
+  "PInputSourceMotionAngularVelocityX": [
+   24,
+   4
+  ],
+  "PInputSourceMotionAngularVelocityY": [
+   24,
+   4
+  ],
+  "PInputSourceMotionAngularVelocityZ": [
+   24,
+   4
+  ],
+  "PInputSourceMotionLinearAccelerationX": [
+   24,
+   4
+  ],
+  "PInputSourceMotionLinearAccelerationY": [
+   24,
+   4
+  ],
+  "PInputSourceMotionLinearAccelerationZ": [
+   24,
+   4
+  ],
+  "PInputSourceMotionQuatW": [
+   24,
+   4
+  ],
+  "PInputSourceMotionQuatX": [
+   24,
+   4
+  ],
+  "PInputSourceMotionQuatY": [
+   24,
+   4
+  ],
+  "PInputSourceMotionQuatZ": [
+   24,
+   4
+  ],
+  "PInputSourceMouseButton": [
+   32,
+   4
+  ],
+  "PInputSourceMouseDeltaX": [
+   40,
+   4
+  ],
+  "PInputSourceMouseDeltaY": [
+   40,
+   4
+  ],
+  "PInputSourceTouchDragX": [
+   24,
+   4
+  ],
+  "PInputSourceTouchDragY": [
+   24,
+   4
+  ],
+  "PInputSourceTouchPinch": [
+   24,
+   4
+  ],
+  "PInputSourceTouchRotate": [
+   24,
+   4
+  ],
+  "PInputSourceTouchTwoFingerDragX": [
+   24,
+   4
+  ],
+  "PInputSourceTouchTwoFingerDragY": [
+   24,
+   4
+  ],
+  "PDeferredLighting": [
+   16448,
+   4
+  ],
+  "PDeferredLightingBase": [
+   16276,
+   4
+  ],
+  "PDeferredLightingD3D11": [
+   16448,
+   4
+  ],
+  "PDepthOfField": [
+   4032,
+   4
+  ],
+  "PDepthOfFieldBase": [
+   4016,
+   4
+  ],
+  "PDepthOfFieldD3D11": [
+   4032,
+   4
+  ],
+  "PFXAA": [
+   112,
+   4
+  ],
+  "PFXAABase": [
+   112,
+   4
+  ],
+  "PFXAAD3D11": [
+   112,
+   4
+  ],
+  "PGlow": [
+   172,
+   4
+  ],
+  "PGlowBase": [
+   144,
+   4
+  ],
+  "PGlowD3D11": [
+   172,
+   4
+  ],
+  "PGlowGPUBase": [
+   172,
+   4
+  ],
+  "PLegacyGlow": [
+   144,
+   4
+  ],
+  "PLegacyGlowBase": [
+   120,
+   4
+  ],
+  "PLegacyGlowD3D11": [
+   144,
+   4
+  ],
+  "PLegacyGlowGPUBase": [
+   144,
+   4
+  ],
+  "PMLAA": [
+   144,
+   4
+  ],
+  "PMLAABase": [
+   144,
+   4
+  ],
+  "PMLAAD3D11": [
+   144,
+   4
+  ],
+  "PMeshParticleSystemBase": [
+   12780,
+   4
+  ],
+  "PMotionBlur": [
+   3408,
+   4
+  ],
+  "PMotionBlurBase": [
+   3404,
+   4
+  ],
+  "PMotionBlurD3D11": [
+   3408,
+   4
+  ],
+  "PPostEffectBase": [
+   20,
+   4
+  ],
+  "PPostEffectManager": [
+   16,
+   4
+  ],
+  "PScreenSpaceAmbientOcclusion": [
+   40,
+   4
+  ],
+  "PScreenSpaceAmbientOcclusionBase": [
+   40,
+   4
+  ],
+  "PScreenSpaceAmbientOcclusionD3D11": [
+   40,
+   4
+  ],
+  "PScreenSpaceReflection": [
+   148,
+   4
+  ],
+  "PScreenSpaceReflectionBase": [
+   148,
+   4
+  ],
+  "PScreenSpaceReflectionD3D11": [
+   148,
+   4
+  ],
+  "PBitmapFont": [
+   36,
+   4
+  ],
+  "PBitmapFontCharInfo": [
+   48,
+   4
+  ],
+  "POccluderGeometryInstance": [
+   8,
+   4
+  ],
+  "PGameSettings": [
+   12,
+   4
+  ],
+  "POccluderGeometryObject": [
+   48,
+   16
+  ],
+  "PTimer": [
+   1,
+   1
+  ],
+  "Matrix3": [
+   48,
+   4
+  ],
+  "Matrix4": [
+   64,
+   4
+  ],
+  "PMatrix4": [
+   64,
+   4
+  ],
+  "Point3": [
+   16,
+   4
+  ],
+  "Quat": [
+   16,
+   4
+  ],
+  "Vector2": [
+   8,
+   4
+  ],
+  "Vector3": [
+   16,
+   4
+  ],
+  "Vector4": [
+   16,
+   4
+  ],
+  "PMatrix4x3": [
+   48,
+   4
+  ],
+  "PBase": [
+   1,
+   1
+  ],
+  "CD3D11_BLEND_DESC": [
+   264,
+   4
+  ],
+  "CD3D11_DEPTH_STENCIL_DESC": [
+   52,
+   4
+  ],
+  "CD3D11_RASTERIZER_DESC": [
+   40,
+   4
+  ],
+  "D3D11_DEPTH_STENCILOP_DESC": [
+   16,
+   4
+  ],
+  "D3D11_RENDER_TARGET_BLEND_DESC": [
+   32,
+   4
+  ]
+ },
+ "descglobal2name": {
+  "0xc90610": "PClassMember",
+  "0xc90760": "PClassDescriptor",
+  "0xc90a18": "PNamespace",
+  "0xc90b90": "PCluster",
+  "0xc90e30": "PWorld",
+  "0xc90f30": "PTypedObject",
+  "0xc91048": "PString",
+  "0xc91180": "PClassDataMemberDynamic",
+  "0xc91330": "PClassDescriptorDynamic",
+  "0xc91958": "PClusterDependencyList",
+  "0xc91c18": "PComponent",
+  "0xc91dd8": "PEntity",
+  "0xc92090": "PWorldMatrix",
+  "0xc92358": "PCameraProjection",
+  "0xc930e8": "PCameraOrthographic",
+  "0xc93608": "PCameraPerspective",
+  "0xc93ae8": "PInstancesComponent",
+  "0xc93e38": "PNameComponent",
+  "0xc93f98": "PAssetReference",
+  "0xc94030": "PAssetReferenceImport",
+  "0xc94350": "PRandomGenerator",
+  "0xc96b40": "PClusterHeader",
+  "0xc96aa8": "PClusterHeaderBase",
+  "0xc970f8": "PClusterHeaderD3D11",
+  "0xc97338": "PInstanceListHeader",
+  "0xc98730": "PVertexStream",
+  "0xc98948": "PDataBlock",
+  "0xc988b0": "PDataBlockBase",
+  "0xc98d18": "PDynamicDataBlock",
+  "0xc98f60": "PIndexDataBlock",
+  "0xc98ec8": "PIndexDataBlockBase",
+  "0xc99330": "PMeshSegment",
+  "0xc99298": "PMeshSegmentBase",
+  "0xc99200": "PSkinBoneRemap",
+  "0xc998e8": "PMaterialSet",
+  "0xc99c80": "PMesh",
+  "0xc99be8": "PSkeletonJointBounds",
+  "0xc9a7d0": "PDynamicMesh",
+  "0xc9a738": "PDynamicSegmentDesc",
+  "0xc9ab98": "PShape",
+  "0xc9af80": "PLight",
+  "0xc9b560": "PConstantBuffer",
+  "0xc9b4c8": "PConstantBufferBase",
+  "0xc9b720": "PShaderParameterCaptureBufferLocation",
+  "0xc9b7b8": "PShaderParameterCaptureBufferLocationSize",
+  "0xc9b850": "PShaderParameterCaptureBufferLocationType",
+  "0xc9b8e8": "PShaderParameterCaptureBufferLocationTypeConstantBuffer",
+  "0xc9b980": "PShaderParameterDefinition",
+  "0xc9ca40": "PShaderComputeProgram",
+  "0xc9c910": "PShaderFragmentProgram",
+  "0xc9c9a8": "PShaderGeometryProgram",
+  "0xc9c288": "PShaderParameterCaptureBufferByteAddressBuffer",
+  "0xc9c3b8": "PShaderParameterCaptureBufferDataBlock",
+  "0xc9c450": "PShaderParameterCaptureBufferIndexDataBlock",
+  "0xc9c320": "PShaderParameterCaptureBufferRWByteAddressBuffer",
+  "0xc9c1f0": "PShaderParameterCaptureBufferRWStructuredBuffer",
+  "0xc9c4e8": "PShaderParameterCaptureBufferRWTexture2D",
+  "0xc9c580": "PShaderParameterCaptureBufferRWTexture3D",
+  "0xc9c0c0": "PShaderParameterCaptureBufferSampler",
+  "0xc9bd30": "PShaderParameterCaptureBufferStream",
+  "0xc9c158": "PShaderParameterCaptureBufferStructuredBuffer",
+  "0xc9bef8": "PShaderParameterCaptureBufferTexture2D",
+  "0xc9bf90": "PShaderParameterCaptureBufferTexture3D",
+  "0xc9bdc8": "PShaderParameterCaptureBufferTextureBase",
+  "0xc9c028": "PShaderParameterCaptureBufferTextureCubeMap",
+  "0xc9be60": "PShaderParameterCaptureConstantBuffer",
+  "0xc9c748": "PShaderProgramBase",
+  "0xc9c6b0": "PShaderProgramParamsAndStreams",
+  "0xc9c618": "PShaderSource",
+  "0xc9c7e0": "PShaderStreamDefinition",
+  "0xc9c878": "PShaderVertexProgram",
+  "0xca1598": "PShaderPass",
+  "0xca1500": "PShaderPassBase",
+  "0xca13d0": "PShaderPassParameterLocationTypes",
+  "0xca1338": "PShaderPassParameterLocationTypesBase",
+  "0xca1468": "PShaderPassParameterLocationTypesConstantBuffer",
+  "0xca1630": "PShaderPassStateBase",
+  "0xca2548": "PShader",
+  "0xca2930": "PSamplerState",
+  "0xca2898": "PSamplerStateBase",
+  "0xca3530": "PTextureCommonBase",
+  "0xca37d0": "PTexture2D",
+  "0xca3738": "PTexture2DBase",
+  "0xca3b60": "PTexture3D",
+  "0xca3ac8": "PTexture3DBase",
+  "0xca3ef0": "PTextureCubeMap",
+  "0xca3e58": "PTextureCubeMapBase",
+  "0xca4200": "PRenderTarget",
+  "0xca4168": "PRenderTargetBase",
+  "0xca44c8": "PShadowCaster",
+  "0xca4bc8": "PNodeContext",
+  "0xca4e28": "PMeshSegmentContext",
+  "0xca5040": "PParameterBuffer",
+  "0xca4fa8": "PParameterBufferBase",
+  "0xca5268": "PMaterial",
+  "0xca51d0": "PMaterialSwitch",
+  "0xca5660": "PContextVariantFoldingTable",
+  "0xca5530": "PSceneRenderPass",
+  "0xca55c8": "PShaderPassInfo",
+  "0xca5ff0": "PEffectVariant",
+  "0xca66e8": "PEffect",
+  "0xca7190": "PMeshInstanceSegmentContext",
+  "0xca70f8": "PMeshInstanceSegmentStreamBinding",
+  "0xca7f28": "PDynamicMeshInstance",
+  "0xca8020": "PModifierNetworkDynamicMeshInstance",
+  "0xca8298": "PSceneWideParameterBuffer",
+  "0xca89b8": "PMeshInstanceBounds",
+  "0xca8bd8": "PMeshInstanceAttachPoint",
+  "0xca8dc8": "PStructuredBuffer",
+  "0xca8d30": "PStructuredBufferBase",
+  "0xca90d0": "PIndirectArgsBuffer",
+  "0xca9038": "PIndirectArgsBufferBase",
+  "0xca91f8": "PNode",
+  "0xca9810": "PAnimationSlotArray",
+  "0xca9778": "PAnimationSlotListIndex",
+  "0xca99b8": "PAnimationChannelTimes",
+  "0xca9c28": "PAnimationChannelTarget",
+  "0xca9f30": "PAnimationChannelBase",
+  "0xcaa0b8": "PAnimationChannel",
+  "0xcaa298": "PAnimationConstantChannel",
+  "0xcaa558": "PAnimationClipBinding",
+  "0xcaa428": "PAnimationClipBindingChannelMap",
+  "0xcaa4c0": "PAnimationClipBindingDataBlockCache",
+  "0xcaa7e8": "PAnimationClip",
+  "0xcaaea8": "PAnimationSet",
+  "0xcab4e8": "PAnimationEvent",
+  "0xcab580": "PAnimationEventList",
+  "0xcab858": "PAnimationHierarchyNode",
+  "0xcab920": "PTimeController",
+  "0xcaba08": "PTimeIntervalController",
+  "0xcabba8": "PTimeScaleOffsetController",
+  "0xcabd28": "PAnimationDataSource",
+  "0xcabe20": "PAnimationEventController",
+  "0xcabf68": "PAnimationController",
+  "0xcac150": "PAnimationSlotFilter",
+  "0xcac0b8": "PAnimationSlotFilterDeferredLoad",
+  "0xcac618": "PAnimationBlenderController",
+  "0xcac898": "PAnimationWeightedBlenderController",
+  "0xcac9d0": "PAnimationAdditiveBlenderController",
+  "0xcacb00": "PAnimationSpuTargetBlenderController",
+  "0xcacc00": "PAnimationTargetBlenderController",
+  "0xcace48": "PAnimationNetworkInstance",
+  "0xcacdb0": "PAnimationNetworkInstanceTarget",
+  "0xcada40": "PAnimatableComponent",
+  "0xcad9a8": "PBlendableAnimationSource",
+  "0xcae550": "PLocator",
+  "0xcae7b8": "PSpline",
+  "0xcaed58": "PTrigger",
+  "0xcaf1e8": "PTriggerReceiverTypeCallbackData",
+  "0xcaf388": "PTriggerReceiverComponent",
+  "0xcaf540": "PQuarryComponent",
+  "0xcaf780": "PScriptableComponent",
+  "0xcaf8d0": "PScriptedComponent",
+  "0xcafb70": "PTimerComponent",
+  "0xcafd60": "PSplineFollowerComponent",
+  "0xcaff10": "PCameraControllerComponent",
+  "0xcb0ac0": "PAttachableComponent",
+  "0xcb11b8": "PDataBlockBufferD3D11",
+  "0xcb1250": "PDataBlockD3D11",
+  "0xcb1088": "PIndexDataBlockBufferD3D11",
+  "0xcb1120": "PIndexDataBlockD3D11",
+  "0xcb0ff0": "PMeshSegmentD3D11",
+  "0xcb1eb8": "PSpriteAnimationInfo",
+  "0xcb1f50": "PSpriteAnimationInfoChar",
+  "0xcb1c58": "PSpriteAttributes",
+  "0xcb1d88": "PSubTextureInfo",
+  "0xcb1e20": "PTextureAtlasInfo",
+  "0xcb3158": "PSpriteAnimationInfoInstance",
+  "0xcb3de0": "PConstantBufferD3D11",
+  "0xcb3d48": "PIndirectArgsBufferD3D11",
+  "0xcb3b68": "PRenderTargetD3D11",
+  "0xcb3c00": "PSamplerStateD3D11",
+  "0xcb3908": "PShaderComputeProgramD3D11",
+  "0xcb37d8": "PShaderFragmentProgramD3D11",
+  "0xcb3870": "PShaderGeometryProgramD3D11",
+  "0xcb3448": "PShaderPassD3D11",
+  "0xcb34e0": "PShaderPassStateD3D11",
+  "0xcb36a8": "PShaderProgramD3D11",
+  "0xcb3740": "PShaderVertexProgramD3D11",
+  "0xcb3578": "PStreamInputDescD3D11",
+  "0xcb3610": "PStreamInputLayoutD3D11",
+  "0xcb3cb0": "PStructuredBufferD3D11",
+  "0xcb39a0": "PTexture2DD3D11",
+  "0xcb3a38": "PTexture3DD3D11",
+  "0xcb3ad0": "PTextureCubeMapD3D11",
+  "0xcbab20": "PLODGroup",
+  "0xcbaa88": "PLODLevel",
+  "0xcbb300": "PModifierNetworkDynamicMesh",
+  "0xcbb268": "PModifierNetworkDynamicMeshSegment",
+  "0xcbbb38": "PModifierNetworkInstance",
+  "0xcbba08": "PModifierNetworkInstanceInput",
+  "0xcbbaa0": "PModifierNetworkInstancePacketInput",
+  "0xcbc128": "PModifierAndInputs",
+  "0xcbc420": "PModifierNetwork",
+  "0xcbc090": "PModifierNetworkBuffer",
+  "0xcbc388": "PModifierNetworkInfoPacket",
+  "0xcbc2f0": "PModifierNetworkInfoPacket_Buffer",
+  "0xcbc1c0": "PModifierNetworkInfoPacket_ModifierCode",
+  "0xcbc258": "PModifierNetworkInfoPacket_ModifierInstance",
+  "0xcbbff8": "PRenderStream",
+  "0xcbbf60": "PRenderStreamInput",
+  "0xcbd390": "PMorphModifierWeightsUserDataObject",
+  "0xcbe2f0": "PScriptCallbackHandler",
+  "0xcbe410": "PScript",
+  "0xcbe778": "PPhysicsBox",
+  "0xcbe6e0": "PPhysicsBoxBase",
+  "0xcbf8b0": "PPhysicsBoxBullet",
+  "0xcbf190": "PPhysicsCallbackData",
+  "0xcbe8a8": "PPhysicsCapsule",
+  "0xcbe810": "PPhysicsCapsuleBase",
+  "0xcbf948": "PPhysicsCapsuleBullet",
+  "0xcbea70": "PPhysicsCharacterController",
+  "0xcbfe08": "PPhysicsCharacterControllerBullet",
+  "0xcbeba0": "PPhysicsCylinder",
+  "0xcbeb08": "PPhysicsCylinderBase",
+  "0xcbf9e0": "PPhysicsCylinderBullet",
+  "0xcbecd0": "PPhysicsInterface",
+  "0xcbec38": "PPhysicsInterfaceBase",
+  "0xcbfd70": "PPhysicsInterfaceBullet",
+  "0xcbed68": "PPhysicsMaterial",
+  "0xcbee98": "PPhysicsMesh",
+  "0xcbee00": "PPhysicsMeshBase",
+  "0xcbfa78": "PPhysicsMeshBullet",
+  "0xcbef30": "PPhysicsModel",
+  "0xcbf060": "PPhysicsPlane",
+  "0xcbefc8": "PPhysicsPlaneBase",
+  "0xcbfb10": "PPhysicsPlaneBullet",
+  "0xcbf228": "PPhysicsRigidBody",
+  "0xcbfc40": "PPhysicsRigidBodyBullet",
+  "0xcbf358": "PPhysicsShape",
+  "0xcbf2c0": "PPhysicsShapeBase",
+  "0xcbf818": "PPhysicsShapeBullet",
+  "0xcbf488": "PPhysicsSphere",
+  "0xcbf3f0": "PPhysicsSphereBase",
+  "0xcbfba8": "PPhysicsSphereBullet",
+  "0xcbf520": "PPhysicsTaperedCapsule",
+  "0xcbf5b8": "PPhysicsTaperedCylinder",
+  "0xcbf780": "PPhysicsWorld",
+  "0xcbf650": "PPhysicsWorldBase",
+  "0xcbfcd8": "PPhysicsWorldBullet",
+  "0xcbf6e8": "PRaycastResult",
+  "0xcc9910": "PAsyncProcessHeader",
+  "0xcc9a40": "PClassCallableMethodScript",
+  "0xcc9db8": "PApplicationViewport",
+  "0xccba18": "ClassDynamicMesh",
+  "0xccbb10": "ClassDynamicMeshInstance",
+  "0xccbbe0": "DistortionGridDynamicMesh",
+  "0xccbce0": "DistortionGridDynamicMeshInstance",
+  "0xccbdb8": "RadialLineDynamicMeshInstance",
+  "0xccbe88": "RadialLineDynamicMesh",
+  "0xccbf88": "BrokenScreenPolygonDynamicMeshInstance",
+  "0xccc058": "BrokenScreenPolygonDynamicMesh",
+  "0xccc158": "ShadowDynamicMesh",
+  "0xcdee78": "ClothInstancingDynamicMesh",
+  "0xcdefb0": "ClothInstancingDynamicMeshInstance",
+  "0xcdef10": "DynamicMeshDefaultImplmenetation",
+  "0xce82f8": "ShadowDynamicMeshInstance",
+  "0x1941878": "PInputAction",
+  "0x1941910": "PInputMap",
+  "0x1940ad0": "PInputSource",
+  "0x1940c98": "PInputSourceJoypadAxis",
+  "0x1940c00": "PInputSourceJoypadButton",
+  "0x1940b68": "PInputSourceKey",
+  "0x19414e8": "PInputSourceMotionAngularVelocityX",
+  "0x1941580": "PInputSourceMotionAngularVelocityY",
+  "0x1941618": "PInputSourceMotionAngularVelocityZ",
+  "0x19416b0": "PInputSourceMotionLinearAccelerationX",
+  "0x1941748": "PInputSourceMotionLinearAccelerationY",
+  "0x19417e0": "PInputSourceMotionLinearAccelerationZ",
+  "0x1941450": "PInputSourceMotionQuatW",
+  "0x1941288": "PInputSourceMotionQuatX",
+  "0x1941320": "PInputSourceMotionQuatY",
+  "0x19413b8": "PInputSourceMotionQuatZ",
+  "0x1940d30": "PInputSourceMouseButton",
+  "0x1940dc8": "PInputSourceMouseDeltaX",
+  "0x1940e60": "PInputSourceMouseDeltaY",
+  "0x1941028": "PInputSourceTouchDragX",
+  "0x19410c0": "PInputSourceTouchDragY",
+  "0x1940f90": "PInputSourceTouchPinch",
+  "0x1940ef8": "PInputSourceTouchRotate",
+  "0x1941158": "PInputSourceTouchTwoFingerDragX",
+  "0x19411f0": "PInputSourceTouchTwoFingerDragY",
+  "0x1943718": "PDeferredLighting",
+  "0x1943680": "PDeferredLightingBase",
+  "0x19437b0": "PDeferredLightingD3D11",
+  "0x19438e0": "PDepthOfField",
+  "0x1943848": "PDepthOfFieldBase",
+  "0x1943978": "PDepthOfFieldD3D11",
+  "0x19445a8": "PFXAA",
+  "0x1944510": "PFXAABase",
+  "0x1944640": "PFXAAD3D11",
+  "0x1944180": "PGlow",
+  "0x1944050": "PGlowBase",
+  "0x1944218": "PGlowD3D11",
+  "0x19440e8": "PGlowGPUBase",
+  "0x19443e0": "PLegacyGlow",
+  "0x19442b0": "PLegacyGlowBase",
+  "0x1944478": "PLegacyGlowD3D11",
+  "0x1944348": "PLegacyGlowGPUBase",
+  "0x1943e88": "PMLAA",
+  "0x1943df0": "PMLAABase",
+  "0x1943f20": "PMLAAD3D11",
+  "0x1943fb8": "PMeshParticleSystemBase",
+  "0x1943aa8": "PMotionBlur",
+  "0x1943a10": "PMotionBlurBase",
+  "0x1943b40": "PMotionBlurD3D11",
+  "0x19435e8": "PPostEffectBase",
+  "0x19448a0": "PPostEffectManager",
+  "0x1943c70": "PScreenSpaceAmbientOcclusion",
+  "0x1943bd8": "PScreenSpaceAmbientOcclusionBase",
+  "0x1943d08": "PScreenSpaceAmbientOcclusionD3D11",
+  "0x1944770": "PScreenSpaceReflection",
+  "0x19446d8": "PScreenSpaceReflectionBase",
+  "0x1944808": "PScreenSpaceReflectionD3D11",
+  "0x1a84d20": "PBitmapFont",
+  "0x1a84c88": "PBitmapFontCharInfo",
+  "0x1a85420": "POccluderGeometryInstance",
+  "0x1a855b8": "PGameSettings",
+  "0x1a85990": "POccluderGeometryObject",
+  "0xc901b0": "PTimer",
+  "0xc94b00": "Matrix3",
+  "0xc94bd8": "Matrix4",
+  "0xc94cb0": "PMatrix4",
+  "0xc946c0": "Point3",
+  "0xc94988": "Quat",
+  "0xc94448": "Vector2",
+  "0xc94570": "Vector3",
+  "0xc94810": "Vector4",
+  "0xc94dd8": "PMatrix4x3",
+  "0xcb47e8": "CD3D11_BLEND_DESC",
+  "0xcb43c8": "CD3D11_DEPTH_STENCIL_DESC",
+  "0xcb4008": "CD3D11_RASTERIZER_DESC",
+  "0xcb4268": "D3D11_DEPTH_STENCILOP_DESC",
+  "0xcb45d0": "D3D11_RENDER_TARGET_BLEND_DESC"
+ },
+ "desc2class": {
+  "0xc901b0": "Phyre::PTimer",
+  "0xc902e8": "Phyre::PBase",
+  "0xc90610": "Phyre::PClassMember",
+  "0xc90760": "Phyre::PClassDescriptor",
+  "0xc90a18": "Phyre::PNamespace",
+  "0xc90b90": "Phyre::PCluster",
+  "0xc90e30": "Phyre::PWorld",
+  "0xc90f30": "Phyre::PTypedObject",
+  "0xc91048": "Phyre::PString",
+  "0xc91180": "Phyre::PClassDataMemberDynamic",
+  "0xc91330": "Phyre::PClassDescriptorDynamic",
+  "0xc915c8": "Phyre::PArray<unsigned char,1>",
+  "0xc91958": "Phyre::PClusterDependencyList",
+  "0xc91a28": "Phyre::PSharray<Phyre::PString>",
+  "0xc91c18": "Phyre::PComponent",
+  "0xc91dd8": "Phyre::PEntity",
+  "0xc92090": "Phyre::PWorldMatrix",
+  "0xc922c0": "Phyre::PCamera",
+  "0xc92358": "Phyre::PCameraProjection",
+  "0xc930e8": "Phyre::PCameraOrthographic",
+  "0xc93608": "Phyre::PCameraPerspective",
+  "0xc93ae8": "Phyre::PInstancesComponent",
+  "0xc93c58": "Phyre::PArray<Phyre::PTypedObject,4>",
+  "0xc93e38": "Phyre::PNameComponent",
+  "0xc93f98": "Phyre::PAssetReference",
+  "0xc94030": "Phyre::PAssetReferenceImport",
+  "0xc94350": "Phyre::PRandom::PRandomGenerator",
+  "0xc94448": "sce::Vectormath::Scalar::Aos::Vector2",
+  "0xc94570": "sce::Vectormath::Scalar::Aos::Vector3",
+  "0xc946c0": "sce::Vectormath::Scalar::Aos::Point3",
+  "0xc94810": "sce::Vectormath::Scalar::Aos::Vector4",
+  "0xc94988": "sce::Vectormath::Scalar::Aos::Quat",
+  "0xc94b00": "sce::Vectormath::Scalar::Aos::Matrix3",
+  "0xc94bd8": "sce::Vectormath::Scalar::Aos::Matrix4",
+  "0xc94cb0": "Phyre::PMatrix4",
+  "0xc94dd8": "Phyre::PMatrix4x3",
+  "0xc96aa8": "Phyre::PSerialization::PBinary::PClusterHeaderBase",
+  "0xc96b40": "Phyre::PSerialization::PBinary::PClusterHeader",
+  "0xc970f8": "Phyre::PSerialization::PBinary::PClusterHeaderD3D11",
+  "0xc97338": "Phyre::PSerialization::PBinary::PInternal::PInstanceListHeader",
+  "0xc98730": "Phyre::PGeometry::PVertexStream",
+  "0xc988b0": "Phyre::PGeometry::PDataBlockBase",
+  "0xc98948": "Phyre::PGeometry::PDataBlock",
+  "0xc98a98": "Phyre::PArray<Phyre::PGeometry::PVertexStream,4>",
+  "0xc98d18": "Phyre::PGeometry::PDynamicDataBlock",
+  "0xc98ec8": "Phyre::PGeometry::PIndexDataBlockBase",
+  "0xc98f60": "Phyre::PGeometry::PIndexDataBlock",
+  "0xc99200": "Phyre::PGeometry::PSkinBoneRemap",
+  "0xc99298": "Phyre::PGeometry::PMeshSegmentBase",
+  "0xc99330": "Phyre::PGeometry::PMeshSegment",
+  "0xc99590": "Phyre::PArray<Phyre::PGeometry::PSkinBoneRemap,2>",
+  "0xc998e8": "Phyre::PGeometry::PMaterialSet",
+  "0xc99a30": "Phyre::PSharray<Phyre::PRendering::PMaterial *>",
+  "0xc99be8": "Phyre::PGeometry::PSkeletonJointBounds",
+  "0xc99c80": "Phyre::PGeometry::PMesh",
+  "0xc99f70": "Phyre::PArray<int,4>",
+  "0xc9a090": "Phyre::PArray<Phyre::PString,4>",
+  "0xc9a1b0": "Phyre::PArray<Phyre::PMatrix4,4>",
+  "0xc9a2d0": "Phyre::PArray<Phyre::PGeometry::PSkeletonJointBounds,4>",
+  "0xc9a3f0": "Phyre::PArray<Phyre::PGeometry::PMeshSegment,4>",
+  "0xc9a7d0": "Phyre::PGeometry::PDynamicMesh",
+  "0xc9a738": "Phyre::PGeometry::PDynamicMesh::PDynamicSegmentDesc",
+  "0xc9aa10": "Phyre::PArray<Phyre::PGeometry::PDynamicMesh::PDynamicSegmentDesc,4>",
+  "0xc9ab98": "Phyre::PGeometry::PShape",
+  "0xc9ad48": "Phyre::PArray<unsigned char,4>",
+  "0xc9af80": "Phyre::PRendering::PLight",
+  "0xc9b4c8": "Phyre::PRendering::PConstantBufferBase",
+  "0xc9b560": "Phyre::PRendering::PConstantBuffer",
+  "0xc9b720": "Phyre::PRendering::PShaderParameterCaptureBufferLocation",
+  "0xc9b7b8": "Phyre::PRendering::PShaderParameterCaptureBufferLocationSize",
+  "0xc9b850": "Phyre::PRendering::PShaderParameterCaptureBufferLocationType",
+  "0xc9b8e8": "Phyre::PRendering::PShaderParameterCaptureBufferLocationTypeConstantBuffer",
+  "0xc9b980": "Phyre::PRendering::PShaderParameterDefinition",
+  "0xc9c7e0": "Phyre::PRendering::PShaderStreamDefinition",
+  "0xc9bd30": "Phyre::PRendering::PShaderParameterCaptureBufferStream",
+  "0xc9bdc8": "Phyre::PRendering::PShaderParameterCaptureBufferTextureBase",
+  "0xc9bef8": "Phyre::PRendering::PShaderParameterCaptureBufferTexture2D",
+  "0xc9bf90": "Phyre::PRendering::PShaderParameterCaptureBufferTexture3D",
+  "0xc9c028": "Phyre::PRendering::PShaderParameterCaptureBufferTextureCubeMap",
+  "0xc9c4e8": "Phyre::PRendering::PShaderParameterCaptureBufferRWTexture2D",
+  "0xc9c580": "Phyre::PRendering::PShaderParameterCaptureBufferRWTexture3D",
+  "0xc9c0c0": "Phyre::PRendering::PShaderParameterCaptureBufferSampler",
+  "0xc9c158": "Phyre::PRendering::PShaderParameterCaptureBufferStructuredBuffer",
+  "0xc9c1f0": "Phyre::PRendering::PShaderParameterCaptureBufferRWStructuredBuffer",
+  "0xc9c288": "Phyre::PRendering::PShaderParameterCaptureBufferByteAddressBuffer",
+  "0xc9c320": "Phyre::PRendering::PShaderParameterCaptureBufferRWByteAddressBuffer",
+  "0xc9be60": "Phyre::PRendering::PShaderParameterCaptureConstantBuffer",
+  "0xc9c3b8": "Phyre::PRendering::PShaderParameterCaptureBufferDataBlock",
+  "0xc9c450": "Phyre::PRendering::PShaderParameterCaptureBufferIndexDataBlock",
+  "0xc9c618": "Phyre::PRendering::PShaderSource",
+  "0xc9c6b0": "Phyre::PRendering::PShaderProgramParamsAndStreams",
+  "0xc9c748": "Phyre::PRendering::PShaderProgramBase",
+  "0xc9c878": "Phyre::PRendering::PShaderVertexProgram",
+  "0xc9c910": "Phyre::PRendering::PShaderFragmentProgram",
+  "0xc9c9a8": "Phyre::PRendering::PShaderGeometryProgram",
+  "0xc9ca40": "Phyre::PRendering::PShaderComputeProgram",
+  "0xc9d0e0": "Phyre::PArray<Phyre::PRendering::PShaderParameterDefinition,4>",
+  "0xc9d200": "Phyre::PArray<Phyre::PRendering::PShaderStreamDefinition,4>",
+  "0xca1338": "Phyre::PRendering::PShaderPassParameterLocationTypesBase",
+  "0xca13d0": "Phyre::PRendering::PShaderPassParameterLocationTypes",
+  "0xca1468": "Phyre::PRendering::PShaderPassParameterLocationTypesConstantBuffer",
+  "0xca1630": "Phyre::PRendering::PShaderPassStateBase",
+  "0xca1500": "Phyre::PRendering::PShaderPassBase",
+  "0xca1598": "Phyre::PRendering::PShaderPass",
+  "0xca18c0": "Phyre::PArray<Phyre::PRendering::PShaderParameterCaptureBufferLocationType,2>",
+  "0xca19e0": "Phyre::PArray<Phyre::PRendering::PShaderParameterCaptureBufferLocationTypeConstantBuffer,4>",
+  "0xca1b00": "Phyre::PArray<Phyre::PRendering::PShaderParameterCaptureBufferLocation,2>",
+  "0xca2548": "Phyre::PRendering::PShader",
+  "0xca26d8": "Phyre::PArray<Phyre::PRendering::PShaderPass,4>",
+  "0xca2898": "Phyre::PRendering::PSamplerStateBase",
+  "0xca2930": "Phyre::PRendering::PSamplerState",
+  "0xca3530": "Phyre::PRendering::PTextureCommonBase",
+  "0xca3738": "Phyre::PRendering::PTexture2DBase",
+  "0xca37d0": "Phyre::PRendering::PTexture2D",
+  "0xca3ac8": "Phyre::PRendering::PTexture3DBase",
+  "0xca3b60": "Phyre::PRendering::PTexture3D",
+  "0xca3e58": "Phyre::PRendering::PTextureCubeMapBase",
+  "0xca3ef0": "Phyre::PRendering::PTextureCubeMap",
+  "0xca4168": "Phyre::PRendering::PRenderTargetBase",
+  "0xca4200": "Phyre::PRendering::PRenderTarget",
+  "0xca44c8": "Phyre::PRendering::PShadowCaster",
+  "0xca4430": "Phyre::PRendering::PShadowCaster::PShadowSplit",
+  "0xca4680": "Phyre::PArray<Phyre::PRendering::PShadowCaster::PShadowSplit,4>",
+  "0xca4bc8": "Phyre::PRendering::PNodeContext",
+  "0xca4c98": "Phyre::PSharray<unsigned int>",
+  "0xca4e28": "Phyre::PRendering::PMeshSegmentContext",
+  "0xca4fa8": "Phyre::PRendering::PParameterBufferBase",
+  "0xca5040": "Phyre::PRendering::PParameterBuffer",
+  "0xca51d0": "Phyre::PRendering::PMaterialSwitch",
+  "0xca5268": "Phyre::PRendering::PMaterial",
+  "0xca55c8": "Phyre::PRendering::PShaderPassInfo",
+  "0xca5660": "Phyre::PRendering::PContextVariantFoldingTable",
+  "0xca5530": "Phyre::PRendering::PSceneRenderPass",
+  "0xca5aa0": "Phyre::PArray<Phyre::PRendering::PContextVariantFoldingTable,4>",
+  "0xca5bc0": "Phyre::PArray<Phyre::PRendering::PShaderPassInfo,4>",
+  "0xca5ce0": "Phyre::PArray<Phyre::PRendering::PShader,4>",
+  "0xca5ff0": "Phyre::PRendering::PEffectVariant",
+  "0xca6240": "Phyre::PArray<Phyre::PRendering::PSceneRenderPass *,4>",
+  "0xca6360": "Phyre::PArray<Phyre::PRendering::PSceneRenderPass,4>",
+  "0xca6480": "Phyre::PArray<Phyre::PRendering::PMaterialSwitch,4>",
+  "0xca66e8": "Phyre::PRendering::PEffect",
+  "0xca6990": "Phyre::PArray<Phyre::PRendering::PNodeContext,4>",
+  "0xca6ab0": "Phyre::PArray<Phyre::PRendering::PContextSwitch const *,4>",
+  "0xca6bd0": "Phyre::PArray<Phyre::PRendering::PShadowCasterType const *,4>",
+  "0xca6cf0": "Phyre::PArray<Phyre::PRendering::PLightType const *,4>",
+  "0xca6e10": "Phyre::PArray<Phyre::PRendering::PEffectVariant *,4>",
+  "0xca70f8": "Phyre::PRendering::PMeshInstanceSegmentStreamBinding",
+  "0xca7190": "Phyre::PRendering::PMeshInstanceSegmentContext",
+  "0xca7228": "Phyre::PRendering::PMeshInstance",
+  "0xca79a8": "Phyre::PSharray<Phyre::PRendering::PMeshInstanceSegmentStreamBinding const *>",
+  "0xca7ac8": "Phyre::PArray<Phyre::PRendering::PMeshInstanceSegmentContext,4>",
+  "0xca7f28": "Phyre::PRendering::PDynamicMeshInstance",
+  "0xca8020": "Phyre::PRendering::PModifierNetworkDynamicMeshInstance",
+  "0xca80f0": "Phyre::PArray<Phyre::PDynamicGeometry::PModifierNetworkInstance *,4>",
+  "0xca8298": "Phyre::PRendering::PSceneWideParameterBuffer",
+  "0xca89b8": "Phyre::PRendering::PMeshInstanceBounds",
+  "0xca8bd8": "Phyre::PRendering::PMeshInstanceAttachPoint",
+  "0xca8d30": "Phyre::PRendering::PStructuredBufferBase",
+  "0xca8dc8": "Phyre::PRendering::PStructuredBuffer",
+  "0xca9038": "Phyre::PRendering::PIndirectArgsBufferBase",
+  "0xca90d0": "Phyre::PRendering::PIndirectArgsBuffer",
+  "0xca91f8": "Phyre::PScene::PNode",
+  "0xca9778": "Phyre::PAnimation::PAnimationSlotListIndex",
+  "0xca9810": "Phyre::PAnimation::PAnimationSlotArray",
+  "0xca99b8": "Phyre::PAnimation::PAnimationChannelTimes",
+  "0xca9ab0": "Phyre::PArray<float,4>",
+  "0xca9c28": "Phyre::PAnimation::PAnimationChannelTarget",
+  "0xca9f30": "Phyre::PAnimation::PAnimationChannelBase",
+  "0xcaa0b8": "Phyre::PAnimation::PAnimationChannel",
+  "0xcaa298": "Phyre::PAnimation::PAnimationConstantChannel",
+  "0xcaa558": "Phyre::PAnimation::PAnimationClipBinding",
+  "0xcaa428": "Phyre::PAnimation::PAnimationClipBinding::PAnimationClipBindingChannelMap",
+  "0xcaa4c0": "Phyre::PAnimation::PAnimationClipBinding::PAnimationClipBindingDataBlockCache",
+  "0xcaa7e8": "Phyre::PAnimation::PAnimationClip",
+  "0xcaab28": "Phyre::PArray<Phyre::PAnimation::PAnimationConstantChannel,4>",
+  "0xcaac48": "Phyre::PArray<Phyre::PAnimation::PAnimationChannel *,4>",
+  "0xcaaea8": "Phyre::PAnimation::PAnimationSet",
+  "0xcab058": "Phyre::PArray<Phyre::PAnimation::PAnimationSlotListIndex,4>",
+  "0xcab178": "Phyre::PArray<Phyre::PAnimation::PAnimationChannelTarget,4>",
+  "0xcab298": "Phyre::PSharray<Phyre::PAnimation::PAnimationClip *>",
+  "0xcab4e8": "Phyre::PAnimation::PAnimationEvent",
+  "0xcab580": "Phyre::PAnimation::PAnimationEventList",
+  "0xcab6a8": "Phyre::PArray<Phyre::PAnimation::PAnimationEvent,4>",
+  "0xcab858": "Phyre::PAnimation::PAnimationHierarchyNode",
+  "0xcab920": "Phyre::PAnimation::PTimeController",
+  "0xcaba08": "Phyre::PAnimation::PTimeIntervalController",
+  "0xcabba8": "Phyre::PAnimation::PTimeScaleOffsetController",
+  "0xcabd28": "Phyre::PAnimation::PAnimationDataSource",
+  "0xcabe20": "Phyre::PAnimation::PAnimationEventController",
+  "0xcabf68": "Phyre::PAnimation::PAnimationController",
+  "0xcac0b8": "Phyre::PAnimation::PAnimationSlotFilterDeferredLoad",
+  "0xcac150": "Phyre::PAnimation::PAnimationSlotFilter",
+  "0xcac2d8": "Phyre::PArray<Phyre::PAnimation::PAnimationSlotFilterDeferredLoad,4>",
+  "0xcac3f8": "Phyre::PArray<unsigned int,4>",
+  "0xcac618": "Phyre::PAnimation::PAnimationBlenderController",
+  "0xcac748": "Phyre::PArray<Phyre::PAnimation::PAnimationDataSource *,4>",
+  "0xcac898": "Phyre::PAnimation::PAnimationWeightedBlenderController",
+  "0xcac9d0": "Phyre::PAnimation::PAnimationAdditiveBlenderController",
+  "0xcacb00": "Phyre::PAnimation::PAnimationSpuTargetBlenderController",
+  "0xcacc00": "Phyre::PAnimation::PAnimationTargetBlenderController",
+  "0xcacd18": "Phyre::PAnimation::PAnimationDataSourceListEntry",
+  "0xcacdb0": "Phyre::PAnimation::PAnimationNetworkInstanceTarget",
+  "0xcace48": "Phyre::PAnimation::PAnimationNetworkInstance",
+  "0xcad158": "Phyre::PArray<Phyre::PAnimation::PAnimationSlotArray,4>",
+  "0xcad278": "Phyre::PArray<Phyre::PQWord,16>",
+  "0xcad398": "Phyre::PArray<Phyre::PAnimation::PAnimationNetworkInstanceTarget,4>",
+  "0xcad4b8": "Phyre::PArray<Phyre::PAnimation::PAnimationDataSourceListEntry,4>",
+  "0xcad9a8": "Phyre::PAnimation::PBlendableAnimationSource",
+  "0xcada40": "Phyre::PAnimation::PAnimatableComponent",
+  "0xcae060": "Phyre::PArray<Phyre::PAnimation::PBlendableAnimationSource,4>",
+  "0xcae550": "Phyre::PGameplay::PLocator",
+  "0xcae7b8": "Phyre::PGameplay::PSpline",
+  "0xcaeaa8": "Phyre::PArray<sce::Vectormath::Scalar::Aos::Vector3,4>",
+  "0xcaed58": "Phyre::PGameplay::PTrigger",
+  "0xcaef78": "Phyre::PSharray<Phyre::PGameplay::PTriggerReceiverComponent *>",
+  "0xcaf1e8": "Phyre::PGameplay::PTriggerReceiverTypeCallbackData",
+  "0xcaf388": "Phyre::PGameplay::PTriggerReceiverComponent",
+  "0xcaf540": "Phyre::PGameplay::PQuarryComponent",
+  "0xcaf780": "Phyre::PGameplay::PScriptableComponent",
+  "0xcaf8d0": "Phyre::PGameplay::PScriptedComponent",
+  "0xcafb70": "Phyre::PGameplay::PTimerComponent",
+  "0xcafd60": "Phyre::PGameplay::PSplineFollowerComponent",
+  "0xcaff10": "Phyre::PGameplay::PCameraControllerComponent",
+  "0xcb0ac0": "Phyre::PGameplay::PAttachableComponent",
+  "0xcb11b8": "Phyre::PGeometry::PDataBlockBufferD3D11",
+  "0xcb1250": "Phyre::PGeometry::PDataBlockD3D11",
+  "0xcb1088": "Phyre::PGeometry::PIndexDataBlockBufferD3D11",
+  "0xcb1120": "Phyre::PGeometry::PIndexDataBlockD3D11",
+  "0xcb0ff0": "Phyre::PGeometry::PMeshSegmentD3D11",
+  "0xcb1468": "Phyre::PArray<Phyre::PGeometry::PDataBlockD3D11,4>",
+  "0xcb1588": "Phyre::PSharray<Phyre::PGeometry::PIndexDataBlockBufferD3D11>",
+  "0xcb16a8": "Phyre::PSharray<Phyre::PGeometry::PDataBlockBufferD3D11>",
+  "0xcb1d88": "Phyre::PSprite::PSubTextureInfo",
+  "0xcb1e20": "Phyre::PSprite::PTextureAtlasInfo",
+  "0xcb1eb8": "Phyre::PSprite::PSpriteAnimationInfo",
+  "0xcb1f50": "Phyre::PSprite::PSpriteAnimationInfoChar",
+  "0xcb1c58": "Phyre::PSprite::PSpriteAttributes",
+  "0xcb1cf0": "Phyre::PSprite::PSpriteCollection",
+  "0xcb2a60": "Phyre::PArray<Phyre::PSprite::PSubTextureInfo,4>",
+  "0xcb3158": "Phyre::PSprite::PSpriteAnimationInfoInstance",
+  "0xcb3de0": "Phyre::PRendering::PConstantBufferD3D11",
+  "0xcb3578": "Phyre::PRendering::PStreamInputDescD3D11",
+  "0xcb3610": "Phyre::PRendering::PStreamInputLayoutD3D11",
+  "0xcb36a8": "Phyre::PRendering::PShaderProgramD3D11",
+  "0xcb3740": "Phyre::PRendering::PShaderVertexProgramD3D11",
+  "0xcb37d8": "Phyre::PRendering::PShaderFragmentProgramD3D11",
+  "0xcb3870": "Phyre::PRendering::PShaderGeometryProgramD3D11",
+  "0xcb3908": "Phyre::PRendering::PShaderComputeProgramD3D11",
+  "0xcb34e0": "Phyre::PRendering::PShaderPassStateD3D11",
+  "0xcb3448": "Phyre::PRendering::PShaderPassD3D11",
+  "0xcb3c00": "Phyre::PRendering::PSamplerStateD3D11",
+  "0xcb39a0": "Phyre::PRendering::PTexture2DD3D11",
+  "0xcb3a38": "Phyre::PRendering::PTexture3DD3D11",
+  "0xcb3ad0": "Phyre::PRendering::PTextureCubeMapD3D11",
+  "0xcb3b68": "Phyre::PRendering::PRenderTargetD3D11",
+  "0xcb3cb0": "Phyre::PRendering::PStructuredBufferD3D11",
+  "0xcb3d48": "Phyre::PRendering::PIndirectArgsBufferD3D11",
+  "0xcb4008": "CD3D11_RASTERIZER_DESC",
+  "0xcb4268": "D3D11_DEPTH_STENCILOP_DESC",
+  "0xcb43c8": "CD3D11_DEPTH_STENCIL_DESC",
+  "0xcb45d0": "D3D11_RENDER_TARGET_BLEND_DESC",
+  "0xcb47e8": "CD3D11_BLEND_DESC",
+  "0xcb4c58": "Phyre::PArray<Phyre::PRendering::PStreamInputDescD3D11,4>",
+  "0xcbaa88": "Phyre::PLOD::PLODLevel",
+  "0xcbab20": "Phyre::PLOD::PLODGroup",
+  "0xcbae30": "Phyre::PSharray<Phyre::PRendering::PMeshInstance *>",
+  "0xcbaf50": "Phyre::PArray<Phyre::PLOD::PLODLevel,4>",
+  "0xcbb268": "Phyre::PDynamicGeometry::PModifierNetworkDynamicMeshSegment",
+  "0xcbb300": "Phyre::PDynamicGeometry::PModifierNetworkDynamicMesh",
+  "0xcbb520": "Phyre::PArray<Phyre::PDynamicGeometry::PModifierNetworkDynamicMeshSegment,4>",
+  "0xcbb640": "Phyre::PArray<Phyre::PDynamicGeometry::PRenderStream,4>",
+  "0xcbb760": "Phyre::PArray<unsigned char const *,4>",
+  "0xcbba08": "Phyre::PDynamicGeometry::PModifierNetworkInstanceInput",
+  "0xcbbaa0": "Phyre::PDynamicGeometry::PModifierNetworkInstancePacketInput",
+  "0xcbbb38": "Phyre::PDynamicGeometry::PModifierNetworkInstance",
+  "0xcbbd20": "Phyre::PArray<Phyre::PBase const *,4>",
+  "0xcbc1c0": "Phyre::PDynamicGeometry::PModifierNetworkInfoPacket_ModifierCode",
+  "0xcbc258": "Phyre::PDynamicGeometry::PModifierNetworkInfoPacket_ModifierInstance",
+  "0xcbc2f0": "Phyre::PDynamicGeometry::PModifierNetworkInfoPacket_Buffer",
+  "0xcbc388": "Phyre::PDynamicGeometry::PModifierNetworkInfoPacket",
+  "0xcbbf60": "Phyre::PDynamicGeometry::PRenderStreamInput",
+  "0xcbbff8": "Phyre::PDynamicGeometry::PRenderStream",
+  "0xcbc090": "Phyre::PDynamicGeometry::PModifierNetworkBuffer",
+  "0xcbc128": "Phyre::PDynamicGeometry::PModifierAndInputs",
+  "0xcbc420": "Phyre::PDynamicGeometry::PModifierNetwork",
+  "0xcbcc20": "Phyre::PArray<Phyre::PDynamicGeometry::PRenderStreamInput,4>",
+  "0xcbcd40": "Phyre::PArray<Phyre::PDynamicGeometry::PModifierNetworkBuffer,4>",
+  "0xcbce60": "Phyre::PArray<Phyre::PDynamicGeometry::PModifierAndInputs,4>",
+  "0xcbd390": "Phyre::PDynamicGeometry::PMorphModifierWeightsUserDataObject",
+  "0xcbd9c8": "Phyre::PScripting::PScheduler",
+  "0xcbe2f0": "Phyre::PScripting::PScriptCallbackHandler",
+  "0xcbe410": "Phyre::PScripting::PScript",
+  "0xcbed68": "Phyre::PPhysics::PPhysicsMaterial",
+  "0xcbf2c0": "Phyre::PPhysics::PPhysicsShapeBase",
+  "0xcbf818": "Phyre::PPhysics::PPhysicsShapeBullet",
+  "0xcbf358": "Phyre::PPhysics::PPhysicsShape",
+  "0xcbf3f0": "Phyre::PPhysics::PPhysicsSphereBase",
+  "0xcbfba8": "Phyre::PPhysics::PPhysicsSphereBullet",
+  "0xcbf488": "Phyre::PPhysics::PPhysicsSphere",
+  "0xcbe6e0": "Phyre::PPhysics::PPhysicsBoxBase",
+  "0xcbf8b0": "Phyre::PPhysics::PPhysicsBoxBullet",
+  "0xcbe778": "Phyre::PPhysics::PPhysicsBox",
+  "0xcbee00": "Phyre::PPhysics::PPhysicsMeshBase",
+  "0xcbfa78": "Phyre::PPhysics::PPhysicsMeshBullet",
+  "0xcbee98": "Phyre::PPhysics::PPhysicsMesh",
+  "0xcbeb08": "Phyre::PPhysics::PPhysicsCylinderBase",
+  "0xcbf9e0": "Phyre::PPhysics::PPhysicsCylinderBullet",
+  "0xcbeba0": "Phyre::PPhysics::PPhysicsCylinder",
+  "0xcbe810": "Phyre::PPhysics::PPhysicsCapsuleBase",
+  "0xcbf948": "Phyre::PPhysics::PPhysicsCapsuleBullet",
+  "0xcbe8a8": "Phyre::PPhysics::PPhysicsCapsule",
+  "0xcbf5b8": "Phyre::PPhysics::PPhysicsTaperedCylinder",
+  "0xcbf520": "Phyre::PPhysics::PPhysicsTaperedCapsule",
+  "0xcbefc8": "Phyre::PPhysics::PPhysicsPlaneBase",
+  "0xcbfb10": "Phyre::PPhysics::PPhysicsPlaneBullet",
+  "0xcbf060": "Phyre::PPhysics::PPhysicsPlane",
+  "0xcbf190": "Phyre::PPhysics::PPhysicsCallbackData",
+  "0xcbf0f8": "Phyre::PPhysics::PPhysicsRigidBodyBase",
+  "0xcbfc40": "Phyre::PPhysics::PPhysicsRigidBodyBullet",
+  "0xcbf228": "Phyre::PPhysics::PPhysicsRigidBody",
+  "0xcbef30": "Phyre::PPhysics::PPhysicsModel",
+  "0xcbe940": "Phyre::PPhysics::PPhysicsCharacterCamera",
+  "0xcbe9d8": "Phyre::PPhysics::PPhysicsCharacterControllerBase",
+  "0xcbfe08": "Phyre::PPhysics::PPhysicsCharacterControllerBullet",
+  "0xcbea70": "Phyre::PPhysics::PPhysicsCharacterController",
+  "0xcbf6e8": "Phyre::PPhysics::PRaycastResult",
+  "0xcbf650": "Phyre::PPhysics::PPhysicsWorldBase",
+  "0xcbfcd8": "Phyre::PPhysics::PPhysicsWorldBullet",
+  "0xcbf780": "Phyre::PPhysics::PPhysicsWorld",
+  "0xcbec38": "Phyre::PPhysics::PPhysicsInterfaceBase",
+  "0xcbfd70": "Phyre::PPhysics::PPhysicsInterfaceBullet",
+  "0xcbecd0": "Phyre::PPhysics::PPhysicsInterface",
+  "0xcc5558": "Phyre::PSharray<Phyre::PPhysics::PPhysicsShape *>",
+  "0xcc9910": "Phyre::PScripting::PAsyncProcessHeader",
+  "0xcc9a40": "Phyre::PScripting::PClassCallableMethodScript",
+  "0xcc9e50": "Phyre::PFramework::PInputMapper",
+  "0xcc9d20": "Phyre::PFramework::PApplication",
+  "0xcc9db8": "Phyre::PFramework::PApplicationViewport",
+  "0xccba18": "ClassDynamicMesh",
+  "0xccbb10": "ClassDynamicMeshInstance",
+  "0xccbbe0": "DistortionGridDynamicMesh",
+  "0xccbce0": "DistortionGridDynamicMeshInstance",
+  "0xccbdb8": "RadialLineDynamicMeshInstance",
+  "0xccbe88": "RadialLineDynamicMesh",
+  "0xccbf88": "BrokenScreenPolygonDynamicMeshInstance",
+  "0xccc058": "BrokenScreenPolygonDynamicMesh",
+  "0xccc158": "ShadowDynamicMesh",
+  "0xcdef10": "Phyre::DynamicMeshDefaultImplmenetation",
+  "0xcdee78": "Phyre::ClothInstancingDynamicMesh",
+  "0xcdefb0": "Phyre::ClothInstancingDynamicMeshInstance",
+  "0xce82f8": "ShadowDynamicMeshInstance",
+  "0x1940ad0": "Phyre::PInputs::PInputSource",
+  "0x1940b68": "Phyre::PInputs::PInputSourceKey",
+  "0x1940c00": "Phyre::PInputs::PInputSourceJoypadButton",
+  "0x1940c98": "Phyre::PInputs::PInputSourceJoypadAxis",
+  "0x1940d30": "Phyre::PInputs::PInputSourceMouseButton",
+  "0x1940dc8": "Phyre::PInputs::PInputSourceMouseDeltaX",
+  "0x1940e60": "Phyre::PInputs::PInputSourceMouseDeltaY",
+  "0x1940ef8": "Phyre::PInputs::PInputSourceTouchRotate",
+  "0x1940f90": "Phyre::PInputs::PInputSourceTouchPinch",
+  "0x1941158": "Phyre::PInputs::PInputSourceTouchTwoFingerDragX",
+  "0x19411f0": "Phyre::PInputs::PInputSourceTouchTwoFingerDragY",
+  "0x1941028": "Phyre::PInputs::PInputSourceTouchDragX",
+  "0x19410c0": "Phyre::PInputs::PInputSourceTouchDragY",
+  "0x1941288": "Phyre::PInputs::PInputSourceMotionQuatX",
+  "0x1941320": "Phyre::PInputs::PInputSourceMotionQuatY",
+  "0x19413b8": "Phyre::PInputs::PInputSourceMotionQuatZ",
+  "0x1941450": "Phyre::PInputs::PInputSourceMotionQuatW",
+  "0x19414e8": "Phyre::PInputs::PInputSourceMotionAngularVelocityX",
+  "0x1941580": "Phyre::PInputs::PInputSourceMotionAngularVelocityY",
+  "0x1941618": "Phyre::PInputs::PInputSourceMotionAngularVelocityZ",
+  "0x19416b0": "Phyre::PInputs::PInputSourceMotionLinearAccelerationX",
+  "0x1941748": "Phyre::PInputs::PInputSourceMotionLinearAccelerationY",
+  "0x19417e0": "Phyre::PInputs::PInputSourceMotionLinearAccelerationZ",
+  "0x1941878": "Phyre::PInputs::PInputAction",
+  "0x1941910": "Phyre::PInputs::PInputMap",
+  "0x1941d78": "Phyre::PArray<Phyre::PInputs::PInputSource *,4>",
+  "0x1941e98": "Phyre::PArray<Phyre::PInputs::PInputAction *,4>",
+  "0x19435e8": "Phyre::PPostProcessing::PPostEffectBase",
+  "0x1943680": "Phyre::PPostProcessing::PDeferredLightingBase",
+  "0x19437b0": "Phyre::PPostProcessing::PDeferredLightingD3D11",
+  "0x1943718": "Phyre::PPostProcessing::PDeferredLighting",
+  "0x1943848": "Phyre::PPostProcessing::PDepthOfFieldBase",
+  "0x1943978": "Phyre::PPostProcessing::PDepthOfFieldD3D11",
+  "0x19438e0": "Phyre::PPostProcessing::PDepthOfField",
+  "0x1943a10": "Phyre::PPostProcessing::PMotionBlurBase",
+  "0x1943b40": "Phyre::PPostProcessing::PMotionBlurD3D11",
+  "0x1943aa8": "Phyre::PPostProcessing::PMotionBlur",
+  "0x1943bd8": "Phyre::PPostProcessing::PScreenSpaceAmbientOcclusionBase",
+  "0x1943d08": "Phyre::PPostProcessing::PScreenSpaceAmbientOcclusionD3D11",
+  "0x1943c70": "Phyre::PPostProcessing::PScreenSpaceAmbientOcclusion",
+  "0x1943df0": "Phyre::PPostProcessing::PMLAABase",
+  "0x1943f20": "Phyre::PPostProcessing::PMLAAD3D11",
+  "0x1943e88": "Phyre::PPostProcessing::PMLAA",
+  "0x1943fb8": "Phyre::PPostProcessing::PMeshParticleSystemBase",
+  "0x1944050": "Phyre::PPostProcessing::PGlowBase",
+  "0x19440e8": "Phyre::PPostProcessing::PGlowGPUBase",
+  "0x1944218": "Phyre::PPostProcessing::PGlowD3D11",
+  "0x1944180": "Phyre::PPostProcessing::PGlow",
+  "0x19442b0": "Phyre::PPostProcessing::PLegacyGlowBase",
+  "0x1944348": "Phyre::PPostProcessing::PLegacyGlowGPUBase",
+  "0x1944478": "Phyre::PPostProcessing::PLegacyGlowD3D11",
+  "0x19443e0": "Phyre::PPostProcessing::PLegacyGlow",
+  "0x1944510": "Phyre::PPostProcessing::PFXAABase",
+  "0x1944640": "Phyre::PPostProcessing::PFXAAD3D11",
+  "0x19445a8": "Phyre::PPostProcessing::PFXAA",
+  "0x19446d8": "Phyre::PPostProcessing::PScreenSpaceReflectionBase",
+  "0x1944808": "Phyre::PPostProcessing::PScreenSpaceReflectionD3D11",
+  "0x1944770": "Phyre::PPostProcessing::PScreenSpaceReflection",
+  "0x19448a0": "Phyre::PPostProcessing::PPostEffectManager",
+  "0x1945010": "Phyre::PArray<Phyre::PPostProcessing::PPostEffectBase *,4>",
+  "0x1a84c88": "Phyre::PText::PBitmapFontCharInfo",
+  "0x1a84d20": "Phyre::PText::PBitmapFont",
+  "0x1a850b0": "Phyre::PArray<Phyre::PText::PBitmapFontCharInfo,4>",
+  "0x1a85420": "Phyre::POccluderGeometry::POccluderGeometryInstance",
+  "0x1a855b8": "Phyre::PGame::PGameSettings",
+  "0x1a856b0": "Phyre::PArray<Phyre::PInputs::PInputMap *,4>",
+  "0x1a85990": "Phyre::POccluderGeometry::POccluderGeometryObject"
+ },
+ "members": {
+  "0xc90610": [
+   {
+    "off": 8,
+    "name": "m_classDescriptor",
+    "flags": 2,
+    "td": 13174624,
+    "tdfn": null,
+    "type": "Phyre::PClassDescriptor"
+   },
+   {
+    "off": 16,
+    "name": "m_flags",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc90f30": [
+   {
+    "off": 0,
+    "name": "m_object",
+    "flags": 18,
+    "td": null,
+    "tdfn": 4413248,
+    "type": null
+   },
+   {
+    "off": 4,
+    "name": "m_classDescriptor",
+    "flags": 18,
+    "td": 13174624,
+    "tdfn": null,
+    "type": "Phyre::PClassDescriptor"
+   }
+  ],
+  "0xc91180": [
+   {
+    "off": 24,
+    "name": "m_type",
+    "flags": 2,
+    "td": null,
+    "tdfn": 4420816,
+    "type": "PType"
+   },
+   {
+    "off": 36,
+    "name": "m_offset",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 44,
+    "name": "m_nameAsString",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   }
+  ],
+  "0xc91330": [
+   {
+    "off": 28,
+    "name": "m_size",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 64,
+    "name": "m_parent",
+    "flags": 2,
+    "td": 13174624,
+    "tdfn": null,
+    "type": "Phyre::PClassDescriptor"
+   },
+   {
+    "off": 132,
+    "name": "m_offsetFromParent",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 136,
+    "name": "m_offsetToBase",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 140,
+    "name": "m_offsetToBaseInAllocatedBlock",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 150,
+    "name": "m_currentMemberCount",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   },
+   {
+    "off": 152,
+    "name": "m_actualSize",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 180,
+    "name": "m_nameAsString",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   }
+  ],
+  "0xc915c8": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc91a28": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc91c18": [
+   {
+    "off": 0,
+    "name": "m_next",
+    "flags": 18,
+    "td": 13179928,
+    "tdfn": null,
+    "type": "Phyre::PComponent"
+   },
+   {
+    "off": 4,
+    "name": "m_entity",
+    "flags": 18,
+    "td": 13180376,
+    "tdfn": null,
+    "type": "Phyre::PEntity"
+   },
+   {
+    "off": 8,
+    "name": "m_componentType",
+    "flags": 18,
+    "td": 13174624,
+    "tdfn": null,
+    "type": "Phyre::PClassDescriptor"
+   }
+  ],
+  "0xc91dd8": [
+   {
+    "off": 0,
+    "name": "m_firstComponent",
+    "flags": 10,
+    "td": 13179928,
+    "tdfn": null,
+    "type": "Phyre::PComponent"
+   },
+   {
+    "off": 4,
+    "name": "m_worldMatrix",
+    "flags": 10,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   }
+  ],
+  "0xc92090": [
+   {
+    "off": 0,
+    "name": "m_matrix",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4598432,
+    "type": "N"
+   }
+  ],
+  "0xc922c0": [
+   {
+    "off": 0,
+    "name": "m_viewMatrix",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4598432,
+    "type": "N"
+   },
+   {
+    "off": 48,
+    "name": "m_projectionMatrix",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4584192,
+    "type": "N"
+   },
+   {
+    "off": 112,
+    "name": "m_viewProjectionMatrix",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4584192,
+    "type": "N"
+   },
+   {
+    "off": 176,
+    "name": "m_localToWorldMatrix",
+    "flags": 18,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 180,
+    "name": "m_nearPlane",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 184,
+    "name": "m_farPlane",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 188,
+    "name": "m_ambientColor",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 204,
+    "name": "m_name",
+    "flags": 16,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 208,
+    "name": "m_fogColor",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 224,
+    "name": "m_fogNear",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 228,
+    "name": "m_fogFar",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 232,
+    "name": "m_fogCurve",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 236,
+    "name": "m_fogLimit",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 240,
+    "name": "m_bgColor",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 256,
+    "name": "m_glowUpperThreshold",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 260,
+    "name": "m_glowLowerThreshold",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 264,
+    "name": "m_glowGain",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 268,
+    "name": "m_glowSpread",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 272,
+    "name": "m_dofFocusPlaneDistance",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 276,
+    "name": "m_dofFocusRange",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 280,
+    "name": "m_dofFocusBlurRange",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 284,
+    "name": "m_charcterLightIntensity",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4587632,
+    "type": "N"
+   },
+   {
+    "off": 300,
+    "name": "m_charcterLightPitch",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4587632,
+    "type": "N"
+   },
+   {
+    "off": 316,
+    "name": "m_characterLightYaw",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4587632,
+    "type": "N"
+   }
+  ],
+  "0xc92358": [
+   {
+    "off": 336,
+    "name": "m_aspect",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xc930e8": [
+   {
+    "off": 340,
+    "name": "m_height",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xc93608": [
+   {
+    "off": 340,
+    "name": "m_FOV",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xc93c58": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc93e38": [
+   {
+    "off": 20,
+    "name": "m_name",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   }
+  ],
+  "0xc93f98": [
+   {
+    "off": 24,
+    "name": "m_id",
+    "flags": 16,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 28,
+    "name": "m_asset",
+    "flags": 18,
+    "td": null,
+    "tdfn": 4413248,
+    "type": null
+   },
+   {
+    "off": 32,
+    "name": "m_assetType",
+    "flags": 18,
+    "td": 13174624,
+    "tdfn": null,
+    "type": "Phyre::PClassDescriptor"
+   }
+  ],
+  "0xc94030": [
+   {
+    "off": 0,
+    "name": "m_targetAssetType",
+    "flags": 18,
+    "td": 13174624,
+    "tdfn": null,
+    "type": "Phyre::PClassDescriptor"
+   },
+   {
+    "off": 4,
+    "name": "m_id",
+    "flags": 16,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   }
+  ],
+  "0xc96aa8": [
+   {
+    "off": 0,
+    "name": "m_phyreMarker",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_size",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_packedNamespaceSize",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_platformID",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 16,
+    "name": "m_instanceListCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 20,
+    "name": "m_arrayFixupSize",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 24,
+    "name": "m_arrayFixupCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 28,
+    "name": "m_pointerFixupSize",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 32,
+    "name": "m_pointerFixupCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 36,
+    "name": "m_pointerArrayFixupSize",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 40,
+    "name": "m_pointerArrayFixupCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 44,
+    "name": "m_pointersInArraysCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 48,
+    "name": "m_userFixupCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 52,
+    "name": "m_userFixupDataSize",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 56,
+    "name": "m_totalDataSize",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 60,
+    "name": "m_headerClassInstanceCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 64,
+    "name": "m_headerClassChildCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 68,
+    "name": "m_physicsEngineID",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc970f8": [
+   {
+    "off": 72,
+    "name": "m_indexBufferSize",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 76,
+    "name": "m_vertexBufferSize",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 80,
+    "name": "m_maxTextureBufferSize",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc97338": [
+   {
+    "off": 0,
+    "name": "m_classID",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_count",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_size",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_objectsSize",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 16,
+    "name": "m_arraysSize",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 20,
+    "name": "m_pointersInArraysCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 24,
+    "name": "m_arrayFixupCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 28,
+    "name": "m_pointerFixupCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 32,
+    "name": "m_pointerArrayFixupCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc98730": [
+   {
+    "off": 0,
+    "name": "m_offset",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_renderDataType",
+    "flags": 18,
+    "td": null,
+    "tdfn": 4717280,
+    "type": "N"
+   },
+   {
+    "off": 8,
+    "name": "m_type",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 9,
+    "name": "m_streamSet",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   }
+  ],
+  "0xc988b0": [
+   {
+    "off": 0,
+    "name": "m_stride",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_elementCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 21,
+    "name": "m_memoryType",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   }
+  ],
+  "0xc98a98": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc98d18": [
+   {
+    "off": 0,
+    "name": "m_stride",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_elementCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc98ec8": [
+   {
+    "off": 0,
+    "name": "m_minimumIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_maximumIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_elementCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_type",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 13,
+    "name": "m_memoryType",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   }
+  ],
+  "0xc99298": [
+   {
+    "off": 0,
+    "name": "m_materialIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_matrixIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 24,
+    "name": "m_modeIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 28,
+    "name": "m_segmentRenderOrder",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 32,
+    "name": "m_clothmodelIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 36,
+    "name": "m_clothIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   }
+  ],
+  "0xc99200": [
+   {
+    "off": 0,
+    "name": "m_hierarchyMatrixIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   },
+   {
+    "off": 2,
+    "name": "m_skeletonMatrixIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   }
+  ],
+  "0xc99590": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc99a30": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc99c80": [
+   {
+    "off": 48,
+    "name": "m_defaultMaterials",
+    "flags": 8,
+    "td": 13211880,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PMaterialSet"
+   }
+  ],
+  "0xc99be8": [
+   {
+    "off": 12,
+    "name": "m_hierarchyMatrixIndex",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 28,
+    "name": "m_pad",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc99f70": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc9a1b0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc9a3f0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc9a2d0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc9a090": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc9a7d0": [
+   {
+    "off": 4,
+    "name": "m_mesh",
+    "flags": 10,
+    "td": 13212800,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PMesh"
+   }
+  ],
+  "0xc9a738": [
+   {
+    "off": 0,
+    "name": "m_startStreamIndex",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_streamCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_elementCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_indexCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   }
+  ],
+  "0xc9aa10": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc9ab98": [
+   {
+    "off": 0,
+    "name": "m_indexCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_vertexCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 24,
+    "name": "m_vertexFormat",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 25,
+    "name": "m_indexFormat",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   }
+  ],
+  "0xc9ad48": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc9af80": [
+   {
+    "off": 0,
+    "name": "m_color",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4587632,
+    "type": "N"
+   },
+   {
+    "off": 16,
+    "name": "m_localToWorldMatrix",
+    "flags": 18,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 20,
+    "name": "m_shadowCaster",
+    "flags": 18,
+    "td": 13255880,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShadowCaster"
+   },
+   {
+    "off": 24,
+    "name": "m_lightType",
+    "flags": 18,
+    "td": 28,
+    "tdfn": null,
+    "type": null
+   },
+   {
+    "off": 28,
+    "name": "m_innerConeAngle",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 32,
+    "name": "m_outerConeAngle",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 36,
+    "name": "m_intensity",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 40,
+    "name": "m_innerRange",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 44,
+    "name": "m_outerRange",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 48,
+    "name": "m_scatteringIntensity",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xc9b4c8": [
+   {
+    "off": 0,
+    "name": "m_size",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc9b720": [
+   {
+    "off": 0,
+    "name": "m_offset",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   }
+  ],
+  "0xc9b7b8": [
+   {
+    "off": 2,
+    "name": "m_size",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   }
+  ],
+  "0xc9b850": [
+   {
+    "off": 2,
+    "name": "m_type",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   }
+  ],
+  "0xc9b8e8": [
+   {
+    "off": 4,
+    "name": "m_constantBufferLocation",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_size",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_type",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   }
+  ],
+  "0xc9b980": [
+   {
+    "off": 0,
+    "name": "m_arrayElementCount",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   },
+   {
+    "off": 2,
+    "name": "m_parameterType",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 3,
+    "name": "m_dataType",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 4,
+    "name": "m_name",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 8,
+    "name": "m_bufferLoc",
+    "flags": 0,
+    "td": 13219768,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderParameterCaptureBufferLocationSize"
+   },
+   {
+    "off": 12,
+    "name": "m_constantBufferLocation",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc9c288": [
+   {
+    "off": 12,
+    "name": "m_structuredBuffer",
+    "flags": 18,
+    "td": 13274568,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PStructuredBuffer"
+   },
+   {
+    "off": 16,
+    "name": "m_dataBlock",
+    "flags": 18,
+    "td": 13207880,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PDataBlock"
+   }
+  ],
+  "0xc9c3b8": [
+   {
+    "off": 12,
+    "name": "m_dataBlock",
+    "flags": 18,
+    "td": 13207880,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PDataBlock"
+   }
+  ],
+  "0xc9c450": [
+   {
+    "off": 12,
+    "name": "m_indexDataBlock",
+    "flags": 18,
+    "td": 13209440,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PIndexDataBlock"
+   }
+  ],
+  "0xc9c320": [
+   {
+    "off": 12,
+    "name": "m_rwStructuredBuffer",
+    "flags": 18,
+    "td": 13274568,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PStructuredBuffer"
+   },
+   {
+    "off": 16,
+    "name": "m_rwDataBlock",
+    "flags": 18,
+    "td": 13207880,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PDataBlock"
+   },
+   {
+    "off": 20,
+    "name": "m_rwIndirectArgsBuffer",
+    "flags": 18,
+    "td": 13275344,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PIndirectArgsBuffer"
+   }
+  ],
+  "0xc9c1f0": [
+   {
+    "off": 12,
+    "name": "m_rwStructuredBuffer",
+    "flags": 18,
+    "td": 13274568,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PStructuredBuffer"
+   },
+   {
+    "off": 16,
+    "name": "m_rwDataBlock",
+    "flags": 18,
+    "td": 13207880,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PDataBlock"
+   }
+  ],
+  "0xc9c4e8": [
+   {
+    "off": 12,
+    "name": "m_texture",
+    "flags": 18,
+    "td": 13252560,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PTexture2D"
+   }
+  ],
+  "0xc9c580": [
+   {
+    "off": 12,
+    "name": "m_texture",
+    "flags": 18,
+    "td": 13253472,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PTexture3D"
+   }
+  ],
+  "0xc9c0c0": [
+   {
+    "off": 12,
+    "name": "m_unusedPointer",
+    "flags": 18,
+    "td": 13251888,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PTextureCommonBase"
+   }
+  ],
+  "0xc9c158": [
+   {
+    "off": 12,
+    "name": "m_structuredBuffer",
+    "flags": 18,
+    "td": 13274568,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PStructuredBuffer"
+   },
+   {
+    "off": 16,
+    "name": "m_dataBlock",
+    "flags": 18,
+    "td": 13207880,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PDataBlock"
+   }
+  ],
+  "0xc9bef8": [
+   {
+    "off": 12,
+    "name": "m_texture",
+    "flags": 18,
+    "td": 13252560,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PTexture2D"
+   }
+  ],
+  "0xc9bf90": [
+   {
+    "off": 12,
+    "name": "m_texture",
+    "flags": 18,
+    "td": 13253472,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PTexture3D"
+   }
+  ],
+  "0xc9bdc8": [
+   {
+    "off": 0,
+    "name": "m_parameterType",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_textureBufferIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_samplerState",
+    "flags": 18,
+    "td": 13248816,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PSamplerState"
+   }
+  ],
+  "0xc9c028": [
+   {
+    "off": 12,
+    "name": "m_texture",
+    "flags": 18,
+    "td": 13254384,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PTextureCubeMap"
+   }
+  ],
+  "0xc9be60": [
+   {
+    "off": 12,
+    "name": "m_constantBuffer",
+    "flags": 18,
+    "td": 13219168,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PConstantBuffer"
+   }
+  ],
+  "0xc9c618": [
+   {
+    "off": 0,
+    "name": "m_code",
+    "flags": 18,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 4,
+    "name": "m_entry",
+    "flags": 16,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 16,
+    "name": "m_profile",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc9c7e0": [
+   {
+    "off": 0,
+    "name": "m_renderType",
+    "flags": 18,
+    "td": null,
+    "tdfn": 4717280,
+    "type": "N"
+   },
+   {
+    "off": 4,
+    "name": "m_name",
+    "flags": 16,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 8,
+    "name": "m_bufferLoc",
+    "flags": 16,
+    "td": 13219768,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderParameterCaptureBufferLocationSize"
+   },
+   {
+    "off": 12,
+    "name": "m_nameHash",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   },
+   {
+    "off": 14,
+    "name": "m_dataType",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 15,
+    "name": "m_index",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   }
+  ],
+  "0xc9d0e0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xc9d200": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca1500": [
+   {
+    "off": 0,
+    "name": "m_vertexProgram",
+    "flags": 18,
+    "td": 13224056,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderVertexProgram"
+   },
+   {
+    "off": 4,
+    "name": "m_fragmentProgram",
+    "flags": 18,
+    "td": 13224208,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderFragmentProgram"
+   },
+   {
+    "off": 8,
+    "name": "m_geometryProgram",
+    "flags": 18,
+    "td": 13224360,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderGeometryProgram"
+   },
+   {
+    "off": 12,
+    "name": "m_computeProgram",
+    "flags": 18,
+    "td": 13224512,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderComputeProgram"
+   }
+  ],
+  "0xca1630": [
+   {
+    "off": 0,
+    "name": "m_importantState",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca1b00": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca18c0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca19e0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca2548": [
+   {
+    "off": 0,
+    "name": "m_parameterBufferFrequenciesRequired",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 28,
+    "name": "m_parameterBufferSize",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca26d8": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca2898": [
+   {
+    "off": 0,
+    "name": "m_minFilter",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 1,
+    "name": "m_magFilter",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 2,
+    "name": "m_wrapS",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 3,
+    "name": "m_wrapT",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 4,
+    "name": "m_wrapR",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 8,
+    "name": "m_lodBias",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 12,
+    "name": "m_maxAnisotropy",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 16,
+    "name": "m_borderColor",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 20,
+    "name": "m_baseLevel",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 24,
+    "name": "m_maxLevel",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 28,
+    "name": "m_flags",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca3530": [
+   {
+    "off": 0,
+    "name": "m_format",
+    "flags": 18,
+    "td": null,
+    "tdfn": 4983568,
+    "type": "N"
+   },
+   {
+    "off": 5,
+    "name": "m_memoryType",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 12,
+    "name": "m_mipmapCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 16,
+    "name": "m_maxMipLevel",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 20,
+    "name": "m_textureFlags",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   }
+  ],
+  "0xca3738": [
+   {
+    "off": 28,
+    "name": "m_width",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 32,
+    "name": "m_height",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca3ac8": [
+   {
+    "off": 28,
+    "name": "m_width",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 32,
+    "name": "m_height",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 36,
+    "name": "m_depth",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca3e58": [
+   {
+    "off": 28,
+    "name": "m_size",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca4168": [
+   {
+    "off": 5,
+    "name": "m_msaaType",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 8,
+    "name": "m_renderTargetFlags",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   }
+  ],
+  "0xca44c8": [
+   {
+    "off": 0,
+    "name": "m_light",
+    "flags": 18,
+    "td": 13217664,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PLight"
+   },
+   {
+    "off": 4,
+    "name": "m_shadowCasterType",
+    "flags": 18,
+    "td": 8,
+    "tdfn": null,
+    "type": null
+   },
+   {
+    "off": 64,
+    "name": "m_zbias",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xca4430": [
+   {
+    "off": 196,
+    "name": "m_farPlane",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xca4680": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca4c98": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca5040": [
+   {
+    "off": 4,
+    "name": "m_effectVariant",
+    "flags": 2,
+    "td": 13262832,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PEffectVariant"
+   }
+  ],
+  "0xca4fa8": [
+   {
+    "off": 0,
+    "name": "m_parameterBufferSize",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca5268": [
+   {
+    "off": 0,
+    "name": "m_effectVariant",
+    "flags": 2,
+    "td": 13262832,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PEffectVariant"
+   },
+   {
+    "off": 4,
+    "name": "m_parameterBuffer",
+    "flags": 2,
+    "td": 13258816,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PParameterBuffer"
+   },
+   {
+    "off": 8,
+    "name": "m_remapFrom",
+    "flags": 2,
+    "td": null,
+    "tdfn": 5085520,
+    "type": "N"
+   },
+   {
+    "off": 12,
+    "name": "m_remapTo",
+    "flags": 2,
+    "td": null,
+    "tdfn": 5085520,
+    "type": "N"
+   },
+   {
+    "off": 16,
+    "name": "m_texAnimID",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 20,
+    "name": "m_chLightAmt",
+    "flags": 2,
+    "td": 13220224,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderParameterDefinition"
+   }
+  ],
+  "0xca51d0": [
+   {
+    "off": 0,
+    "name": "m_name",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 4,
+    "name": "m_value",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   }
+  ],
+  "0xca5660": [
+   {
+    "off": 0,
+    "name": "m_contextVariantIndex",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_contextVariantVpIndex",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_contextVariantFpIndex",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_contextVariantGsIndex",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 16,
+    "name": "m_contextVariantCsIndex",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca5530": [
+   {
+    "off": 0,
+    "name": "m_passType",
+    "flags": 2,
+    "td": 4,
+    "tdfn": null,
+    "type": null
+   },
+   {
+    "off": 36,
+    "name": "m_platformsAreInclude",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   }
+  ],
+  "0xca55c8": [
+   {
+    "off": 0,
+    "name": "m_vertexEntryPoint",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 4,
+    "name": "m_fragmentEntryPoint",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 8,
+    "name": "m_geometryEntryPoint",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 12,
+    "name": "m_computeEntryPoint",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 16,
+    "name": "m_vertexProfile",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 20,
+    "name": "m_fragmentProfile",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 24,
+    "name": "m_geometryProfile",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 28,
+    "name": "m_computeProfile",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca5aa0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca5ce0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca5bc0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca5ff0": [
+   {
+    "off": 0,
+    "name": "m_effect",
+    "flags": 2,
+    "td": 13264616,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PEffect"
+   },
+   {
+    "off": 28,
+    "name": "m_largestShaderPassCount",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   },
+   {
+    "off": 48,
+    "name": "m_tweakableParameterBufferSize",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   },
+   {
+    "off": 50,
+    "name": "m_untweakableParameterBufferSize",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   }
+  ],
+  "0xca6240": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca6480": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca6360": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca66e8": [
+   {
+    "off": 0,
+    "name": "m_supportedLightMask",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_supportedShadowCasterMask",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_effectFile",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 52,
+    "name": "m_effectSource",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 56,
+    "name": "m_maxLightCount",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 60,
+    "name": "m_numSupportedShaderLODLevels",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca6e10": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca6ab0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca6cf0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca6bd0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca6990": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca7228": [
+   {
+    "off": 0,
+    "name": "m_mesh",
+    "flags": 10,
+    "td": 13212800,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PMesh"
+   },
+   {
+    "off": 4,
+    "name": "m_localToWorldMatrix",
+    "flags": 10,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 16,
+    "name": "m_materialSet",
+    "flags": 10,
+    "td": 13211880,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PMaterialSet"
+   },
+   {
+    "off": 20,
+    "name": "m_instanceSegment",
+    "flags": 10,
+    "td": 13210416,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PMeshSegment"
+   },
+   {
+    "off": 24,
+    "name": "m_dynamicMeshInstance",
+    "flags": 10,
+    "td": 13270824,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PDynamicMeshInstance"
+   },
+   {
+    "off": 28,
+    "name": "m_bounds",
+    "flags": 10,
+    "td": 13273528,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PMeshInstanceBounds"
+   },
+   {
+    "off": 32,
+    "name": "m_lodLevel",
+    "flags": 10,
+    "td": 13347464,
+    "tdfn": null,
+    "type": "Phyre::PLOD::PLODLevel"
+   },
+   {
+    "off": 44,
+    "name": "m_name",
+    "flags": 8,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 48,
+    "name": "m_animCt",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 52,
+    "name": "m_animID0",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 56,
+    "name": "m_animID1",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 60,
+    "name": "m_animID2",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 64,
+    "name": "m_animID3",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 68,
+    "name": "m_mimeCt",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 72,
+    "name": "m_groupID",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 76,
+    "name": "m_DObjKind",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 80,
+    "name": "m_RotType",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 84,
+    "name": "m_dObjFlag",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 88,
+    "name": "m_objID",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 92,
+    "name": "m_layerz0",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 96,
+    "name": "m_layerz1",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 100,
+    "name": "m_layerz2",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 104,
+    "name": "m_layerz3",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 108,
+    "name": "m_flags",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca70f8": [
+   {
+    "off": 0,
+    "name": "m_renderDataType",
+    "flags": 10,
+    "td": null,
+    "tdfn": 4717280,
+    "type": "N"
+   },
+   {
+    "off": 4,
+    "name": "m_name",
+    "flags": 8,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 8,
+    "name": "m_nameHash",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   },
+   {
+    "off": 10,
+    "name": "m_index",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 11,
+    "name": "m_inputSet",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   }
+  ],
+  "0xca7ac8": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca79a8": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca7f28": [
+   {
+    "off": 4,
+    "name": "m_dynamicMesh",
+    "flags": 10,
+    "td": 13215696,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PDynamicMesh"
+   }
+  ],
+  "0xca80f0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca89b8": [
+   {
+    "off": 12,
+    "name": "m_worldMatrix",
+    "flags": 2,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 28,
+    "name": "m_meshInstance",
+    "flags": 2,
+    "td": 13267496,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PMeshInstance"
+   },
+   {
+    "off": 32,
+    "name": "m_render_order",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   }
+  ],
+  "0xca8bd8": [
+   {
+    "off": 0,
+    "name": "m_destination",
+    "flags": 2,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 4,
+    "name": "m_source",
+    "flags": 2,
+    "td": 13267496,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PMeshInstance"
+   },
+   {
+    "off": 8,
+    "name": "m_sourceMatrixIndex",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca8d30": [
+   {
+    "off": 0,
+    "name": "m_elementCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_elementSize",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_flags",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca91f8": [
+   {
+    "off": 0,
+    "name": "m_next",
+    "flags": 18,
+    "td": 13275640,
+    "tdfn": null,
+    "type": "Phyre::PScene::PNode"
+   },
+   {
+    "off": 4,
+    "name": "m_parent",
+    "flags": 18,
+    "td": 13275640,
+    "tdfn": null,
+    "type": "Phyre::PScene::PNode"
+   },
+   {
+    "off": 8,
+    "name": "m_firstChild",
+    "flags": 18,
+    "td": 13275640,
+    "tdfn": null,
+    "type": "Phyre::PScene::PNode"
+   },
+   {
+    "off": 12,
+    "name": "m_worldMatrix",
+    "flags": 18,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 16,
+    "name": "m_localMatrix",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4584432,
+    "type": "N"
+   },
+   {
+    "off": 80,
+    "name": "m_name",
+    "flags": 16,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   }
+  ],
+  "0xca9778": [
+   {
+    "off": 0,
+    "name": "m_animKeyType",
+    "flags": 18,
+    "td": null,
+    "tdfn": 5273792,
+    "type": "N"
+   },
+   {
+    "off": 8,
+    "name": "m_targetIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_nodeCentricReIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca99b8": [
+   {
+    "off": 0,
+    "name": "m_keyCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca9ab0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca9c28": [
+   {
+    "off": 0,
+    "name": "m_instanceObjectType",
+    "flags": 18,
+    "td": 13174624,
+    "tdfn": null,
+    "type": "Phyre::PClassDescriptor"
+   },
+   {
+    "off": 4,
+    "name": "m_instanceObject",
+    "flags": 18,
+    "td": null,
+    "tdfn": 4413248,
+    "type": null
+   },
+   {
+    "off": 8,
+    "name": "m_baseObjectType",
+    "flags": 18,
+    "td": 13174624,
+    "tdfn": null,
+    "type": "Phyre::PClassDescriptor"
+   },
+   {
+    "off": 12,
+    "name": "m_baseObject",
+    "flags": 18,
+    "td": null,
+    "tdfn": 4413248,
+    "type": null
+   },
+   {
+    "off": 20,
+    "name": "m_name",
+    "flags": 16,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 24,
+    "name": "m_index",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xca9f30": [
+   {
+    "off": 28,
+    "name": "m_keyType",
+    "flags": 18,
+    "td": null,
+    "tdfn": 5273792,
+    "type": "N"
+   }
+  ],
+  "0xcaa0b8": [
+   {
+    "off": 36,
+    "name": "m_times",
+    "flags": 18,
+    "td": 13277624,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationChannelTimes"
+   },
+   {
+    "off": 48,
+    "name": "m_keyCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcaa558": [
+   {
+    "off": 0,
+    "name": "m_spuBindingSize",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   },
+   {
+    "off": 2,
+    "name": "m_channelCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   },
+   {
+    "off": 4,
+    "name": "m_constantChannelCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   },
+   {
+    "off": 6,
+    "name": "m_interpCountLength",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   }
+  ],
+  "0xcaa428": [
+   {
+    "off": 0,
+    "name": "m_destSlotArrayIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423120,
+    "type": "PInt16"
+   },
+   {
+    "off": 2,
+    "name": "m_interp",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   }
+  ],
+  "0xcaa4c0": [
+   {
+    "off": 8,
+    "name": "m_valueWidthAndKeyCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_sourceChannelIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   }
+  ],
+  "0xcaa7e8": [
+   {
+    "off": 0,
+    "name": "m_binding",
+    "flags": 18,
+    "td": 13280600,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationClipBinding"
+   },
+   {
+    "off": 20,
+    "name": "m_constantChannelStartTime",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 24,
+    "name": "m_constantChannelEndTime",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 28,
+    "name": "m_name",
+    "flags": 16,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   }
+  ],
+  "0xcaac48": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcaab28": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcab178": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcab058": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcab298": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcab4e8": [
+   {
+    "off": 0,
+    "name": "m_time",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 4,
+    "name": "m_id",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcab6a8": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcaba08": [
+   {
+    "off": 8,
+    "name": "m_parent",
+    "flags": 18,
+    "td": 13285664,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PTimeController"
+   },
+   {
+    "off": 12,
+    "name": "m_parentBase",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 16,
+    "name": "m_localBase",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 20,
+    "name": "m_localRange",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcabba8": [
+   {
+    "off": 8,
+    "name": "m_parent",
+    "flags": 18,
+    "td": 13285664,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PTimeController"
+   },
+   {
+    "off": 12,
+    "name": "m_scale",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 16,
+    "name": "m_offset",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcabd28": [
+   {
+    "off": 8,
+    "name": "m_animationSet",
+    "flags": 18,
+    "td": 13282984,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationSet"
+   }
+  ],
+  "0xcabe20": [
+   {
+    "off": 12,
+    "name": "m_animationEventList",
+    "flags": 18,
+    "td": 13284736,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationEventList"
+   },
+   {
+    "off": 16,
+    "name": "m_timeController",
+    "flags": 18,
+    "td": 13285664,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PTimeController"
+   }
+  ],
+  "0xcabf68": [
+   {
+    "off": 12,
+    "name": "m_animationClip",
+    "flags": 18,
+    "td": 13281256,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationClip"
+   },
+   {
+    "off": 16,
+    "name": "m_timeController",
+    "flags": 18,
+    "td": 13285664,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PTimeController"
+   }
+  ],
+  "0xcac150": [
+   {
+    "off": 20,
+    "name": "m_animDataSource",
+    "flags": 18,
+    "td": 13286696,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationDataSource"
+   }
+  ],
+  "0xcac0b8": [
+   {
+    "off": 0,
+    "name": "m_keyType",
+    "flags": 18,
+    "td": null,
+    "tdfn": 5273792,
+    "type": "N"
+   },
+   {
+    "off": 4,
+    "name": "m_nodeName",
+    "flags": 16,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   }
+  ],
+  "0xcac3f8": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcac2d8": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcac748": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcacb00": [
+   {
+    "off": 12,
+    "name": "m_animDataSource",
+    "flags": 18,
+    "td": 13286696,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationDataSource"
+   }
+  ],
+  "0xcacc00": [
+   {
+    "off": 12,
+    "name": "m_animDataSource",
+    "flags": 18,
+    "td": 13286696,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationDataSource"
+   }
+  ],
+  "0xcacd18": [
+   {
+    "off": 0,
+    "name": "m_dataSource",
+    "flags": 18,
+    "td": 13286696,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationDataSource"
+   },
+   {
+    "off": 4,
+    "name": "m_inputCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 136,
+    "name": "m_destSlotArray",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 140,
+    "name": "m_persistentBufferOffset",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 144,
+    "name": "m_preprocessBufferOffset",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcace48": [
+   {
+    "off": 24,
+    "name": "m_targetBlender",
+    "flags": 18,
+    "td": 13290496,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationTargetBlenderController"
+   },
+   {
+    "off": 28,
+    "name": "m_slotArrayElementsRequired",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 40,
+    "name": "m_preprocessBufferSize",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcad4b8": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcad398": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcad158": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcad278": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcada40": [
+   {
+    "off": 16,
+    "name": "m_animationSet",
+    "flags": 18,
+    "td": 13282984,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationSet"
+   },
+   {
+    "off": 28,
+    "name": "m_animationWeightedBlenderController",
+    "flags": 16,
+    "td": 13289624,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationWeightedBlenderController"
+   },
+   {
+    "off": 56,
+    "name": "m_animationTargetBlenderController",
+    "flags": 16,
+    "td": 13290496,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationTargetBlenderController"
+   },
+   {
+    "off": 72,
+    "name": "m_animationNetworkInstance",
+    "flags": 16,
+    "td": 13291080,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationNetworkInstance"
+   }
+  ],
+  "0xcad9a8": [
+   {
+    "off": 0,
+    "name": "m_animationClip",
+    "flags": 18,
+    "td": 13281256,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationClip"
+   },
+   {
+    "off": 4,
+    "name": "m_weight",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 8,
+    "name": "m_speed",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 12,
+    "name": "m_timeIntervalController",
+    "flags": 16,
+    "td": 13285896,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PTimeIntervalController"
+   },
+   {
+    "off": 36,
+    "name": "m_timeScaleOffsetController",
+    "flags": 16,
+    "td": 13286312,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PTimeScaleOffsetController"
+   },
+   {
+    "off": 56,
+    "name": "m_animationController",
+    "flags": 16,
+    "td": 13287272,
+    "tdfn": null,
+    "type": "Phyre::PAnimation::PAnimationController"
+   }
+  ],
+  "0xcae060": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcae550": [
+   {
+    "off": 0,
+    "name": "m_localToWorldMatrix",
+    "flags": 2,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 4,
+    "name": "m_name",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 8,
+    "name": "m_shapeType",
+    "flags": 2,
+    "td": 12,
+    "tdfn": null,
+    "type": null
+   }
+  ],
+  "0xcae7b8": [
+   {
+    "off": 20,
+    "name": "m_localToWorldMatrix",
+    "flags": 18,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 24,
+    "name": "m_isLoop",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   },
+   {
+    "off": 28,
+    "name": "m_tension",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcaeaa8": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcaed58": [
+   {
+    "off": 0,
+    "name": "m_type",
+    "flags": 2,
+    "td": null,
+    "tdfn": 5557904,
+    "type": "N"
+   },
+   {
+    "off": 12,
+    "name": "m_localToWorldMatrix",
+    "flags": 2,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 16,
+    "name": "m_previousLocalToWorldMatrix",
+    "flags": 0,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 64,
+    "name": "m_enabled",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   }
+  ],
+  "0xcaef78": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcaf1e8": [
+   {
+    "off": 0,
+    "name": "m_triggerReceiverComponent",
+    "flags": 0,
+    "td": 13176624,
+    "tdfn": null,
+    "type": "Phyre::PTypedObject"
+   },
+   {
+    "off": 8,
+    "name": "m_trigger",
+    "flags": 2,
+    "td": 13299032,
+    "tdfn": null,
+    "type": "Phyre::PGameplay::PTrigger"
+   },
+   {
+    "off": 12,
+    "name": "m_quarryComponent",
+    "flags": 2,
+    "td": 13301056,
+    "tdfn": null,
+    "type": "Phyre::PGameplay::PQuarryComponent"
+   },
+   {
+    "off": 16,
+    "name": "m_entryCount",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcaf388": [
+   {
+    "off": 12,
+    "name": "m_script",
+    "flags": 18,
+    "td": 13362192,
+    "tdfn": null,
+    "type": "Phyre::PScripting::PScript"
+   },
+   {
+    "off": 20,
+    "name": "m_entryHandler",
+    "flags": 16,
+    "td": 13361904,
+    "tdfn": null,
+    "type": "Phyre::PScripting::PScriptCallbackHandler"
+   },
+   {
+    "off": 32,
+    "name": "m_exitHandler",
+    "flags": 16,
+    "td": 13361904,
+    "tdfn": null,
+    "type": "Phyre::PScripting::PScriptCallbackHandler"
+   }
+  ],
+  "0xcaf540": [
+   {
+    "off": 12,
+    "name": "m_previousLocalToWorldMatrix",
+    "flags": 0,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 60,
+    "name": "m_min",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 76,
+    "name": "m_size",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   }
+  ],
+  "0xcaf780": [
+   {
+    "off": 16,
+    "name": "m_entryPoint",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 20,
+    "name": "m_script",
+    "flags": 2,
+    "td": 13362192,
+    "tdfn": null,
+    "type": "Phyre::PScripting::PScript"
+   }
+  ],
+  "0xcaf8d0": [
+   {
+    "off": 32,
+    "name": "m_onLoadEntryPoint",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 36,
+    "name": "m_onUnloadEntryPoint",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 40,
+    "name": "m_executionInterval",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 46,
+    "name": "m_suspendOnInitialization",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   }
+  ],
+  "0xcafb70": [
+   {
+    "off": 32,
+    "name": "m_timeOut",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcafd60": [
+   {
+    "off": 12,
+    "name": "m_spline",
+    "flags": 18,
+    "td": 13297592,
+    "tdfn": null,
+    "type": "Phyre::PGameplay::PSpline"
+   },
+   {
+    "off": 16,
+    "name": "m_speed",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 20,
+    "name": "m_distanceTravelled",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 24,
+    "name": "m_autoUpdate",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   }
+  ],
+  "0xcaff10": [
+   {
+    "off": 48,
+    "name": "m_camera",
+    "flags": 2,
+    "td": 13181784,
+    "tdfn": null,
+    "type": "Phyre::PCameraProjection"
+   },
+   {
+    "off": 176,
+    "name": "m_isMainCamera",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   },
+   {
+    "off": 177,
+    "name": "m_isFollowCamera",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   },
+   {
+    "off": 180,
+    "name": "m_followTarget",
+    "flags": 2,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 184,
+    "name": "m_nodeToUpdate",
+    "flags": 2,
+    "td": 13275640,
+    "tdfn": null,
+    "type": "Phyre::PScene::PNode"
+   },
+   {
+    "off": 188,
+    "name": "m_followPhysics",
+    "flags": 0,
+    "td": 13363520,
+    "tdfn": null,
+    "type": "Phyre::PPhysics::PPhysicsCharacterCamera"
+   }
+  ],
+  "0xcb0ac0": [
+   {
+    "off": 12,
+    "name": "m_offsetMatrix",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4584432,
+    "type": "N"
+   },
+   {
+    "off": 76,
+    "name": "m_targetObject",
+    "flags": 0,
+    "td": 13176624,
+    "tdfn": null,
+    "type": "Phyre::PTypedObject"
+   },
+   {
+    "off": 84,
+    "name": "m_targetName",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 88,
+    "name": "m_nodeToUpdate",
+    "flags": 2,
+    "td": 13275640,
+    "tdfn": null,
+    "type": "Phyre::PScene::PNode"
+   },
+   {
+    "off": 92,
+    "name": "m_boneIndex",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 96,
+    "name": "m_attachedObject",
+    "flags": 0,
+    "td": 13176624,
+    "tdfn": null,
+    "type": "Phyre::PTypedObject"
+   },
+   {
+    "off": 104,
+    "name": "m_isEnabled",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   }
+  ],
+  "0xcb1250": [
+   {
+    "off": 48,
+    "name": "m_offsetInVertexBuffer",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 56,
+    "name": "m_dataSize",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcb1120": [
+   {
+    "off": 44,
+    "name": "m_offsetInIndexBuffer",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 52,
+    "name": "m_dataSize",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcb0ff0": [
+   {
+    "off": 48,
+    "name": "m_indexData",
+    "flags": 16,
+    "td": 13308192,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PIndexDataBlockD3D11"
+   }
+  ],
+  "0xcb1468": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcb16a8": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcb1588": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcb1eb8": [
+   {
+    "off": 0,
+    "name": "m_name",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 4,
+    "name": "m_textureAtlasInfo",
+    "flags": 2,
+    "td": 13311520,
+    "tdfn": null,
+    "type": "Phyre::PSprite::PTextureAtlasInfo"
+   },
+   {
+    "off": 8,
+    "name": "m_timeInterval",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcb1f50": [
+   {
+    "off": 20,
+    "name": "m_groupName",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 24,
+    "name": "mUStart",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 28,
+    "name": "mVStart",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 32,
+    "name": "mUEnd",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 36,
+    "name": "mVEnd",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcb1c58": [
+   {
+    "off": 0,
+    "name": "m_posX",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 4,
+    "name": "m_posY",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 8,
+    "name": "m_sinPhi",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 12,
+    "name": "m_cosPhi",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 16,
+    "name": "m_uOrigin",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 20,
+    "name": "m_vOrigin",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 24,
+    "name": "m_textureSizeX",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 28,
+    "name": "m_textureSizeY",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 32,
+    "name": "m_spriteSizeX",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 36,
+    "name": "m_spriteSizeY",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 40,
+    "name": "m_depth",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 44,
+    "name": "m_phi",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcb1cf0": [
+   {
+    "off": 4,
+    "name": "m_sort",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   },
+   {
+    "off": 12,
+    "name": "m_mesh",
+    "flags": 10,
+    "td": 13212800,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PMesh"
+   },
+   {
+    "off": 20,
+    "name": "m_quadMaterialSet",
+    "flags": 8,
+    "td": 13211880,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PMaterialSet"
+   },
+   {
+    "off": 28,
+    "name": "m_maxSpriteCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 32,
+    "name": "m_currentSpriteCount",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 36,
+    "name": "m_instanceSegment",
+    "flags": 8,
+    "td": 13210416,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PMeshSegment"
+   },
+   {
+    "off": 144,
+    "name": "m_textureAtlas",
+    "flags": 10,
+    "td": 13252560,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PTexture2D"
+   },
+   {
+    "off": 184,
+    "name": "m_sprites",
+    "flags": 10,
+    "td": 13311064,
+    "tdfn": null,
+    "type": "Phyre::PSprite::PSpriteAttributes"
+   },
+   {
+    "off": 188,
+    "name": "m_material",
+    "flags": 10,
+    "td": 13259368,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PMaterial"
+   },
+   {
+    "off": 192,
+    "name": "m_nextAvailableSpriteID",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcb1d88": [
+   {
+    "off": 0,
+    "name": "m_name",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 4,
+    "name": "m_uOrigin",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 8,
+    "name": "m_vOrigin",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 12,
+    "name": "m_textureSizeX",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 16,
+    "name": "m_textureSizeY",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcb1e20": [
+   {
+    "off": 0,
+    "name": "m_texture",
+    "flags": 2,
+    "td": 13252560,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PTexture2D"
+   }
+  ],
+  "0xcb2a60": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcb3158": [
+   {
+    "off": 0,
+    "name": "m_localToWorldMatrix",
+    "flags": 2,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 4,
+    "name": "m_spriteCollection",
+    "flags": 2,
+    "td": 13311216,
+    "tdfn": null,
+    "type": "Phyre::PSprite::PSpriteCollection"
+   },
+   {
+    "off": 8,
+    "name": "m_spriteAnimInfo",
+    "flags": 2,
+    "td": 13311672,
+    "tdfn": null,
+    "type": "Phyre::PSprite::PSpriteAnimationInfo"
+   },
+   {
+    "off": 32,
+    "name": "m_flipX",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   },
+   {
+    "off": 33,
+    "name": "m_flipY",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   }
+  ],
+  "0xcb47e8": [
+   {
+    "off": 0,
+    "name": "AlphaToCoverageEnable",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 4,
+    "name": "IndependentBlendEnable",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   }
+  ],
+  "0xcb43c8": [
+   {
+    "off": 0,
+    "name": "DepthEnable",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 12,
+    "name": "StencilEnable",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 16,
+    "name": "StencilReadMask",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 17,
+    "name": "StencilWriteMask",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 20,
+    "name": "FrontFace",
+    "flags": 16,
+    "td": null,
+    "tdfn": 5762672,
+    "type": "N"
+   },
+   {
+    "off": 36,
+    "name": "BackFace",
+    "flags": 16,
+    "td": null,
+    "tdfn": 5762672,
+    "type": "N"
+   }
+  ],
+  "0xcb4008": [
+   {
+    "off": 8,
+    "name": "FrontCounterClockwise",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 12,
+    "name": "DepthBias",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 16,
+    "name": "DepthBiasClamp",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 20,
+    "name": "SlopeScaledDepthBias",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 24,
+    "name": "DepthClipEnable",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 28,
+    "name": "ScissorEnable",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 32,
+    "name": "MultisampleEnable",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 36,
+    "name": "AntialiasedLineEnable",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   }
+  ],
+  "0xcb45d0": [
+   {
+    "off": 0,
+    "name": "BlendEnable",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 28,
+    "name": "RenderTargetWriteMask",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   }
+  ],
+  "0xcb3448": [
+   {
+    "off": 24,
+    "name": "m_state",
+    "flags": 16,
+    "td": 13317344,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderPassStateD3D11"
+   },
+   {
+    "off": 404,
+    "name": "m_vertexParameterLocation",
+    "flags": 16,
+    "td": 13243496,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderPassParameterLocationTypesConstantBuffer"
+   },
+   {
+    "off": 428,
+    "name": "m_fragmentParameterLocation",
+    "flags": 16,
+    "td": 13243496,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderPassParameterLocationTypesConstantBuffer"
+   },
+   {
+    "off": 452,
+    "name": "m_geometryParameterLocation",
+    "flags": 16,
+    "td": 13243496,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderPassParameterLocationTypesConstantBuffer"
+   },
+   {
+    "off": 476,
+    "name": "m_computeParameterLocation",
+    "flags": 16,
+    "td": 13243496,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderPassParameterLocationTypesConstantBuffer"
+   },
+   {
+    "off": 500,
+    "name": "m_vertexTexParameterLocation",
+    "flags": 16,
+    "td": 13243496,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderPassParameterLocationTypesConstantBuffer"
+   },
+   {
+    "off": 524,
+    "name": "m_fragmentTexParameterLocation",
+    "flags": 16,
+    "td": 13243496,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderPassParameterLocationTypesConstantBuffer"
+   },
+   {
+    "off": 548,
+    "name": "m_geometryTexParameterLocation",
+    "flags": 16,
+    "td": 13243496,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderPassParameterLocationTypesConstantBuffer"
+   },
+   {
+    "off": 572,
+    "name": "m_computeTexParameterLocation",
+    "flags": 16,
+    "td": 13243496,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PShaderPassParameterLocationTypesConstantBuffer"
+   }
+  ],
+  "0xcb34e0": [
+   {
+    "off": 4,
+    "name": "m_rasterDesc",
+    "flags": 16,
+    "td": null,
+    "tdfn": 5761728,
+    "type": "N"
+   },
+   {
+    "off": 44,
+    "name": "m_depthDesc",
+    "flags": 16,
+    "td": null,
+    "tdfn": 5760944,
+    "type": "N"
+   },
+   {
+    "off": 96,
+    "name": "m_blendDesc",
+    "flags": 16,
+    "td": null,
+    "tdfn": 5760528,
+    "type": "N"
+   },
+   {
+    "off": 376,
+    "name": "m_stencilRef",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   }
+  ],
+  "0xcb36a8": [
+   {
+    "off": 20,
+    "name": "m_constantBufferSize",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 24,
+    "name": "m_globalConstantBufferIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 1244,
+    "name": "m_shaderProfile",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcb3740": [
+   {
+    "off": 1248,
+    "name": "m_inputLayout",
+    "flags": 16,
+    "td": 13317648,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PStreamInputLayoutD3D11"
+   }
+  ],
+  "0xcb3578": [
+   {
+    "off": 0,
+    "name": "m_semantic",
+    "flags": 16,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 4,
+    "name": "m_renderType",
+    "flags": 18,
+    "td": null,
+    "tdfn": 4717280,
+    "type": "N"
+   },
+   {
+    "off": 8,
+    "name": "m_semanticIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_d3dFormat",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 16,
+    "name": "m_inputSlot",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcb4c58": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbab20": [
+   {
+    "off": 0,
+    "name": "m_minBounds",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 16,
+    "name": "m_maxBounds",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 40,
+    "name": "m_blendRange",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 44,
+    "name": "m_shaderLODLevelDistance",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 52,
+    "name": "m_lodMetricType",
+    "flags": 2,
+    "td": null,
+    "tdfn": 6077568,
+    "type": "N"
+   },
+   {
+    "off": 56,
+    "name": "m_lodBlendType",
+    "flags": 2,
+    "td": null,
+    "tdfn": 6078688,
+    "type": "N"
+   },
+   {
+    "off": 68,
+    "name": "m_isEnabled",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   }
+  ],
+  "0xcbaa88": [
+   {
+    "off": 0,
+    "name": "m_lodGroup",
+    "flags": 2,
+    "td": 13347616,
+    "tdfn": null,
+    "type": "Phyre::PLOD::PLODGroup"
+   },
+   {
+    "off": 12,
+    "name": "m_minimumThreshold",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 16,
+    "name": "m_maximumThreshold",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcbaf50": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbae30": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbb268": [
+   {
+    "off": 0,
+    "name": "m_modifierNetwork",
+    "flags": 18,
+    "td": 13354016,
+    "tdfn": null,
+    "type": "Phyre::PDynamicGeometry::PModifierNetwork"
+   },
+   {
+    "off": 4,
+    "name": "m_segmentInputGroupStart",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_segmentOutputGroupStart",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_modifierOutputsAreConsumed",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbb760": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbb520": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbb640": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbbb38": [
+   {
+    "off": 0,
+    "name": "m_modifierNetwork",
+    "flags": 18,
+    "td": 13354016,
+    "tdfn": null,
+    "type": "Phyre::PDynamicGeometry::PModifierNetwork"
+   }
+  ],
+  "0xcbba08": [
+   {
+    "off": 8,
+    "name": "m_elementSize",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_renderStream",
+    "flags": 16,
+    "td": 13352952,
+    "tdfn": null,
+    "type": "Phyre::PDynamicGeometry::PRenderStream"
+   }
+  ],
+  "0xcbbaa0": [
+   {
+    "off": 0,
+    "name": "m_source",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_list",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbbd20": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbc128": [
+   {
+    "off": 0,
+    "name": "m_modifier",
+    "flags": 18,
+    "td": null,
+    "tdfn": 6062048,
+    "type": "N"
+   },
+   {
+    "off": 4,
+    "name": "m_persistentStateOffset",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_stateBlockOffset",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbc420": [
+   {
+    "off": 0,
+    "name": "m_totalOutputElementSize",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_totalInputCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 40,
+    "name": "m_infoPacket",
+    "flags": 18,
+    "td": 13353864,
+    "tdfn": null,
+    "type": "Phyre::PDynamicGeometry::PModifierNetworkInfoPacket"
+   },
+   {
+    "off": 44,
+    "name": "m_totalPersistentStateSize",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 48,
+    "name": "m_totalStateBlockSize",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 52,
+    "name": "m_isCompiled",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   }
+  ],
+  "0xcbc090": [
+   {
+    "off": 0,
+    "name": "m_type",
+    "flags": 18,
+    "td": null,
+    "tdfn": 4717280,
+    "type": "N"
+   },
+   {
+    "off": 4,
+    "name": "m_modifier",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_stream",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_elementSize",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 16,
+    "name": "m_info",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbc388": [
+   {
+    "off": 0,
+    "name": "m_size",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_modifierCodeCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_modifierInstanceCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 12,
+    "name": "m_inputCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   },
+   {
+    "off": 14,
+    "name": "m_outputCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   },
+   {
+    "off": 20,
+    "name": "m_totalPersistentStateSize",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 24,
+    "name": "m_totalStateBlockSize",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 28,
+    "name": "m_spuModifierCodeSize",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbc2f0": [
+   {
+    "off": 0,
+    "name": "m_elementSize",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423280,
+    "type": "PUInt16"
+   }
+  ],
+  "0xcbc1c0": [
+   {
+    "off": 0,
+    "name": "m_modifier",
+    "flags": 18,
+    "td": null,
+    "tdfn": 6062048,
+    "type": "N"
+   },
+   {
+    "off": 4,
+    "name": "m_inputCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_outputCount",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbc258": [
+   {
+    "off": 0,
+    "name": "m_persistentStateOffset",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_stateBlockOffset",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_codeIndex",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   }
+  ],
+  "0xcbbff8": [
+   {
+    "off": 0,
+    "name": "m_dataBlock",
+    "flags": 18,
+    "td": 13208856,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PDynamicDataBlock"
+   },
+   {
+    "off": 4,
+    "name": "m_vertexStream",
+    "flags": 18,
+    "td": 13207344,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PVertexStream"
+   }
+  ],
+  "0xcbbf60": [
+   {
+    "off": 0,
+    "name": "m_source",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_stream",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   }
+  ],
+  "0xcbce60": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbcd40": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbcc20": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbe2f0": [
+   {
+    "off": 0,
+    "name": "m_entryPoint",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 4,
+    "name": "m_handler",
+    "flags": 0,
+    "td": 13176624,
+    "tdfn": null,
+    "type": "Phyre::PTypedObject"
+   }
+  ],
+  "0xcbe410": [
+   {
+    "off": 16,
+    "name": "m_onLoadEntryPoint",
+    "flags": 8,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 20,
+    "name": "m_onUnloadEntryPoint",
+    "flags": 8,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 24,
+    "name": "m_defaultEntryPoint",
+    "flags": 8,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 28,
+    "name": "m_sourceName",
+    "flags": 8,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 32,
+    "name": "m_isPersistent",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   },
+   {
+    "off": 36,
+    "name": "m_executionInterval",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcbe6e0": [
+   {
+    "off": 92,
+    "name": "m_halfExtents",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   }
+  ],
+  "0xcbf190": [
+   {
+    "off": 0,
+    "name": "m_collisionObjectA",
+    "flags": 0,
+    "td": 13176624,
+    "tdfn": null,
+    "type": "Phyre::PTypedObject"
+   },
+   {
+    "off": 8,
+    "name": "m_collisionObjectB",
+    "flags": 0,
+    "td": 13176624,
+    "tdfn": null,
+    "type": "Phyre::PTypedObject"
+   },
+   {
+    "off": 16,
+    "name": "m_amount",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcbe810": [
+   {
+    "off": 100,
+    "name": "m_height",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcbe940": [
+   {
+    "off": 8,
+    "name": "m_collisionRadius",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 12,
+    "name": "m_targetDistance",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 16,
+    "name": "m_targetHeight",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 20,
+    "name": "m_contactEpsilon",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 24,
+    "name": "m_minimumCameraDistance",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 28,
+    "name": "m_smoothingRate",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 40,
+    "name": "m_springTension",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 44,
+    "name": "m_nearCameraYAdjust",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcbe9d8": [
+   {
+    "off": 0,
+    "name": "m_next",
+    "flags": 10,
+    "td": 13363672,
+    "tdfn": null,
+    "type": "Phyre::PPhysics::PPhysicsCharacterControllerBase"
+   },
+   {
+    "off": 4,
+    "name": "m_startPosition",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4584672,
+    "type": "N"
+   },
+   {
+    "off": 20,
+    "name": "m_scale",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 36,
+    "name": "m_gravity",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 68,
+    "name": "m_graphicsOffset",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4584432,
+    "type": "N"
+   },
+   {
+    "off": 132,
+    "name": "m_invGraphicsOffset",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4584432,
+    "type": "N"
+   },
+   {
+    "off": 196,
+    "name": "m_targetNode",
+    "flags": 10,
+    "td": 13275640,
+    "tdfn": null,
+    "type": "Phyre::PScene::PNode"
+   },
+   {
+    "off": 200,
+    "name": "m_targetWorldMatrix",
+    "flags": 10,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 204,
+    "name": "m_world",
+    "flags": 10,
+    "td": 13367168,
+    "tdfn": null,
+    "type": "Phyre::PPhysics::PPhysicsWorld"
+   },
+   {
+    "off": 208,
+    "name": "m_rotate",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 212,
+    "name": "m_right",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 216,
+    "name": "m_forward",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 220,
+    "name": "m_velocity",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 224,
+    "name": "m_maxSlopeAngle",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 228,
+    "name": "m_jumpHeight",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 232,
+    "name": "m_height",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 236,
+    "name": "m_radius",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 244,
+    "name": "m_jump",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   },
+   {
+    "off": 245,
+    "name": "m_isOnGround",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   },
+   {
+    "off": 256,
+    "name": "m_scriptHandler",
+    "flags": 8,
+    "td": 13361904,
+    "tdfn": null,
+    "type": "Phyre::PScripting::PScriptCallbackHandler"
+   }
+  ],
+  "0xcbeb08": [
+   {
+    "off": 100,
+    "name": "m_height",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcbed68": [
+   {
+    "off": 0,
+    "name": "m_dynamicFriction",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 4,
+    "name": "m_staticFriction",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 8,
+    "name": "m_restitution",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcbee00": [
+   {
+    "off": 92,
+    "name": "m_shape",
+    "flags": 10,
+    "td": 13216664,
+    "tdfn": null,
+    "type": "Phyre::PGeometry::PShape"
+   }
+  ],
+  "0xcbef30": [
+   {
+    "off": 0,
+    "name": "m_next",
+    "flags": 10,
+    "td": 13365040,
+    "tdfn": null,
+    "type": "Phyre::PPhysics::PPhysicsModel"
+   },
+   {
+    "off": 4,
+    "name": "m_rigidBodies",
+    "flags": 10,
+    "td": 13365800,
+    "tdfn": null,
+    "type": "Phyre::PPhysics::PPhysicsRigidBody"
+   },
+   {
+    "off": 8,
+    "name": "m_world",
+    "flags": 10,
+    "td": 13367168,
+    "tdfn": null,
+    "type": "Phyre::PPhysics::PPhysicsWorld"
+   }
+  ],
+  "0xcbefc8": [
+   {
+    "off": 92,
+    "name": "m_equationCoefficient",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4587632,
+    "type": "N"
+   }
+  ],
+  "0xcbf0f8": [
+   {
+    "off": 0,
+    "name": "m_next",
+    "flags": 10,
+    "td": 13365800,
+    "tdfn": null,
+    "type": "Phyre::PPhysics::PPhysicsRigidBody"
+   },
+   {
+    "off": 4,
+    "name": "m_massFrameTransform",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4598432,
+    "type": "N"
+   },
+   {
+    "off": 52,
+    "name": "m_initialPosition",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 68,
+    "name": "m_initialOrientation",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4585408,
+    "type": "N"
+   },
+   {
+    "off": 84,
+    "name": "m_inertiaTensor",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 100,
+    "name": "m_initialLinearVelocity",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 116,
+    "name": "m_initialAngularVelocity",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 132,
+    "name": "m_scale",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 148,
+    "name": "m_material",
+    "flags": 10,
+    "td": 13364584,
+    "tdfn": null,
+    "type": "Phyre::PPhysics::PPhysicsMaterial"
+   },
+   {
+    "off": 152,
+    "name": "m_targetNode",
+    "flags": 10,
+    "td": 13275640,
+    "tdfn": null,
+    "type": "Phyre::PScene::PNode"
+   },
+   {
+    "off": 156,
+    "name": "m_targetWorldMatrix",
+    "flags": 10,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   },
+   {
+    "off": 168,
+    "name": "m_linearDamping",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 172,
+    "name": "m_angularDamping",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 176,
+    "name": "m_model",
+    "flags": 10,
+    "td": 13365040,
+    "tdfn": null,
+    "type": "Phyre::PPhysics::PPhysicsModel"
+   },
+   {
+    "off": 184,
+    "name": "m_nextKinematicRigidBody",
+    "flags": 10,
+    "td": 13365800,
+    "tdfn": null,
+    "type": "Phyre::PPhysics::PPhysicsRigidBody"
+   },
+   {
+    "off": 188,
+    "name": "m_collisionGroup",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 192,
+    "name": "m_mass",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 196,
+    "name": "m_rigidBodyType",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4422960,
+    "type": "PUInt8"
+   },
+   {
+    "off": 197,
+    "name": "m_enabled",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   },
+   {
+    "off": 208,
+    "name": "m_scriptHandler",
+    "flags": 8,
+    "td": 13361904,
+    "tdfn": null,
+    "type": "Phyre::PScripting::PScriptCallbackHandler"
+   }
+  ],
+  "0xcbf2c0": [
+   {
+    "off": 4,
+    "name": "m_hollow",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   },
+   {
+    "off": 8,
+    "name": "m_mass",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 12,
+    "name": "m_density",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 16,
+    "name": "m_material",
+    "flags": 10,
+    "td": 13364584,
+    "tdfn": null,
+    "type": "Phyre::PPhysics::PPhysicsMaterial"
+   },
+   {
+    "off": 20,
+    "name": "m_transform",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4598432,
+    "type": "N"
+   },
+   {
+    "off": 68,
+    "name": "m_scale",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   }
+  ],
+  "0xcbf3f0": [
+   {
+    "off": 92,
+    "name": "m_radius",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcbf520": [
+   {
+    "off": 108,
+    "name": "m_height",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcbf5b8": [
+   {
+    "off": 108,
+    "name": "m_height",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0xcbf650": [
+   {
+    "off": 0,
+    "name": "m_gravity",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 16,
+    "name": "m_timeStep",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 20,
+    "name": "m_worldMin",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 36,
+    "name": "m_worldMax",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 72,
+    "name": "m_models",
+    "flags": 10,
+    "td": 13365040,
+    "tdfn": null,
+    "type": "Phyre::PPhysics::PPhysicsModel"
+   },
+   {
+    "off": 76,
+    "name": "m_characterControllers",
+    "flags": 10,
+    "td": 13363672,
+    "tdfn": null,
+    "type": "Phyre::PPhysics::PPhysicsCharacterControllerBase"
+   },
+   {
+    "off": 80,
+    "name": "m_kinematicRigidBodies",
+    "flags": 10,
+    "td": 13365800,
+    "tdfn": null,
+    "type": "Phyre::PPhysics::PPhysicsRigidBody"
+   }
+  ],
+  "0xcbf6e8": [
+   {
+    "off": 0,
+    "name": "m_contactPoint",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4587632,
+    "type": "N"
+   },
+   {
+    "off": 16,
+    "name": "m_contactNormal",
+    "flags": 8,
+    "td": null,
+    "tdfn": 4587632,
+    "type": "N"
+   },
+   {
+    "off": 32,
+    "name": "m_collisionObject",
+    "flags": 10,
+    "td": null,
+    "tdfn": 4413248,
+    "type": null
+   },
+   {
+    "off": 36,
+    "name": "m_collisionObjectClassDescriptor",
+    "flags": 10,
+    "td": 13174624,
+    "tdfn": null,
+    "type": "Phyre::PClassDescriptor"
+   }
+  ],
+  "0xcc5558": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0xcc9a40": [
+   {
+    "off": 40,
+    "name": "m_script",
+    "flags": 2,
+    "td": 13362192,
+    "tdfn": null,
+    "type": "Phyre::PScripting::PScript"
+   },
+   {
+    "off": 44,
+    "name": "m_nameAsString",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   },
+   {
+    "off": 48,
+    "name": "m_entryPoint",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   }
+  ],
+  "0xcc9e50": [
+   {
+    "off": 0,
+    "name": "m_inputMap",
+    "flags": 2,
+    "td": 26482960,
+    "tdfn": null,
+    "type": "Phyre::PInputs::PInputMap"
+   }
+  ],
+  "0x1941878": [
+   {
+    "off": 4,
+    "name": "m_name",
+    "flags": 0,
+    "td": 13176904,
+    "tdfn": null,
+    "type": "Phyre::PString"
+   }
+  ],
+  "0x1940ad0": [
+   {
+    "off": 8,
+    "name": "m_typeSemantic",
+    "flags": 2,
+    "td": null,
+    "tdfn": 10438448,
+    "type": "N"
+   },
+   {
+    "off": 12,
+    "name": "m_id",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 16,
+    "name": "m_invert",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   },
+   {
+    "off": 20,
+    "name": "m_scale",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0x1940c98": [
+   {
+    "off": 28,
+    "name": "m_joypadAxisSemantic",
+    "flags": 2,
+    "td": null,
+    "tdfn": 10673376,
+    "type": "N"
+   }
+  ],
+  "0x1940c00": [
+   {
+    "off": 32,
+    "name": "m_positiveButtonSemantic",
+    "flags": 2,
+    "td": null,
+    "tdfn": 10674512,
+    "type": "N"
+   },
+   {
+    "off": 36,
+    "name": "m_negativeButtonSemantic",
+    "flags": 2,
+    "td": null,
+    "tdfn": 10674512,
+    "type": "N"
+   }
+  ],
+  "0x1940b68": [
+   {
+    "off": 32,
+    "name": "m_positiveKeySemantic",
+    "flags": 2,
+    "td": null,
+    "tdfn": 10675648,
+    "type": "N"
+   },
+   {
+    "off": 36,
+    "name": "m_negativeKeySemantic",
+    "flags": 2,
+    "td": null,
+    "tdfn": 10675648,
+    "type": "N"
+   }
+  ],
+  "0x1940d30": [
+   {
+    "off": 28,
+    "name": "m_mouseButtonSemantic",
+    "flags": 2,
+    "td": null,
+    "tdfn": 10676784,
+    "type": "N"
+   }
+  ],
+  "0x1940dc8": [
+   {
+    "off": 32,
+    "name": "m_modifierButtonSemantic",
+    "flags": 2,
+    "td": null,
+    "tdfn": 10676784,
+    "type": "N"
+   },
+   {
+    "off": 36,
+    "name": "m_modifierKeySemantic",
+    "flags": 2,
+    "td": null,
+    "tdfn": 10675648,
+    "type": "N"
+   }
+  ],
+  "0x1940e60": [
+   {
+    "off": 32,
+    "name": "m_modifierButtonSemantic",
+    "flags": 2,
+    "td": null,
+    "tdfn": 10676784,
+    "type": "N"
+   },
+   {
+    "off": 36,
+    "name": "m_modifierKeySemantic",
+    "flags": 2,
+    "td": null,
+    "tdfn": 10675648,
+    "type": "N"
+   }
+  ],
+  "0x1941e98": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0x1941d78": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0x1943680": [
+   {
+    "off": 16016,
+    "name": "m_ambientColor",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4587632,
+    "type": "N"
+   },
+   {
+    "off": 16032,
+    "name": "m_fogColor",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4587632,
+    "type": "N"
+   },
+   {
+    "off": 16048,
+    "name": "m_fogDistance",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 16052,
+    "name": "m_fogNearDistance",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 16056,
+    "name": "m_fogAmount",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 16072,
+    "name": "m_instantLightIntensity",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 16076,
+    "name": "m_instantLightScatteringIntensity",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0x1943848": [
+   {
+    "off": 20,
+    "name": "m_focusPlaneDistance",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 24,
+    "name": "m_focusRange",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 28,
+    "name": "m_focusBlurRange",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0x1944050": [
+   {
+    "off": 104,
+    "name": "m_glowAmountScale",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 108,
+    "name": "m_glowLuminanceThreshold",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 112,
+    "name": "m_glowLuminanceScale",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0x1943a10": [
+   {
+    "off": 3284,
+    "name": "m_velocityScale",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0x19435e8": [
+   {
+    "off": 8,
+    "name": "m_effectMaterial",
+    "flags": 2,
+    "td": 13259368,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PMaterial"
+   },
+   {
+    "off": 17,
+    "name": "m_enabled",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   }
+  ],
+  "0x19446d8": [
+   {
+    "off": 20,
+    "name": "m_minReflectionDirZ",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 24,
+    "name": "m_marchStepFactor",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   }
+  ],
+  "0x1945010": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0x1a84d20": [
+   {
+    "off": 0,
+    "name": "m_isSDF",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   },
+   {
+    "off": 4,
+    "name": "m_fontSize",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_lineSpacing",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 12,
+    "name": "m_baselineOffset",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 32,
+    "name": "m_bitmapFontTexture",
+    "flags": 18,
+    "td": 13252560,
+    "tdfn": null,
+    "type": "Phyre::PRendering::PTexture2D"
+   }
+  ],
+  "0x1a84c88": [
+   {
+    "off": 0,
+    "name": "m_characterCode",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_kernPairs",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_kernOffset",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423440,
+    "type": "PInt32"
+   },
+   {
+    "off": 20,
+    "name": "m_width",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 24,
+    "name": "m_height",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4423776,
+    "type": "float"
+   },
+   {
+    "off": 44,
+    "name": "m_rotated",
+    "flags": 16,
+    "td": null,
+    "tdfn": 4424592,
+    "type": "bool"
+   }
+  ],
+  "0x1a850b0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0x1a85420": [
+   {
+    "off": 0,
+    "name": "m_occluder",
+    "flags": 2,
+    "td": 27810192,
+    "tdfn": null,
+    "type": "Phyre::POccluderGeometry::POccluderGeometryObject"
+   },
+   {
+    "off": 4,
+    "name": "m_localToWorldMatrix",
+    "flags": 2,
+    "td": 13181072,
+    "tdfn": null,
+    "type": "Phyre::PWorldMatrix"
+   }
+  ],
+  "0x1a855b8": [
+   {
+    "off": 8,
+    "name": "m_inputMap",
+    "flags": 2,
+    "td": 26482960,
+    "tdfn": null,
+    "type": "Phyre::PInputs::PInputMap"
+   }
+  ],
+  "0x1a856b0": [
+   {
+    "off": 0,
+    "name": "m_count",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   }
+  ],
+  "0x1a85990": [
+   {
+    "off": 0,
+    "name": "m_planeCount",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 4,
+    "name": "m_vertexCount",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 8,
+    "name": "m_edgeCount",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4423616,
+    "type": "PUInt32"
+   },
+   {
+    "off": 16,
+    "name": "m_minBounds",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   },
+   {
+    "off": 32,
+    "name": "m_maxBounds",
+    "flags": 0,
+    "td": null,
+    "tdfn": 4586896,
+    "type": "N"
+   }
+  ]
+ }
+}

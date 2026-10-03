@@ -1,0 +1,158 @@
+# ---------------------------------------------------------------------------
+# Secrets and machine-local configuration
+#
+# Nothing in here is checked in even if it looks harmless today, because the
+# cost of noticing a leak after the fact is much higher than the cost of a
+# second copy of a config file.
+# ---------------------------------------------------------------------------
+
+# MCP server configuration. Holds absolute paths to this machine's tools, and is
+# the usual place an API key or token ends up.
+.mcp.json
+.mcp.*.json
+mcp.json
+
+# Per-machine agent and editor settings. The shared half of a .claude folder can
+# be force-added later if it is ever worth sharing.
+.claude/
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Credentials of every shape.
+#
+# These are deliberately NOT bare substring globs. On Windows git matches
+# gitignore case-insensitively, so a pattern like *token* would silently refuse
+# to track a future Token.h or Tokenizer.cpp, and this project is reverse
+# engineering a script VM where those are likely file names. A silently
+# untracked source file is a worse failure than a slightly narrower net, so
+# every pattern here is anchored to a whole name or a real extension.
+.env
+.env.*
+*.env
+secrets.json
+secrets.yaml
+secrets.yml
+secrets.txt
+secrets.ini
+*.secret
+*.secrets
+credentials.json
+credentials.txt
+credentials.ini
+.credentials
+*.token
+*.key
+*.pem
+*.pfx
+*.p12
+*.keystore
+id_rsa*
+id_ed25519*
+.netrc
+.npmrc
+*.pwd
+auth.json
+
+# ---------------------------------------------------------------------------
+# Build output
+#
+# loader/build is created and wiped wholesale by the build scripts, so there is
+# never a reason to track any of it.
+# ---------------------------------------------------------------------------
+loader/build/
+build/
+out/
+bin/
+obj/
+
+# MSVC and linker leftovers, in case a build is ever run somewhere else.
+*.obj
+*.lib
+*.exp
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.idb
+*.iobj
+*.ipdb
+*.tlog
+*.res
+*.sbr
+*.bsc
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CMakeScripts/
+Makefile
+*.cmake.in
+
+# ---------------------------------------------------------------------------
+# Reverse engineering working files
+#
+# The IDA database lives next to FFX.exe in the Steam folder, not here, but a
+# stray copy must not be committed. It is large and it contains the game's own
+# code.
+# ---------------------------------------------------------------------------
+*.i64
+*.idb
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+*.asm.txt
+
+# Extracted game assets. Everything the tools unpack out of the shipped VBF
+# archives is the publisher's content and does not belong in this repo. Only the
+# scripts that read the formats, and the notes about them, are ours.
+extracted/
+assets/
+dump/
+dumps/
+*.vbf
+*.ebp
+*.mgrp
+*.bin.dec
+
+# ---------------------------------------------------------------------------
+# Tooling and editor noise
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+
+.vs/
+.vscode/
+.idea/
+*.vcxproj.user
+*.suo
+*.sln.docstates
+*.VC.db
+*.VC.VC.opendb
+
+# ---------------------------------------------------------------------------
+# OS noise
+# ---------------------------------------------------------------------------
+Thumbs.db
+ehthumbs.db
+desktop.ini
+.DS_Store
+$RECYCLE.BIN/
+
+# ---------------------------------------------------------------------------
+# Scratch
+# ---------------------------------------------------------------------------
+*.bak
+*.orig
+*.rej
+*.tmp
+*~
+scratch/
+tmp/

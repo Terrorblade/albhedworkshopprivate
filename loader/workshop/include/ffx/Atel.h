@@ -187,12 +187,26 @@ namespace ffx
 	// ---------------------------------------------------------------------------
 	namespace AtelPos
 	{
-		const DWORD PrevX = 0;
-		const DWORD PrevY = 4;
-		const DWORD PrevZ = 8;
-		const DWORD X = 16;
-		const DWORD Y = 20;
-		const DWORD Z = 24;
+		// THESE TWO GROUPS WERE THE WRONG WAY ROUND until it was settled from the code.
+		// Current is at +0 and previous is at +16, not the other way about. Three
+		// functions agree and none of them is ambiguous:
+		//
+		//  - FFX_Atel_PullActorPosFromChr 0x869E40 runs every frame and starts with
+		//    pos[4..6] = pos[0..2], which is "shift current into previous", then fills
+		//    pos[0..2] from the live CHR with FFX_Ch_GetPos.
+		//  - FFX_Atel_SetActorPos 0x870B20 writes the new position to pos[0..2] and
+		//    only copies it down to pos[4..6] when it is snapping the previous too.
+		//  - Both of them feed ctx+536 (PlayerPos, the current one) from pos[0..2].
+		//
+		// Getting this backwards does not fault, it just reads one frame stale, which
+		// is exactly the kind of wrong that survives a long time. So do not flip it
+		// back without reading those three.
+		const DWORD X = 0;
+		const DWORD Y = 4;
+		const DWORD Z = 8;
+		const DWORD PrevX = 16;
+		const DWORD PrevY = 20;
+		const DWORD PrevZ = 24;
 		const DWORD YHalfHeight = 28; // 0 or less means do not gate on Y at all
 		const DWORD TargetId = 40;    // word. 0xFFFF means use the bound player
 		const DWORD XHalfExtent = 48;
@@ -434,6 +448,90 @@ namespace ffx
 	// Which actor represents this party character, or -1. The cheapest route from an
 	// ownership table keyed on characters to the actor id an event command needs.
 	int ActorIdForPartyCharacter(int charIndex);
+
+	// ---------------------------------------------------------------------------
+	// Moving an actor. This is how a joining machine lands its characters where the
+	// host says they are.
+	// ---------------------------------------------------------------------------
+
+	// Cancel whatever move the script had this actor doing. Returns true only when
+	// there was something to cancel.
+	//
+	// A placement HAS to do this. While the kind word at moveCmd+2 is non-zero,
+	// FFX_Atel_ApplyMoveToChr re-asserts m_speed from the actor record every frame and
+	// walks the character back toward the script's target, so the placement looks like
+	// it worked for one frame and then unwinds. Zeroing that word also makes the same
+	// function force m_speed = 0 for you, which is what makes a motion stop stick.
+	bool CancelActorMoveCommand(int actorId);
+
+	// FFX_Atel_SetActorPos, bounds checked. This is the engine's own teleport and it
+	// does a surprising amount, which is the reason to use it rather than writing the
+	// position yourself:
+	//
+	//  - writes the actor's position vector, at pos+0
+	//  - for a CHR backed actor, calls FFX_Ch_SetPos and FFX_Ch_MarkDirty, so the
+	//    drawable and the actor record agree immediately rather than a frame later
+	//  - when the actor IS the bound player, shifts the context player cache at
+	//    ctx+536 down into ctx+552 and writes the new position into ctx+536, which is
+	//    the pair every line, box, path and volume trigger compares against
+	//  - refreshes the encounter ground attribute at savedata+16 and the area id at
+	//    savedata+14 from the destination's ground, so a random battle rolled right
+	//    after a move uses the right table
+	//  - ORs 0x10 into the byte at ctx+2
+	//
+	// snapPrev true also copies the new position into the previous slot, both on the
+	// actor and in the context cache. THAT IS THE ONE YOU WANT FOR A PLACEMENT. With
+	// it false the engine keeps the old previous position, which leaves a swept
+	// segment running from wherever the character used to be to where it now is, and
+	// every line and box trigger along that imaginary line will fire. A joiner
+	// landing in a new map would trip every trigger between the origin and its feet.
+	//
+	// The one case for snapPrev false is a deliberate nudge where you WANT the sweep
+	// to count, which is what the scripts that call this with 0 are doing.
+	//
+	// Does nothing for actor kind 4, which has no position sub-struct at all.
+	bool SetActorPosition(int actorId, float x, float y, float z, bool snapPrev);
+
+	// The joiner's primitive: put a party character on the ground at a point, facing
+	// a direction, with its motion stopped and its walkmesh triangle rebound.
+	//
+	// charIndex is a save block character index, 0..7, the same one
+	// ActorIdForPartyCharacter takes. facing is m_rotY in radians, zero along +Z.
+	// Returns false when that character has no actor in this map, which is the normal
+	// answer for somebody not in the active party, or when the destination is off the
+	// walkmesh.
+	//
+	// THE WHOLE RECIPE, in order, because the order matters and every step earns its
+	// place. The derivation is in reversing\PLACEMENT.md.
+	//
+	//  1. Refuse an off-mesh destination, BEFORE committing. Off the mesh
+	//     FFX_Ch_WalkmeshMove skips collision and leaves the ground state stale, so it
+	//     is much better to decline and say so than to land somewhere broken.
+	//  2. Clear Rva::SuppressNextSetPos. Nothing in the shipped game can arm it, but a
+	//     swallowed FFX_Ch_SetPos is an invisible failure and the read is free.
+	//  3. Stop the motion, m_speed first. See StopCharacterMotion in ffx/Character.h
+	//     for why speed rather than velocity is the one that matters.
+	//  4. Cancel the actor's pending ATEL move command. Without this the script walks
+	//     the character straight back to wherever it was sending it, and a bare
+	//     m_speed = 0 does not even stick, because ApplyMoveToChr re-asserts it from
+	//     the actor record every frame while a command is live.
+	//  5. FFX_Atel_SetActorPos with snapPrev = 1, and Y biased by -0.1.
+	//  6. Set the facing, both halves of it.
+	//  7. Rebind the walkmesh.
+	//
+	// WHY Y - 0.1: it is what the engine's own script placement does.
+	// FFX_Atel_PushActorPosToChr calls FFX_Ch_SetPos(chr, x, y - 0.1f, z), lifting the
+	// character clear of the stated Y so it does not start inside the floor.
+	//
+	// +Y IS DOWN, so pass a real Y rather than 0. It does not have to be exact: the
+	// default m_groundMode is 1, which makes the motion pass overwrite posY with the
+	// bound triangle's ground height every frame, so Y only picks WHICH DECK. Being
+	// slightly too high is the safe way to be wrong.
+	bool PlacePartyCharacter(int charIndex, float x, float y, float z, float facing,
+	    const char* reason);
+
+	// Same, for an actor you already have the id of.
+	bool PlaceActor(int actorId, float x, float y, float z, float facing, const char* reason);
 
 	// ---------------------------------------------------------------------------
 	// The player position cache, which is the one thing a per-player trigger pass

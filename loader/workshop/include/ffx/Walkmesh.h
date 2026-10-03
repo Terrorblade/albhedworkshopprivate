@@ -41,6 +41,30 @@ namespace ffx
 	// "this point is off the mesh".
 	bool WalkmeshIsLoaded();
 
+	// Which walkmesh triangle contains this world point, or -1.
+	//
+	// Ask this BEFORE committing a placement. Off the mesh, FFX_Ch_WalkmeshMove skips
+	// collision entirely and does posX += velX * 10, posZ += velZ * 10, leaving the
+	// ground height, the ground normal and the ground attributes stale. A character
+	// with no velocity just sits there with stale ground state, which is survivable,
+	// but one with any velocity gets flung.
+	//
+	// It handles the scaling, which is the easy mistake: the engine's
+	// FFX_Ch_WalkmeshFindTri takes WALKMESH space, not world space.
+	//
+	// A -1 means "no triangle contains this XZ" and nothing else. Y never causes a -1,
+	// it only picks between stacked floors: the test rejects triangles above the query
+	// Y and keeps the lowest of those at or below it, so it finds the first floor under
+	// your feet. Remember +Y is DOWN, so too small a Y means too high up, and that is
+	// the safe direction to be wrong in.
+	int WalkmeshTriangleAt(float x, float y, float z);
+
+	// The question the above exists to answer.
+	inline bool PointIsOnWalkmesh(float x, float y, float z)
+	{
+		return WalkmeshTriangleAt(x, y, z) >= 0;
+	}
+
 	// How many binds this plugin has done. Diagnostic only.
 	LONG WalkmeshBindCount();
 

@@ -8,6 +8,7 @@
 #include "ffx/Camera.h"
 #include "ffx/Character.h"
 #include "ffx/Pad.h"
+#include "workshop/Lockstep.h"
 
 namespace pilgrimage
 {
@@ -22,7 +23,12 @@ namespace pilgrimage
 
 		// Radial deadzone. The game's own is a per-axis band, but a radial one feels
 		// better and nothing downstream cares.
-		const float StickDeadzone = 0.25f;
+		//
+		// Taken from the wire layer rather than spelled again here. The networked path
+		// deadzones before encoding, so if these two numbers differed then a local
+		// character and a remote one would start moving at different stick deflections and
+		// the two would not feel the same.
+		const float StickDeadzone = workshop::kStickDeadzone;
 
 		// What the player's own input resolves to for one frame.
 		struct MoveIntent
@@ -109,12 +115,11 @@ namespace pilgrimage
 		return foregroundPid == GetCurrentProcessId();
 	}
 
-	void DriveCloneFromWorldDir(Character* chr, float dirX, float dirZ, bool run)
+	void DriveCloneFromHeading(Character* chr, float heading, float magnitude, bool run)
 	{
 		if (!chr)
 			return;
 
-		const float magnitude = sqrtf(dirX * dirX + dirZ * dirZ);
 		if (magnitude <= 0.0f)
 		{
 			// Exactly 0.0 is what selects the idle animation, so this is both stop and
@@ -123,10 +128,24 @@ namespace pilgrimage
 			return;
 		}
 
-		// Already a world direction, so the heading is just its angle. 0 along +X and
-		// pi/2 along +Z, which is what FFX_Ch_UpdateMotionAll integrates against.
-		const float heading = atan2f(dirZ, dirX);
 		ApplyHeadingAndSpeed(chr, heading, magnitude > 1.0f ? 1.0f : magnitude, run);
+	}
+
+	void DriveCloneFromWorldDir(Character* chr, float dirX, float dirZ, bool run)
+	{
+		if (!chr)
+			return;
+
+		const float magnitude = sqrtf(dirX * dirX + dirZ * dirZ);
+		if (magnitude <= 0.0f)
+		{
+			Game.SetMoveSpeed(chr, 0.0f);
+			return;
+		}
+
+		// 0 along +X and pi/2 along +Z, which is what FFX_Ch_UpdateMotionAll integrates
+		// against.
+		DriveCloneFromHeading(chr, atan2f(dirZ, dirX), magnitude, run);
 	}
 
 	void HoldCloneStill(Character* chr)

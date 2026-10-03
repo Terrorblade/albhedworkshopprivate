@@ -115,6 +115,11 @@ namespace pilgrimage
 		volatile LONG toggleTriggerFollow;
 		volatile LONG toggleTriggerArmed;
 		volatile LONG logTriggerPass;
+
+		// World sync. The resync is for testing the transfer without reconnecting, and it
+		// is a client-side action: a host asked to resync has nobody to ask.
+		volatile LONG requestWorldResync;
+		volatile LONG logWorldSync;
 	};
 
 	struct Telemetry

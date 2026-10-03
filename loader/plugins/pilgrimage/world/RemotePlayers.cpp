@@ -10,9 +10,12 @@
 #include "ffx/Character.h"
 #include "ffx/Input.h"
 #include "net/LockstepLink.h"
+#include "net/NetLink.h"
+#include "workshop/Session.h"
 #include "workshop/Lockstep.h"
 #include "workshop/Log.h"
 #include "workshop/Protocol.h"
+#include "world/DialogueSync.h"
 #include "world/TriggerPass.h"
 
 namespace pilgrimage
@@ -24,9 +27,58 @@ namespace pilgrimage
 	namespace
 	{
 
-		// Peer 0 is the host and owns the bound player, which the engine drives. So only
-		// peers 1 and up get a clone, and that is why this is one shorter than it looks.
+		// WAS WRONG, and the fix is worth spelling out because the mistake is easy to
+		// make again.
+		//
+		// This used to say "peer 0 is the host and owns the bound player, so only peers 1
+		// and up get a clone". That confuses two different numbering schemes:
+		//
+		//   - a PEER ID is session-global. The host is always peer 0, on both machines.
+		//   - the BOUND PLAYER is machine-local. It is whichever character this copy of the
+		//     game is driving, and the engine's own trigger pass is always that one.
+		//
+		// On the host those two happen to coincide, which is why the old rule looked right.
+		// On a client they do not: peer 0 is the HOST and is remote, and the client's own id
+		// is 1 or 2. Under the old rule a client would drive its own character as a clone
+		// while its real body was already being driven by the engine, and would never drive
+		// the host at all. The host would just stand still and trigger nothing.
+		//
+		// So the rule is "every peer except the local one", and the local one is asked for
+		// rather than assumed.
 		const int MaxPeers = MaxTriggerPlayers;
+
+		// Which peer this copy of the game is playing, or -1 when there is no session. Read
+		// fresh rather than cached, because a client does not know its id until the host
+		// assigns one during the handshake.
+		int LocalPeerId()
+		{
+			Session* session = ActiveSession();
+			if (!session)
+				return -1;
+
+			return (int)session->LocalPeer();
+		}
+
+		// Peers are session-global, trigger slots are machine-local. Slot 0 is always this
+		// machine's bound player, because that is what the engine's own pass covers, so the
+		// remote peers have to be packed into the slots above it.
+		//
+		// The mapping is a bijection from "every peer but the local one" onto slots 1 and up:
+		//
+		//   local 0: peer 1 -> slot 1, peer 2 -> slot 2
+		//   local 1: peer 0 -> slot 1, peer 2 -> slot 2
+		//   local 2: peer 0 -> slot 1, peer 1 -> slot 2
+		//
+		// Returns -1 for the local peer itself, which is the caller's signal to skip it.
+		int TriggerSlotForPeer(int peer, int localPeer)
+		{
+			if (peer < 0 || peer >= MaxPeers || localPeer < 0)
+				return -1;
+			if (peer == localPeer)
+				return -1;
+
+			return (peer < localPeer) ? peer + 1 : peer;
+		}
 
 		LONG g_entryForPeer[MaxPeers];
 
@@ -36,6 +88,30 @@ namespace pilgrimage
 		// held button re-examines the moment each script finishes, which looks like the
 		// chest reopening itself.
 		DWORD g_lastButtons[MaxPeers];
+
+		// The last input actually received for each peer, and how many steps have been run
+		// on it since. Together these are what lets a late packet coast instead of stop.
+		InputFrame g_lastFrame[MaxPeers];
+		int g_coastSteps[MaxPeers];
+
+		// How long a character may keep moving on input that has not arrived.
+		//
+		// At 29.97 Hz this is about 130 ms. The reasoning for coasting at all: somebody
+		// walking in a straight line is overwhelmingly likely to still be walking in a
+		// straight line 33 ms later, so repeating their last input is a far better guess
+		// than assuming they stopped dead. Guessing wrong costs a small position error that
+		// the next real frame corrects, and because position is never sent, that correction
+		// happens by them walking, not by them being moved.
+		//
+		// Four rather than more because the error grows every step you keep guessing, and a
+		// character that coasts for half a second is a character that walked somewhere
+		// nobody asked it to.
+		const int MaxCoastSteps = 4;
+
+		// How many steps have been coasted in total, for the status line. A number that
+		// keeps climbing is the signal that the link cannot keep up, which is worth being
+		// able to see rather than having to infer from the characters looking wrong.
+		LONG g_coastedTotal = 0;
 
 		int g_lastDriven = 0;
 		char g_status[192] = "remote players: none bound";
@@ -55,7 +131,7 @@ namespace pilgrimage
 
 		Character* CharacterForPeer(int peer)
 		{
-			if (peer <= 0 || peer >= MaxPeers)
+			if (peer < 0 || peer >= MaxPeers)
 				return NULL;
 
 			const LONG entry = g_entryForPeer[peer];
@@ -71,27 +147,28 @@ namespace pilgrimage
 		}
 
 		// Apply one peer's replicated input to its character, then tell the trigger pass
-		// where that character ended up.
-		void DriveOnePeer(int peer, const InputFrame& frame)
+		// where that character ended up. slot is the trigger slot, which is NOT the peer id.
+		void DriveOnePeer(int peer, int slot, const InputFrame& frame)
 		{
 			Character* chr = CharacterForPeer(peer);
 			if (!chr)
 			{
-				ClearTriggerPlayer(peer);
+				ClearTriggerPlayer(slot);
 				return;
 			}
 
-			// leftX and leftY are a world direction, already resolved against the owner's
-			// camera and already quantised. No camera is read here on purpose.
-			const float dirX = DequantiseStick(frame.leftX);
-			const float dirZ = DequantiseStick(frame.leftY);
+			// A world heading and a deflection, already resolved against the owner's
+			// camera, already deadzoned and already quantised. No camera is read here on
+			// purpose, and no atan2 either: the angle came over as an angle.
+			const float heading = DequantiseAngle(frame.moveAngle);
+			const float magnitude = DequantiseMagnitude(frame.moveMag);
 
 			// Run unless the walk modifier is held, which is exactly what the local pad
 			// path decides with out->run = !pad.cross. Mirroring it rather than inventing a
 			// second rule keeps a networked character moving like a local one.
 			const bool run = (frame.buttons & Btn::Cross) == 0;
 
-			DriveCloneFromWorldDir(chr, dirX, dirZ, run);
+			DriveCloneFromHeading(chr, heading, magnitude, run);
 
 			// The position AFTER the drive, because the trigger pass wants where this
 			// character is now. The engine integrates motion later in the step, so this is
@@ -100,11 +177,11 @@ namespace pilgrimage
 			float pos[3] = { 0.0f, 0.0f, 0.0f };
 			if (!Game.GetPos || !Game.GetPos(chr, &pos[0], &pos[1], &pos[2]))
 			{
-				ClearTriggerPlayer(peer);
+				ClearTriggerPlayer(slot);
 				return;
 			}
 
-			SetTriggerPlayer(peer, pos, CharacterFacing(chr));
+			SetTriggerPlayer(slot, pos, CharacterFacing(chr));
 
 			// And the examine button, which is the other half of "interact with the world".
 			// On the press edge only, because the engine reads an edge mask and a level
@@ -113,7 +190,15 @@ namespace pilgrimage
 			g_lastButtons[peer] = frame.buttons;
 
 			if (pressed & ExamineButton)
-				RequestTriggerExamine(peer, kAtelEventExamine);
+			{
+				RequestTriggerExamine(slot, kAtelEventExamine);
+
+				// And tell the dialogue layer whose box it will be if this examine wins.
+				// It may not win: a nearer actor can take the winner slot and the engine
+				// can refuse it outright, which is why this is a note with an expiry
+				// rather than an assignment.
+				NoteDialogueOwner(peer);
+			}
 		}
 
 	} // namespace
@@ -124,6 +209,8 @@ namespace pilgrimage
 		{
 			g_entryForPeer[i] = -1;
 			g_lastButtons[i] = 0;
+			g_lastFrame[i] = NeutralInput();
+			g_coastSteps[i] = 0;
 		}
 
 		g_lastDriven = 0;
@@ -132,24 +219,41 @@ namespace pilgrimage
 
 	void BindRemotePlayer(int peer, LONG rosterEntry)
 	{
-		if (peer <= 0 || peer >= MaxPeers)
+		if (peer < 0 || peer >= MaxPeers)
 		{
-			// Peer 0 is not a mistake worth being quiet about. Somebody trying to bind the
-			// host a clone has misunderstood which character the host already drives.
-			Log("remote players: refusing to bind peer %d, only peers 1 to %d get a body "
-			    "because peer 0 is the bound player",
+			Log("remote players: refusing to bind peer %d, the session only has peers 0 to "
+			    "%d",
 			    peer, MaxPeers - 1);
+			return;
+		}
+
+		// Binding the LOCAL peer a clone is the one genuine mistake here, and it is worth
+		// being loud about. That character already has a body the engine drives, so giving
+		// it a second one would mean two things writing one character's motion.
+		const int local = LocalPeerId();
+		if (local >= 0 && peer == local)
+		{
+			Log("remote players: refusing to bind peer %d, that is US. The local player "
+			    "already has a body and the engine drives it.",
+			    peer);
 			return;
 		}
 
 		g_entryForPeer[peer] = rosterEntry;
 
 		// Forget the edge state on a rebind. Carrying it over would let a button that was
-		// held when the old body went away count as a fresh press on the new one.
+		// held when the old body went away count as a fresh press on the new one. Same for
+		// the coast: a new body must not start off walking because the old one was.
 		g_lastButtons[peer] = 0;
+		g_lastFrame[peer] = NeutralInput();
+		g_coastSteps[peer] = 0;
 
 		if (rosterEntry < 0)
-			ClearTriggerPlayer(peer);
+		{
+			const int slot = TriggerSlotForPeer(peer, local);
+			if (slot > 0)
+				ClearTriggerPlayer(slot);
+		}
 
 		Log("remote players: peer %d %s", peer,
 		    rosterEntry < 0 ? "unbound" : "bound to roster entry");
@@ -157,7 +261,7 @@ namespace pilgrimage
 
 	LONG RemotePlayerEntry(int peer)
 	{
-		if (peer <= 0 || peer >= MaxPeers)
+		if (peer < 0 || peer >= MaxPeers)
 			return -1;
 
 		return g_entryForPeer[peer];
@@ -172,8 +276,9 @@ namespace pilgrimage
 			// coasting on the last input it ever received.
 			if (g_lastDriven != 0)
 			{
-				for (int peer = 1; peer < MaxPeers; ++peer)
-					ClearTriggerPlayer(peer);
+				// Slots, not peers. Slot 0 is the bound player and was never ours.
+				for (int slot = 1; slot < MaxTriggerPlayers; ++slot)
+					ClearTriggerPlayer(slot);
 
 				g_lastDriven = 0;
 				strcpy_s(g_status, sizeof(g_status), "remote players: no session");
@@ -182,39 +287,81 @@ namespace pilgrimage
 			return;
 		}
 
+		const int local = LocalPeerId();
+		if (local < 0)
+			return;
+
 		int driven = 0;
-		for (int peer = 1; peer < MaxPeers; ++peer)
+		for (int peer = 0; peer < MaxPeers; ++peer)
 		{
+			const int slot = TriggerSlotForPeer(peer, local);
+			if (slot < 0)
+				continue; // us. The engine drives this one.
 			if (g_entryForPeer[peer] < 0)
 				continue;
 
-			const InputFrame* frame = clock->InputForStep((uint8_t)peer);
-			if (!frame)
+			// Received, or only the neutral stand-in. InputForStep cannot tell us, which
+			// is why HasInputForStep exists.
+			if (clock->HasInputForStep((uint8_t)peer))
 			{
-				// The clock has nothing for this peer on this step. That is the stall case
-				// and the gate deals with it, so holding the character still is the right
-				// answer rather than reusing stale input and drifting.
-				Character* chr = CharacterForPeer(peer);
-				if (chr)
-					HoldCloneStill(chr);
-
+				g_lastFrame[peer] = *clock->InputForStep((uint8_t)peer);
+				g_coastSteps[peer] = 0;
+				DriveOnePeer(peer, slot, g_lastFrame[peer]);
+				++driven;
 				continue;
 			}
 
-			DriveOnePeer(peer, *frame);
-			++driven;
+			// Nothing arrived for this step. Keep going on the last thing they actually
+			// sent, for a short while, rather than stopping dead. See MaxCoastSteps.
+			if (g_coastSteps[peer] < MaxCoastSteps)
+			{
+				++g_coastSteps[peer];
+				InterlockedIncrement(&g_coastedTotal);
+
+				// The BUTTONS are deliberately not coasted, only the movement. Repeating a
+				// held direction is a safe guess. Repeating a button is not: the edge
+				// detector in DriveOnePeer would see no new press, so nothing fires twice,
+				// but a button that was released during the gap would stay held for up to
+				// four steps and that is the difference between walking and running.
+				InputFrame coast = g_lastFrame[peer];
+				coast.buttons = g_lastButtons[peer];
+				DriveOnePeer(peer, slot, coast);
+				++driven;
+				continue;
+			}
+
+			// Out of patience. Stop, because by now the guess is worse than the truth.
+			Character* chr = CharacterForPeer(peer);
+			if (chr)
+				HoldCloneStill(chr);
 		}
 
 		g_lastDriven = driven;
-		_snprintf_s(g_status, sizeof(g_status), _TRUNCATE,
-		    "remote players: %d driven on step %u", driven, (unsigned)clock->CurrentStep());
+
+		int coasting = 0;
+		for (int peer = 0; peer < MaxPeers; ++peer)
+			if (g_coastSteps[peer] > 0)
+				++coasting;
+
+		if (coasting > 0)
+			_snprintf_s(g_status, sizeof(g_status), _TRUNCATE,
+			    "remote players: %d driven on step %u, %d coasting, %ld steps coasted",
+			    driven, (unsigned)clock->CurrentStep(), coasting, g_coastedTotal);
+		else
+			_snprintf_s(g_status, sizeof(g_status), _TRUNCATE,
+			    "remote players: %d driven on step %u, %ld steps coasted so far", driven,
+			    (unsigned)clock->CurrentStep(), g_coastedTotal);
 	}
 
 	int RemotePlayerCount()
 	{
+		const int local = LocalPeerId();
+
 		int n = 0;
-		for (int peer = 1; peer < MaxPeers; ++peer)
+		for (int peer = 0; peer < MaxPeers; ++peer)
 		{
+			if (peer == local)
+				continue;
 			if (g_entryForPeer[peer] >= 0)
 				++n;
 		}
@@ -232,12 +379,23 @@ namespace pilgrimage
 		Log("=== remote players ===");
 		Log("%s", g_status);
 
-		for (int peer = 1; peer < MaxPeers; ++peer)
+		const int local = LocalPeerId();
+		Log("local peer %d, so slot 0 of the trigger pass is us and the engine drives it",
+		    local);
+
+		for (int peer = 0; peer < MaxPeers; ++peer)
 		{
+			if (peer == local)
+			{
+				Log("  peer %d: US, driven by the engine", peer);
+				continue;
+			}
+
 			const LONG entry = g_entryForPeer[peer];
 			if (entry < 0)
 			{
-				Log("  peer %d: unbound", peer);
+				Log("  peer %d: unbound (would be trigger slot %d)", peer,
+				    TriggerSlotForPeer(peer, local));
 				continue;
 			}
 
@@ -251,8 +409,10 @@ namespace pilgrimage
 
 			float x = 0.0f, y = 0.0f, z = 0.0f;
 			Game.GetPos(chr, &x, &y, &z);
-			Log("  peer %d: entry %ld, pool slot %ld, at %.1f %.1f %.1f facing %.2f", peer,
-			    (long)entry, (long)SlotOfEntry(entry), x, y, z, CharacterFacing(chr));
+			Log("  peer %d: trigger slot %d, entry %ld, pool slot %ld, at %.1f %.1f %.1f "
+			    "facing %.2f",
+			    peer, TriggerSlotForPeer(peer, local), (long)entry, (long)SlotOfEntry(entry),
+			    x, y, z, CharacterFacing(chr));
 		}
 	}
 

@@ -25,6 +25,14 @@ namespace workshop
 			return "command ask";
 		case MessageChecksum:
 			return "checksum";
+		case MessageWorldRequest:
+			return "world request";
+		case MessageWorldSnapshot:
+			return "world snapshot";
+		case MessageWorldApplied:
+			return "world applied";
+		case MessageWorldAnchor:
+			return "world anchor";
 		default:
 			return "unknown";
 		}

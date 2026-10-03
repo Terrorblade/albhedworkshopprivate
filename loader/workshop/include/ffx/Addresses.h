@@ -45,6 +45,7 @@
 // values before deleting either one.
 
 #include "ffx/addresses/Atel.h"
+#include "ffx/addresses/Battle.h"
 #include "ffx/addresses/Character.h"
 #include "ffx/addresses/Cutscene.h"
 #include "ffx/addresses/Encounter.h"
@@ -53,3 +54,4 @@
 #include "ffx/addresses/GameState.h"
 #include "ffx/addresses/MainLoop.h"
 #include "ffx/addresses/MenuSystem.h"
+#include "ffx/addresses/WorldState.h"

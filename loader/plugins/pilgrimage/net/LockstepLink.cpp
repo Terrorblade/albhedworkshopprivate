@@ -12,6 +12,9 @@
 #include "workshop/Lockstep.h"
 #include "workshop/Log.h"
 #include "world/RemotePlayers.h"
+#include "battle/BattleSync.h"
+#include "world/BoosterSync.h"
+#include "world/DialogueSync.h"
 #include "world/TriggerPass.h"
 
 #include <math.h>
@@ -40,6 +43,11 @@ namespace pilgrimage
 		const uint32_t EscalateAfterStalls = 2;
 
 		bool holdApplied = false;
+
+		// A bitmask of HoldReason. Anything that wants the game frozen raises a bit here
+		// rather than writing the hold byte itself, because that byte has to be re-asserted
+		// every animate and this file is the one place that does it.
+		int holdReasons = 0;
 
 		// When the hold went on, in milliseconds, and nothing else reads the clock.
 		//
@@ -78,45 +86,61 @@ namespace pilgrimage
 			if (ReadSticks(&sticks))
 			{
 				// Resolve the left stick against OUR camera here, so what goes on the wire
-				// is a world direction. See the InputFrame comment in Protocol.h for why
-				// this is not optional: a camera relative stick means two machines compute
-				// two different headings from one input.
+				// is a world heading. See the InputFrame comment in Protocol.h for why this
+				// is not optional: a camera relative stick means two machines compute two
+				// different headings from one input.
 				//
 				// The engine stores left stick Y positive-DOWN, so forward is -leftY. That
 				// negation is the whole difference between walking where you pushed and
 				// walking backwards.
 				const float right = sticks.leftX;
 				const float forward = -sticks.leftY;
-				const float magnitude = sqrtf(right * right + forward * forward);
 
-				// Pass the raw pair through when there is no camera to resolve against, so
-				// a missing camera degrades to the old behaviour rather than to standing
-				// still. It is wrong either way, but one of the two is debuggable.
-				float worldX = right;
-				float worldZ = forward;
+				float magnitude = sqrtf(right * right + forward * forward);
 
-				float cameraYaw = 0.0f;
-				if (magnitude > 0.0f && ActiveCameraYaw(&cameraYaw))
+				// Deadzone HERE, before anything is encoded, so a resting stick sends an
+				// exact zero. Doing it on the receiving side instead would mean the noise
+				// had already been quantised, replicated and stored in the ring, and a
+				// remote character creeping from stick hum is one of the more annoying
+				// things to chase down later.
+				if (magnitude < kStickDeadzone)
+					magnitude = 0.0f;
+				else if (magnitude > 1.0f)
+					magnitude = 1.0f;
+
+				if (magnitude > 0.0f)
 				{
 					// Exactly the engine's own transform, from FFX_Player__stepControl:
 					//     desired   = atan2(right, forward)
 					//     m_moveDir = cameraYaw - desired
-					// re-emitted as a direction so the receiver needs no camera. The
-					// heading convention is 0 along +X and pi/2 along +Z, which is what
+					// The heading convention is 0 along +X and pi/2 along +Z, which is what
 					// FFX_Ch_UpdateMotionAll integrates against.
 					const float desired = atan2f(right, forward);
-					const float heading = cameraYaw - desired;
-					worldX = cosf(heading) * magnitude;
-					worldZ = sinf(heading) * magnitude;
+
+					// With no camera to resolve against, send the stick's own angle. That
+					// is what the previous vector encoding degraded to in this case, so the
+					// behaviour is unchanged: wrong, but wrong in a debuggable way rather
+					// than standing still.
+					float cameraYaw = 0.0f;
+					const float heading = ActiveCameraYaw(&cameraYaw)
+					                          ? (cameraYaw - desired)
+					                          : atan2f(forward, right);
+
+					frame.moveAngle = QuantiseAngle(heading);
+					frame.moveMag = QuantiseMagnitude(magnitude);
 				}
 
-				frame.leftX = QuantiseStick(worldX);
-				frame.leftY = QuantiseStick(worldZ);
-				frame.rightX = QuantiseStick(sticks.rightX);
-				frame.rightY = QuantiseStick(sticks.rightY);
+				// The right stick is deliberately not sent. It drives the camera, the
+				// camera is local, and nothing simulated reads it. Those are the two bytes
+				// the heading precision is paid for with.
 			}
 
 			clock.SubmitLocalInput(frame);
+
+			// Decide what a message box will be fed on this step. Here rather than after
+			// the step, because the sampler that applies it runs INSIDE FFX_MainStep, so
+			// anything decided afterwards would arrive a step late.
+			PrepareDialogueInput();
 
 			const StepGateResult gate = clock.StepGate();
 			if (gate != GateWaiting)
@@ -142,6 +166,17 @@ namespace pilgrimage
 			//
 			// It runs whether or not the clock is running, so the pass can be tested solo
 			// against a spawned clone with no second machine involved.
+			// Settings before bodies. A booster command that lands on this step changes
+			// the rules this step runs under, most importantly the encounter rate, so it
+			// has to be applied before anything reads those rules.
+			StepBoosterSync();
+
+			// Battle commands next, and before the bodies, for the same reason: a
+			// committed command changes what the battle step after this one does, and
+			// both machines have to commit it at the same point in the same step or the
+			// command queues are in a different order.
+			StepBattleSync();
+
 			// Order matters. Drive the remote bodies first so the trigger pass sees where
 			// they are this step, not where they were last step.
 			StepRemotePlayers();
@@ -238,15 +273,52 @@ namespace pilgrimage
 		return enforced;
 	}
 
+	void HoldSimulationFor(int reason)
+	{
+		const int before = holdReasons;
+		holdReasons |= reason;
+		if (holdReasons != before)
+			Log("lockstep: a hold was requested, reasons now 0x%X. The owner applies it on "
+			    "the next animate.",
+			    holdReasons);
+	}
+
+	void ReleaseSimulationFor(int reason)
+	{
+		const int before = holdReasons;
+		holdReasons &= ~reason;
+		if (holdReasons != before)
+			Log("lockstep: a hold reason was dropped, reasons now 0x%X", holdReasons);
+	}
+
+	int SimulationHoldReasons()
+	{
+		return holdReasons;
+	}
+
 	void ServiceLockstep(void* application)
 	{
+		// A hold reason can be raised before the clock starts, which is exactly the world
+		// transfer case: the host is sending while a joining client has not begun stepping.
+		// So the reasons are honoured whether the clock runs or not, and only the stall
+		// escalation needs a running clock.
 		if (!clock.Running())
 		{
-			if (holdApplied)
+			const bool wantIdleHold = holdReasons != 0;
+			if (wantIdleHold != holdApplied)
 			{
-				ReleaseSimulationHold(application);
-				holdApplied = false;
+				const bool ok = wantIdleHold ? HoldSimulation(application)
+				                             : ReleaseSimulationHold(application);
+				if (ok)
+					holdApplied = wantIdleHold;
 			}
+			else if (holdApplied)
+			{
+				// Re-assert it. The engine's own code writes this byte too, so a hold that
+				// is set once and not refreshed does not stay set.
+				HoldSimulation(application);
+			}
+
 			return;
 		}
 
@@ -254,7 +326,8 @@ namespace pilgrimage
 		// Refusing a step is fine for a frame or two, but it leaves the render path
 		// presenting a scene whose display list was not rebuilt, so it is not where
 		// to sit for half a second.
-		const bool wantHold = enforced && clock.CurrentStall() >= EscalateAfterStalls;
+		const bool wantHold =
+		    (enforced && clock.CurrentStall() >= EscalateAfterStalls) || holdReasons != 0;
 		if (wantHold != holdApplied)
 		{
 			const bool ok = wantHold ? HoldSimulation(application)

@@ -43,15 +43,53 @@ namespace ffx
 		// ---------------------------------------------------------------------------
 		// Per-character setters
 		// ---------------------------------------------------------------------------
-		const DWORD ChSetByte184 = 0x00435B50;      // int (Character *, char)
-		const DWORD ChSetPartyIndex = 0x0042B0D0;   // Character *(Character *, int)
-		const DWORD ChSetPos = 0x0042B480;          // int (Character *, float, float, float)
-		const DWORD ChGetPos = 0x0042AC90;          // Character *(Character *, float *, float *, float *)
-		const DWORD ChSetRot = 0x0042B520;          // int (Character *, float radians)
-		const DWORD ChSetMoveSpeed = 0x0042B840;    // Character *(Character *, float)
-		const DWORD ChSetMoveDir = 0x0042B190;      // Character *(Character *, float radians)
+		const DWORD ChSetByte184 = 0x00435B50;    // int (Character *, char)
+		const DWORD ChSetPartyIndex = 0x0042B0D0; // Character *(Character *, int)
+		const DWORD ChSetPos = 0x0042B480;        // int (Character *, float, float, float)
+		const DWORD ChSetPosXZ = 0x0042B440;      // int (Character *, float x, float z). SLAMS Y, see below
+		const DWORD ChGetPos = 0x0042AC90;        // Character *(Character *, float *, float *, float *)
+		const DWORD ChSetRot = 0x0042B520;        // int (Character *, float radians)
+		const DWORD ChSetMoveSpeed = 0x0042B840;  // Character *(Character *, float)
+		const DWORD ChSetMoveDir = 0x0042B190;    // Character *(Character *, float radians)
+
+		// Character *(Character *, float radians). Writes m_rotY AND m_moveDir in one
+		// call, which is what you actually want. m_flags1 bit 0x400 makes the locomotion
+		// driver slew m_rotY back toward m_moveDir at 0.314 to 0.524 radians per
+		// sub-step, so setting the rotation alone turns the character to face where you
+		// asked and then smoothly turns it away again.
+		const DWORD ChSetRotAndMoveDir = 0x0042B1B0;
 		const DWORD ChSetFlags1Bit400 = 0x0042AAE0; // bool (Character *, short on)
 		const DWORD ChSetGroundMode = 0x0042B240;   // void (Character *, int)
+
+		// void __cdecl (Character *). FFX_Ch_SetFlags1Bit10 plus a vertex rebuild that
+		// recopies every part's skinned vertices from the source mesh and then marks the
+		// children dirty too. The rebuild is gated on m_flags1 bit 0x200000, so for a
+		// character without that bit it is just the flag set and it is cheap either way.
+		//
+		// FFX_Atel_SetActorPos calls this itself right after FFX_Ch_SetPos, so a
+		// placement that goes through the ATEL path does not need to.
+		const DWORD ChMarkDirty = 0x00424650;
+
+		// ---------------------------------------------------------------------------
+		// The one-shot that WOULD swallow a placement, except it is dead code.
+		//
+		// Byte. Non-zero makes the very next FFX_Ch_SetPos do nothing at all: it clears
+		// this flag, returns an uninitialised eax, and never touches the position.
+		//
+		// IT CANNOT BE ARMED. The only writer that sets it is FFX_Ch_SuppressNextSetPos
+		// 0x42ACC0, and that function has zero callers. It is not in
+		// g_ffxMagicHostApiTable either, checked by searching the whole image for its
+		// address, so no magic DLL can reach it. The byte lives in uninitialised .data,
+		// so it is 0 at startup and stays 0 forever.
+		//
+		// Left here because an unarmable landmine is still worth knowing about: a future
+		// patch or a plugin could arm it, and the failure it produces is invisible. A
+		// swallowed SetPos does not fault and does not log, the character just stays put.
+		// ffx::SetPosSuppressed reads it, and placement clears it, which costs nothing.
+		//
+		// Note FFX_Ch_SetPosXZ does NOT honour it.
+		// ---------------------------------------------------------------------------
+		const DWORD SuppressNextSetPos = 0x00EFFAD8;
 
 		// Read only here. The single global player binding, and the reason most of the
 		// co-op work exists.
@@ -78,6 +116,33 @@ namespace ffx
 		// normal, which is why calling it matters for more than the triangle index.
 		// ---------------------------------------------------------------------------
 		const DWORD ChWalkmeshMove = 0x0043E5F0;
+
+		// The resolver WalkmeshMove uses. Exposed so a placement can ask whether a point
+		// is on the mesh BEFORE committing to it, rather than finding out by watching a
+		// character slide. See reversing\PLACEMENT.md for the signature.
+		// int __cdecl (float *xyz), and the argument is in WALKMESH SPACE, which is
+		// world multiplied by WalkmeshScale. Passing world coordinates straight in gives
+		// nonsense rather than a -1.
+		//
+		// There IS a world-space wrapper at 0x43EAE0 and you must not use it. It is dead
+		// code and it divides the returned TRIANGLE INDEX by the scale, which is
+		// meaningless.
+		//
+		// A -1 means, and only means, "no triangle contains this XZ". A wrong Y never
+		// produces one: the test rejects floors above the query Y and keeps the lowest
+		// of those at or below it, so it finds the first floor under your feet. Since +Y
+		// is down, too small a Y means too high up, and that is the safe direction.
+		//
+		// WHY A PLACEMENT SHOULD ASK FIRST: when this fails inside
+		// FFX_Ch_WalkmeshMove, the engine does posX += velX * 10 and posZ += velZ * 10
+		// and runs nothing else, leaving m_groundHeight, the ground normal and
+		// m_groundAttrs stale. It leaves m_walkmeshTri at -1 rather than storing
+		// anything bad, so it retries next frame. With the velocity zeroed the character
+		// just sits there with stale ground state, which is survivable. With velocity it
+		// gets flung.
+		//
+		// ffx::WalkmeshTriangleAt does the scaling.
+		const DWORD ChWalkmeshFindTri = 0x0043DE10;
 
 		// For telling "no walkmesh is loaded" apart from "the point is off it".
 		const DWORD WalkmeshTris = 0x00F01A84;     // void *, the triangle array
@@ -149,15 +214,20 @@ namespace ffx
 				ChSetByte184,
 				ChSetPartyIndex,
 				ChSetPos,
+				ChSetPosXZ,
 				ChGetPos,
 				ChSetRot,
 				ChSetMoveSpeed,
 				ChSetMoveDir,
+				ChSetRotAndMoveDir,
 				ChSetFlags1Bit400,
 				ChSetGroundMode,
+				ChMarkDirty,
+				SuppressNextSetPos,
 				ChGetPlayerChr,
 				ChUpdateCameLenAndZClip,
 				ChWalkmeshMove,
+				ChWalkmeshFindTri,
 				WalkmeshTris,
 				WalkmeshTriCount,
 				WalkmeshScale,

@@ -37,6 +37,8 @@ namespace ffx
 			{ "menu system", &Rva::MenuSystemRvaList },
 			{ "cutscene", &Rva::CutsceneRvaList },
 			{ "encounter", &Rva::EncounterRvaList },
+			{ "world state", &Rva::WorldStateRvaList },
+			{ "battle", &Rva::BattleRvaList },
 			// Add new areas here, one line each, after adding the include to
 			// include/ffx/Addresses.h.
 		};

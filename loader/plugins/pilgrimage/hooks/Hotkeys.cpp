@@ -60,6 +60,14 @@ namespace pilgrimage
 			return (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
 		}
 
+		// Every shift+Fn slot is already spoken for, so ctrl is the second modifier. Checked
+		// before shift everywhere it is used, so ctrl+shift behaves as ctrl rather than
+		// doing two things at once.
+		bool CtrlHeld()
+		{
+			return (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+		}
+
 		void ToggleForceVisible()
 		{
 			if (!VisibilityDetourInstalled())
@@ -96,7 +104,9 @@ namespace pilgrimage
 		}
 		if (pressed[KeyF3])
 		{
-			if (ShiftHeld())
+			if (CtrlHeld())
+				InterlockedExchange(&requests.requestWorldResync, 1);
+			else if (ShiftHeld())
 				InterlockedExchange(&requests.stopNetworking, 1);
 			else
 				InterlockedExchange(&requests.startJoining, 1);
@@ -167,7 +177,9 @@ namespace pilgrimage
 		}
 		if (pressed[KeyF11])
 		{
-			if (ShiftHeld())
+			if (CtrlHeld())
+				InterlockedExchange(&requests.logWorldSync, 1);
+			else if (ShiftHeld())
 				InterlockedExchange(&requests.logTriggerPass, 1);
 			else
 				ToggleControlPanel();
@@ -185,7 +197,9 @@ namespace pilgrimage
 		       "shift+F2 toggles the engine fixed timestep, "
 		       "shift+F4 lets the lockstep gate refuse a step, "
 		       "F12 lists what is interactable nearby, shift+F6 fires an examine "
-		       "on the nearest one, shift+F5 arms the esc menu row test";
+		       "on the nearest one, shift+F5 arms the esc menu row test, "
+		       "ctrl+F3 asks the host for the world again, "
+		       "ctrl+F11 logs the world transfer";
 	}
 
 } // namespace pilgrimage

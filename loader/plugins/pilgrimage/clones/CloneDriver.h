@@ -41,6 +41,14 @@ namespace pilgrimage
 	// how one machine ends up walking somewhere the other did not.
 	void DriveCloneFromWorldDir(ffx::Character* chr, float dirX, float dirZ, bool run);
 
+	// The one the networked path uses. A world heading in radians, 0 along +X and pi/2 along
+	// +Z, plus a deflection from 0 to 1. Exactly 0 deflection is stop-and-idle, not a tiny
+	// amount of walking, because 0.0 is what selects the idle animation.
+	//
+	// This is the primitive and DriveCloneFromWorldDir is a wrapper over it, so the two can
+	// never drift apart.
+	void DriveCloneFromHeading(ffx::Character* chr, float heading, float magnitude, bool run);
+
 	// Zero speed, which both stops a character and selects its idle animation. Used on
 	// every clone that does not currently hold the input focus.
 	void HoldCloneStill(ffx::Character* chr);

@@ -4,7 +4,9 @@
 #include "workshop/Log.h"
 #include "ffx/addresses/Atel.h"
 #include "ffx/addresses/Character.h"
+#include "ffx/Character.h"
 #include "ffx/Layout.h"
+#include "ffx/Walkmesh.h"
 
 #include <string.h>
 
@@ -59,6 +61,8 @@ namespace ffx
 		typedef int(__cdecl* FindActorByPartyCharFn)(int charIndex);
 		typedef int(__cdecl* MesWinBlockingKindFn)(void);
 		typedef int(__cdecl* GrantTalkBonusOnceFn)(int actorId, int eventKind);
+		typedef int(__cdecl* SetActorPosFn)(void* actor, float x, float y, float z, int snapPrev);
+		typedef int(__cdecl* GetMoveCmdFn)(int actor);
 
 		// The three trigger steppers. The second argument is a delta time that none of
 		// the three actually reads, which was checked rather than assumed. It is passed
@@ -757,6 +761,125 @@ namespace ffx
 		if (!LooksLikePointer(raw))
 			return NULL;
 		return (void*)(UINT_PTR)raw;
+	}
+
+	bool CancelActorMoveCommand(int actorId)
+	{
+		if (!IdInRange(actorId))
+			return false;
+
+		BYTE* actor = ActorPtrUnchecked(actorId);
+		if (!actor)
+			return false;
+
+		int saved = SelectCtx0();
+		const int block = Resolve<GetMoveCmdFn>(Rva::AtelGetMoveCmd)((int)(UINT_PTR)actor);
+		RestoreCtx(saved);
+
+		if (!block)
+			return false;
+
+		// The kind word at +2. Zero means no command, and FFX_Atel_ApplyMoveToChr then
+		// forces m_speed = 0 every frame instead of re-asserting it from the actor
+		// record, which is what makes a placement's own m_speed write stick.
+		WORD* kind = (WORD*)(UINT_PTR)(block + 2);
+		if (!Readable(kind, 2))
+			return false;
+
+		if (Rd16((const BYTE*)kind) == 0)
+			return false; // nothing to cancel, which is the common case
+
+		Wr16((BYTE*)kind, 0);
+		return true;
+	}
+
+	bool SetActorPosition(int actorId, float x, float y, float z, bool snapPrev)
+	{
+		if (!IdInRange(actorId))
+			return false;
+
+		// Kind 4 has no position sub-struct, and the engine's own function checks for
+		// that and quietly returns. Check it here too so the caller can tell "there is
+		// nowhere to put this" apart from "done".
+		if (ActorKindUnchecked(actorId) == kAtelActorInvalid)
+			return false;
+		if (!ActorPosPtr(actorId))
+			return false;
+
+		BYTE* actor = ActorPtrUnchecked(actorId);
+		if (!actor)
+			return false;
+
+		// Bracketed like every other engine call in here. SetActorPos reads
+		// g_ffxAtelCtx directly for the player cache update, so it matters which
+		// context is selected even though the actor pointer is already resolved.
+		int saved = SelectCtx0();
+		Resolve<SetActorPosFn>(Rva::AtelSetActorPos)(actor, x, y, z, snapPrev ? 1 : 0);
+		RestoreCtx(saved);
+		return true;
+	}
+
+	bool PlaceActor(int actorId, float x, float y, float z, float facing, const char* reason)
+	{
+		const char* why = reason ? reason : "place";
+
+		// 1. Refuse an off-mesh destination before committing to it. Declining and
+		// saying so beats landing somewhere the engine will not do collision for.
+		if (WalkmeshIsLoaded() && !PointIsOnWalkmesh(x, y, z))
+		{
+			Log("atel: refusing to place actor %d at %.1f %.1f %.1f (%s), that XZ is off "
+			    "the walkmesh. The engine would skip collision there and leave the ground "
+			    "state stale.",
+			    actorId, (double)x, (double)y, (double)z, why);
+			return false;
+		}
+
+		// 2. The dead one-shot. Free to clear, and a swallowed SetPos is invisible.
+		BYTE* suppress = (BYTE*)ModuleAddress(Rva::SuppressNextSetPos);
+		if (Readable(suppress, 1) && Rd8(suppress) != 0)
+		{
+			Log("atel: the SetPos suppression one-shot was armed when placing actor %d. "
+			    "Nothing in the shipped game can do that, so something else in this "
+			    "process did. Clearing it, otherwise the move would be dropped silently.",
+			    actorId);
+			Wr8(suppress, 0);
+		}
+
+		Character* chr = (Character*)ChrForActor(actorId);
+
+		// 3 and 4. Stop the motion, then cancel the command that would re-assert it.
+		// This order rather than the reverse because cancelling the command is what
+		// makes the m_speed write stick, so doing it second leaves nothing to undo.
+		if (chr)
+			StopCharacterMotion(chr);
+		CancelActorMoveCommand(actorId);
+
+		// 5. The placement itself. snapPrev is true, always, and the Y bias copies what
+		// the engine's own script placement does.
+		if (!SetActorPosition(actorId, x, y - 0.1f, z, true))
+			return false;
+
+		// A non CHR actor is finished here. There is nothing to turn and nothing to
+		// rebind, because the walkmesh is a CHR concept.
+		if (!chr)
+			return true;
+
+		// 6. Both halves of the facing, or bit 0x400 slews it back.
+		SetCharacterFacing(chr, facing);
+
+		// 7. And the rebind, because step 5 left m_walkmeshTri at -1 on purpose and the
+		// engine's own recovery pass skips hidden characters.
+		BindToWalkmesh(chr, why);
+		return true;
+	}
+
+	bool PlacePartyCharacter(int charIndex, float x, float y, float z, float facing,
+	    const char* reason)
+	{
+		const int actorId = ActorIdForPartyCharacter(charIndex);
+		if (actorId < 0)
+			return false;
+		return PlaceActor(actorId, x, y, z, facing, reason);
 	}
 
 	int ChrSlotForActor(int actorId)

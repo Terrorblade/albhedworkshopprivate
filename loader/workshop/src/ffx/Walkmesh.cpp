@@ -1,10 +1,13 @@
 #include "ffx/Walkmesh.h"
 
+#include "ffx/addresses/Character.h"
 #include "ffx/Character.h"
 #include "ffx/Layout.h"
+#include "workshop/HostModule.h"
 #include "workshop/Log.h"
 
 using workshop::Log;
+using workshop::ModuleAddress;
 
 namespace ffx
 {
@@ -23,6 +26,30 @@ namespace ffx
 	LONG WalkmeshBindCount()
 	{
 		return bindCount;
+	}
+
+	int WalkmeshTriangleAt(float x, float y, float z)
+	{
+		if (!WalkmeshIsLoaded())
+			return -1;
+
+		const float scale = *Game.walkmeshScale;
+		if (scale == 0.0f)
+			return -1;
+
+		// Walkmesh space, not world space. Getting this wrong does not return -1, it
+		// returns a triangle somewhere else entirely.
+		float query[3];
+		query[0] = x * scale;
+		query[1] = y * scale;
+		query[2] = z * scale;
+
+		typedef int(__cdecl * FindTriFn)(float*);
+		FindTriFn find = (FindTriFn)ModuleAddress(Rva::ChWalkmeshFindTri);
+		if (!find)
+			return -1;
+
+		return find(query);
 	}
 
 	void BindToWalkmesh(Character* chr, const char* reason)

@@ -1,5 +1,7 @@
 #include "workshop/Lockstep.h"
 
+#include <math.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -32,11 +34,51 @@ namespace workshop
 	{
 		InputFrame frame;
 		frame.buttons = 0;
-		frame.leftX = 0;
-		frame.leftY = 0;
-		frame.rightX = 0;
-		frame.rightY = 0;
+		frame.moveAngle = 0;
+		frame.moveMag = 0; // idle, which is what matters. The angle is then ignored
+		frame.reserved = 0;
+
 		return frame;
+	}
+
+	uint16_t QuantiseAngle(float radians)
+	{
+		// Wrap into one turn first. fmodf keeps the sign of its argument, so a negative
+		// angle needs the extra turn added rather than being clamped: a caller handing in
+		// -pi/2 means three quarters of a turn, not zero.
+		const float turn = 6.28318530717959f;
+		float wrapped = fmodf(radians, turn);
+		if (wrapped < 0.0f)
+			wrapped += turn;
+
+		// Round rather than truncate, so the error is half a step either side instead of a
+		// whole step in one direction. A systematic one-sided bias on a heading would show
+		// up as a character drifting consistently off the direction that was pushed.
+		const float scaled = wrapped * (65536.0f / turn);
+		const long rounded = (long)(scaled + 0.5f);
+
+		// The round can land exactly on 65536, which wraps to 0 rather than overflowing.
+		return (uint16_t)(rounded & 0xFFFF);
+	}
+
+	float DequantiseAngle(uint16_t value)
+	{
+		return (float)value * (6.28318530717959f / 65536.0f);
+	}
+
+	uint8_t QuantiseMagnitude(float value)
+	{
+		if (value <= 0.0f)
+			return 0;
+		if (value >= 1.0f)
+			return 255;
+
+		return (uint8_t)(value * 255.0f + 0.5f);
+	}
+
+	float DequantiseMagnitude(uint8_t value)
+	{
+		return (float)value * (1.0f / 255.0f);
 	}
 
 	int8_t QuantiseStick(float value)
@@ -73,6 +115,16 @@ namespace workshop
 	      lastChecksumPartCount(0),
 	      desyncStep(0),
 	      stepsRun(0),
+	      // OFF by default, deliberately. Changing the delay changes how your own
+	      // character feels, and that is not something to do to somebody without being
+	      // asked. The mechanism is here because it is the right answer for a bad link,
+	      // and SetAdaptiveInputDelay turns it on.
+	      adaptiveDelay(false),
+	      delayFloor(MinInputDelay),
+	      quietSteps(0),
+	      stallRuns(0),
+	      delayRaises(0),
+	      delayDrops(0),
 	      stepsStalled(0),
 	      longestStall(0),
 	      currentStall(0),
@@ -120,7 +172,7 @@ namespace workshop
 		}
 		localInputThrough = currentStep + (uint32_t)inputDelay - 1;
 
-		session->SetMessageSink(this);
+		session->AddMessageSink(this);
 
 		Log("lockstep: started at step %lu, input delay %d steps, command lead %d steps",
 		    (unsigned long)currentStep, inputDelay, commandLead);
@@ -130,7 +182,7 @@ namespace workshop
 	{
 		if (session)
 		{
-			session->SetMessageSink(NULL);
+			session->RemoveMessageSink(this);
 			Log("lockstep: stopped at step %lu after %lu steps, %lu stalls, longest %lu",
 			    (unsigned long)currentStep, (unsigned long)stepsRun,
 			    (unsigned long)stepsStalled, (unsigned long)longestStall);
@@ -145,18 +197,98 @@ namespace workshop
 	void Lockstep::SetInputDelay(int steps)
 	{
 		const int wanted = ClampInt(steps, MinInputDelay, MaxInputDelay);
+		if (wanted == inputDelay)
+			return;
 
-		// Changing this mid-session would leave a hole in the ring between the old
-		// horizon and the new one, and both machines would have to agree on exactly
-		// which step the change happened. Not worth it. Refuse and say so.
-		if (session && wanted != inputDelay)
+		// THIS USED TO REFUSE MID-SESSION, on the grounds that the two machines would have
+		// to agree on which step the change happened. That reasoning was wrong, and the
+		// correction is worth keeping because it is what makes adaptive delay possible.
+		//
+		// The delay only decides how far AHEAD a peer stamps its own input. It is not an
+		// input to the simulation. StepGate asks one question, "is every peer's input for
+		// currentStep in the ring", and InputForStep reads that same step. Neither looks at
+		// the delay. So two peers stamping 1 and 3 steps ahead still read identical values
+		// out of the ring for every step, and the simulations stay in lockstep.
+		//
+		// What the delay actually buys is slack: a peer that stamps further ahead gives
+		// everybody more time for its packets to arrive before anyone needs them. That is a
+		// property of one peer's link, which is exactly why each peer should be free to
+		// pick its own and change it when its link changes.
+		//
+		// The one genuine problem was the hole left in the ring on a raise, and
+		// SubmitLocalInput fills that now.
+		const int was = inputDelay;
+		inputDelay = wanted;
+
+		if (session)
+			Log("lockstep: input delay %d -> %d steps, about %d ms at 29.97 Hz. Only our own "
+			    "stamping changed, the other end needs no telling.",
+			    was, wanted, (int)(wanted * 1000 / 30));
+	}
+
+	void Lockstep::SetAdaptiveInputDelay(bool wanted)
+	{
+		if (adaptiveDelay == wanted)
+			return;
+
+		adaptiveDelay = wanted;
+		quietSteps = 0;
+		stallRuns = 0;
+
+		Log("lockstep: adaptive input delay %s, currently %d steps",
+		    wanted ? "ON, the clock will hunt for the smallest delay that does not stall"
+		           : "off, the delay stays where it is",
+		    inputDelay);
+	}
+
+	void Lockstep::SetInputDelayFloor(int steps)
+	{
+		delayFloor = ClampInt(steps, MinInputDelay, MaxInputDelay);
+		if (inputDelay < delayFloor)
+			SetInputDelay(delayFloor);
+	}
+
+	// Called once per successful step, with whether the step we just ran had been waited
+	// for. Kept separate from AdvanceStep so the rule is readable on its own.
+	void Lockstep::AdaptDelay(bool steppedAfterStall)
+	{
+		if (!adaptiveDelay)
+			return;
+
+		if (steppedAfterStall)
 		{
-			Log("lockstep: input delay stays at %d, it cannot be changed while a "
-			    "session is running",
-			    inputDelay);
+			// A stall RUN just ended. Counting runs rather than stalled steps matters: one
+			// late packet that costs four steps is one problem, not four, and counting
+			// steps would make a single hiccup look like a collapsing link.
+			++stallRuns;
+			quietSteps = 0;
+
+			// Two runs is the trigger rather than one, because a single stall happens on
+			// any link and reacting to it would mean the delay only ever climbs.
+			const uint32_t runsBeforeRaise = 2;
+			if (stallRuns >= runsBeforeRaise && inputDelay < MaxInputDelay)
+			{
+				stallRuns = 0;
+				++delayRaises;
+				SetInputDelay(inputDelay + 1);
+			}
+
 			return;
 		}
-		inputDelay = wanted;
+
+		++quietSteps;
+
+		// About 30 seconds at 29.97 Hz. Long on purpose. Coming back down is a gamble that
+		// the link got better, and losing that gamble costs a visible freeze, so it is only
+		// worth taking when the evidence is substantial.
+		const uint32_t quietBeforeDrop = 900;
+		if (quietSteps >= quietBeforeDrop && inputDelay > delayFloor)
+		{
+			quietSteps = 0;
+			stallRuns = 0;
+			++delayDrops;
+			SetInputDelay(inputDelay - 1);
+		}
 	}
 
 	void Lockstep::SetCommandLead(int steps)
@@ -282,7 +414,23 @@ namespace workshop
 		if (target <= localInputThrough)
 			return;
 
-		RecordInput(local, target, frame);
+		// A RANGE, not a single step, and that one detail is what makes the delay safe to
+		// change while a session is running.
+		//
+		// In the steady state this stamps exactly one step, because currentStep goes up by
+		// one per AdvanceStep and so does target. The interesting case is a delay that just
+		// went up: target jumps by two, and the step in between would otherwise never be
+		// stamped at all. That hole is a guaranteed stall a second or so later, with no
+		// obvious cause by the time it shows up.
+		//
+		// Filling it with the current frame is right rather than merely expedient. The hole
+		// is one step of a button state that is about to be sent anyway, and duplicating
+		// 33 ms of input is not something a player can perceive. Lowering the delay needs no
+		// handling at all: target stops advancing for a step, the early return above catches
+		// it, and the already-stamped step stands.
+		for (uint32_t step = localInputThrough + 1; step <= target; ++step)
+			RecordInput(local, step, frame);
+
 		localInputThrough = target;
 
 		SendLocalInput();
@@ -355,7 +503,7 @@ namespace workshop
 
 	const InputFrame* Lockstep::InputForStep(uint8_t peer) const
 	{
-		static const InputFrame neutral = { 0, 0, 0, 0, 0 };
+		static const InputFrame neutral = { 0, 0, 0, 0 };
 		if (peer >= (uint8_t)MaxPlayers)
 			return &neutral;
 
@@ -363,6 +511,18 @@ namespace workshop
 		if (!slot)
 			return &neutral;
 		return &slot->frames[peer];
+	}
+
+	bool Lockstep::HasInputForStep(uint8_t peer) const
+	{
+		if (peer >= (uint8_t)MaxPlayers)
+			return false;
+
+		const RingSlot* slot = SlotFor(currentStep);
+		if (!slot)
+			return false;
+
+		return (slot->have & (uint8_t)(1u << peer)) != 0;
 	}
 
 	int Lockstep::CommandsForStep(const Command** out, int maxCommands) const
@@ -398,6 +558,12 @@ namespace workshop
 
 		++currentStep;
 		++stepsRun;
+
+		// Feed the adaptation BEFORE the stall counter is cleared, because a non-zero
+		// currentStall here is exactly the signal "the step we just ran had been waited
+		// for", and that is the only moment it can be observed.
+		AdaptDelay(currentStall != 0);
+
 		currentStall = 0;
 	}
 

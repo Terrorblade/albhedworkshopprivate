@@ -162,9 +162,9 @@ namespace ffx
 		const DWORD StyleIndex = 0x1C;   // BYTE (byte 28)
 		const DWORD Flags = 0x1D;        // BYTE (byte 29), see MesWinFlag below
 		const DWORD ChosenOption = 0x1E; // short (byte 30), -1 for none
-		// Bytes 31 through 35 are the choice window's geometry and are passed straight
-		// to the draw module. Which is which was NOT established, so they are
-		// deliberately not named here. See reversing\CUTSCENE.md.
+		                                 // Bytes 31 through 35 are the choice window's geometry and are passed straight
+		                                 // to the draw module. Which is which was NOT established, so they are
+		                                 // deliberately not named here. See reversing\CUTSCENE.md.
 	} // namespace MesWinRecord
 
 	// Values of MesWinRecord::State. 0, 1 and 3 were read directly from the writes.
@@ -342,6 +342,28 @@ namespace ffx
 	// The general form, for a remote mask that is more than just confirm. Same
 	// timing rule. The mask is the 16-bit PS2 layout, so ffx::Btn::* values.
 	bool InjectDialoguePad(WORD pressedMask, WORD heldMask);
+
+	// REPLACES the block instead of OR-ing into it, which is the form a lockstep
+	// layer needs.
+	//
+	// The difference matters and it is not a detail. InjectDialoguePad ORs, so a local
+	// press and a remote press in the same step both land, which is exactly right for
+	// "let either player advance a box". Under lockstep it is wrong: the sampler has
+	// already filled the block from the LIVE local pad, which is undelayed and therefore
+	// a different value on the two machines. OR-ing a replicated mask on top of that
+	// leaves the local press in there, and the box advances a step early on whichever
+	// machine the player is sitting at.
+	//
+	// So this one assigns. Everything the message windows see then comes from the
+	// replicated mask and nothing comes from the hardware. Same timing rule as the other
+	// two: from inside a DialoguePadFn callback and nowhere else.
+	//
+	// Note this also discards the engine's auto-repeat for the bits it covers, which is a
+	// bonus rather than a loss. Those timers are wall-clock derived, first repeat at
+	// 0.2333 s and then 0.1333 s, so a held direction in a choice list was never going to
+	// be deterministic while the engine owned the edges. A caller that wants repeat has to
+	// do its own, from the step counter rather than the clock.
+	bool SetDialoguePad(WORD pressedMask, WORD heldMask);
 
 	// What the block currently holds, for logging and for a desync check. Both
 	// halves of the one dword the advance read tests.

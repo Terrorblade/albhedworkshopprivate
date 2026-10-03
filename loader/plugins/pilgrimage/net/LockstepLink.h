@@ -83,6 +83,29 @@ namespace pilgrimage
 	// A line for the control panel and the log.
 	const char* LockstepSummary();
 
+	// ---------------------------------------------------------------------------
+	// Asking for the simulation to be held
+	//
+	// The hold byte at Application+0x3AD has to be re-asserted from the animate hook every
+	// frame, so ServiceLockstep is its only writer. A second subsystem setting it directly
+	// would be overwritten by that loop on the next frame, and the two would then fight.
+	//
+	// So anything that wants the game frozen raises a reason here instead, and the one
+	// owner ORs every reason together. A reason stays raised until it is lowered, and a
+	// reason raised while the lockstep stall escalation already holds the game costs
+	// nothing.
+	// ---------------------------------------------------------------------------
+	enum HoldReason
+	{
+		// A world snapshot is going out. The host must not advance while the client is
+		// assembling the block, or the client installs a world the host has already left.
+		kHoldWorldTransfer = 1 << 0,
+	};
+
+	void HoldSimulationFor(int reason);
+	void ReleaseSimulationFor(int reason);
+	int SimulationHoldReasons();
+
 	// The live clock, or null when it is not running. Exposed so the remote player layer
 	// can read the replicated input for the current step without this file having to know
 	// what a character is.

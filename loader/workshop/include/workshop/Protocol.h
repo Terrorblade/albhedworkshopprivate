@@ -32,7 +32,7 @@ namespace workshop
 	// Bump on ANY change to a struct in this file or to the meaning of a field. The
 	// handshake refuses a peer whose version differs, which is the behaviour you
 	// want: a clear refusal beats two builds that almost agree.
-	const uint16_t ProtocolVersion = 2;
+	const uint16_t ProtocolVersion = 5;
 
 	enum MessageKind
 	{
@@ -49,6 +49,13 @@ namespace workshop
 		MessageCommand = 7,    // host to all, an event that takes effect on a step
 		MessageCommandAsk = 8, // client to host, please issue this command
 		MessageChecksum = 9,   // both ways, a state hash for one step
+
+		// The world transfer. A joining client needs the host's entire save state before
+		// it can simulate anything, and that is 26,816 bytes, so it is chunked.
+		MessageWorldRequest = 10,  // client to host, send me the world and why
+		MessageWorldSnapshot = 11, // host to client, one chunk of the save block
+		MessageWorldApplied = 12,  // client to host, installed it, here is my hash
+		MessageWorldAnchor = 13,   // host to client, where everybody is standing
 	};
 
 	// The sender's peer id before the host has given it one.
@@ -136,34 +143,39 @@ namespace workshop
 
 	// One player's input for one simulation step.
 	//
-	// The sticks are quantised to a signed byte ON PURPOSE, and the sender has to
-	// use the quantised value for its own simulation too. If one machine steps with
-	// the full float and the other with the byte that came off the wire, the two
-	// simulations are being fed different numbers and they will drift apart. See
-	// QuantiseStick in Lockstep.h, which is the only place that conversion lives.
-	// IMPORTANT, and it is not what the field names suggest. leftX and leftY are a
-	// WORLD SPACE direction, not the raw left stick.
+	// The movement is a WORLD SPACE HEADING plus a deflection, not a stick.
 	//
-	// The engine's own control path computes m_moveDir = cameraYaw - atan2(right, forward),
-	// so a raw stick value only means something next to the camera that read it. The camera
-	// is per-player, driven by that player's right stick, and deliberately not replicated.
-	// Put a raw stick on the wire and two machines turn it into two different headings, which
-	// desyncs on the first step anybody walks.
+	// Why not a stick: the engine's own control path computes
+	// m_moveDir = cameraYaw - atan2(right, forward), so a raw stick value only means
+	// something next to the camera that read it. The camera is per-player, driven by that
+	// player's right stick, and deliberately not replicated. Put a raw stick on the wire and
+	// two machines turn it into two different headings, which desyncs on the first step
+	// anybody walks. So the owning machine resolves against its own camera before sending,
+	// and the receiver needs no camera at all.
 	//
-	// So the owning machine resolves its stick against its own camera first and sends the
-	// result as a unit-ish vector in the XZ plane, scaled by stick deflection. The receiver
-	// takes atan2(leftY, leftX) and needs no camera at all. Same eight bytes, and the camera
-	// is out of the determinism surface entirely.
+	// Why an ANGLE and not the resolved vector, which is what this used to be: a pair of
+	// signed bytes loses angular resolution exactly where it hurts. At 10 percent deflection
+	// the vector has a radius of about 13 units, so there are roughly 8 distinct headings per
+	// quadrant and a slow walk looks steppy. An angle is a flat 0.0055 degrees at every
+	// deflection, because the precision is no longer coupled to the magnitude. It also saves
+	// the receiver an atan2, and more importantly it means the atan2 happens ONCE, on the
+	// machine that owns the stick, rather than being re-derived from lossy bytes.
 	//
-	// rightX and rightY stay raw. They drive the camera, which is presentation and stays
-	// local, so nothing simulated reads them.
+	// The right stick is not here at all. It used to be, and nothing ever read it: it drives
+	// the camera, which is presentation and stays local. Those are the two bytes the angle is
+	// paid for with, so the frame is still 8 bytes.
+	//
+	// THE QUANTISATION RULE, unchanged and still the thing that bites: the sender has to
+	// simulate from the quantised value too. If one machine steps with the full float and the
+	// other with what came off the wire, the two are being fed different numbers and they
+	// drift apart slowly and inexplicably. QuantiseAngle and QuantiseMagnitude in Lockstep.h
+	// are the only place those conversions live.
 	struct InputFrame
 	{
-		uint32_t buttons; // the FFX global button mask, as read from g_ffxInput
-		int8_t leftX;     // -127..127, right and down positive
-		int8_t leftY;
-		int8_t rightX;
-		int8_t rightY;
+		uint32_t buttons;   // the FFX global button mask, as read from g_ffxInput
+		uint16_t moveAngle; // world heading, 0..65535 over a full turn. 0 is +X, 16384 is +Z
+		uint8_t moveMag;    // stick deflection, 0..255. Exactly 0 means idle
+		uint8_t reserved;   // keeps the frame 8 bytes and naturally aligned
 	};
 
 	// The most frames one input message can carry. Raising it costs bytes on every
@@ -182,7 +194,12 @@ namespace workshop
 	// opened, a battle action chosen. The kind and the bytes are the mod's business,
 	// the step is not. Commands are host-ordered, so a client ASKS and the host
 	// ISSUES, which is why there are two message kinds for one struct.
-	const int MaxCommandBytes = 64;
+	//
+	// 96 because a battle command carries the engine's own 72 byte command record
+	// verbatim plus the gil cost and the variant, and 64 did not fit it. Raising this
+	// costs bytes on every command message, which is fine: commands are rare, unlike
+	// input. Raising it IS a wire format change, so ProtocolVersion goes up with it.
+	const int MaxCommandBytes = 96;
 
 	struct CommandPayload
 	{
@@ -205,6 +222,107 @@ namespace workshop
 		uint32_t parts[16]; // per region, so a mismatch says WHERE
 	};
 
+	// ---------------------------------------------------------------------------
+	// The world transfer.
+	//
+	// Why the chunking is explicit rather than left to the transport: Steam's reliable
+	// send does fragment and reassemble above 1200 bytes on its own, but the dev UDP
+	// transport does not, and a transfer that only works on one of the two backends is a
+	// transfer that cannot be debugged locally. See MaxPacketBytes in Transport.h.
+	//
+	// Chunks are sent RELIABLY and in order, so the receiver does not have to handle loss.
+	// It still tracks which chunks arrived, because "the transfer stalled at chunk 19" is
+	// a far more useful thing to log than "the world never arrived".
+	// ---------------------------------------------------------------------------
+
+	// 1024 keeps the whole message at 1064 bytes including the header, which leaves room
+	// under the 1200 cap without being so small that the save block takes hundreds of
+	// packets. 26,816 bytes is 27 chunks.
+	const int WorldChunkBytes = 1024;
+
+	// Why a client is asking for the world, which is worth carrying because the host's
+	// answer is the same but the log entry is not.
+	enum WorldRequestReason
+	{
+		kWorldRequestJoining = 0, // first time, nothing to simulate against yet
+		kWorldRequestDesync = 1,  // the checksums diverged and we want a fresh start
+		kWorldRequestManual = 2,  // somebody pressed the key, for testing
+	};
+
+	struct WorldRequestPayload
+	{
+		uint32_t reason; // one of WorldRequestReason
+		uint32_t step;   // where the asker's clock is, for the host's log
+	};
+
+	struct WorldSnapshotPayload
+	{
+		// The id ties every chunk of one transfer together. A second attempt gets a new
+		// id, so a late chunk from an abandoned transfer cannot be mistaken for part of
+		// the current one. That is the whole reason this field exists.
+		uint32_t snapshotId;
+
+		uint32_t totalBytes; // the whole block, so the receiver can size and check
+		uint32_t offset;     // where this chunk goes in the block
+		uint32_t hostStep;   // the step the host snapshotted on
+
+		uint16_t chunkBytes; // how many of data are real. The last chunk is short
+		uint16_t chunkIndex;
+		uint16_t chunkCount;
+		uint16_t reserved;
+
+		uint8_t data[WorldChunkBytes];
+	};
+
+	// One character's standing place. charIndex is a save block character index, 0..7,
+	// and -1 marks an unused slot so the receiver does not have to trust slotCount
+	// alone.
+	struct WorldAnchorSlot
+	{
+		float x;
+		float y; // +Y IS DOWN in FFX. This is a real height, not a placeholder zero
+		float z;
+		float facing;      // m_rotY in radians, zero along +Z
+		int32_t charIndex; // -1 for unused
+	};
+
+	// Where the host's party is standing, which is the one thing the save block does
+	// NOT carry.
+	//
+	// The block names a doorway, a (map id, entry point) pair, so a joiner that
+	// installs it and loads lands at the last door the host walked through. That can
+	// be most of a map away. This message closes the gap.
+	//
+	// It is sent once per transfer, before the chunks, because reliable delivery is in
+	// order and the joiner wants it in hand by the time it has a map to place into.
+	//
+	// EVERY CHARACTER, not just the leader. The followers trail the leader by a few
+	// metres and those offsets are part of the world state, so sending one position
+	// and fanning out from it would put both machines in different places. Sending all
+	// of them makes the match exact.
+	struct WorldAnchorPayload
+	{
+		uint32_t snapshotId; // ties this to the transfer it belongs to
+		uint32_t hostStep;   // the step the host read these positions on
+
+		uint16_t mapId;      // which map these coordinates mean. A mismatch is a refusal
+		uint16_t entryPoint; // for the log, so a wrong landing is attributable
+
+		int32_t slotCount; // how many of slots are filled, from the front
+		int32_t reserved;
+
+		WorldAnchorSlot slots[8]; // 8 because a save block character index is 0..7
+	};
+
+	struct WorldAppliedPayload
+	{
+		uint32_t snapshotId;   // which transfer this is answering
+		uint32_t combinedHash; // the client's hash after installing, for an instant check
+		uint32_t step;         // the step the client installed on
+		uint8_t ok;            // 0 means it refused, and the host should know
+		uint8_t reserved[3];
+	};
+
 #pragma pack(pop)
 
 	// Sanity checks that cost nothing at runtime. If one of these ever fires, the
@@ -216,8 +334,19 @@ namespace workshop
 	typedef char ProtocolWelcomeSizeCheck[(sizeof(WelcomePayload) == 12) ? 1 : -1];
 	typedef char ProtocolInputFrameSizeCheck[(sizeof(InputFrame) == 8) ? 1 : -1];
 	typedef char ProtocolInputSizeCheck[(sizeof(InputPayload) == 72) ? 1 : -1];
-	typedef char ProtocolCommandSizeCheck[(sizeof(CommandPayload) == 76) ? 1 : -1];
+	typedef char ProtocolCommandSizeCheck[(sizeof(CommandPayload) == 108) ? 1 : -1];
 	typedef char ProtocolChecksumSizeCheck[(sizeof(ChecksumPayload) == 76) ? 1 : -1];
+	typedef char ProtocolWorldRequestSizeCheck[(sizeof(WorldRequestPayload) == 8) ? 1 : -1];
+	typedef char ProtocolWorldAppliedSizeCheck[(sizeof(WorldAppliedPayload) == 16) ? 1 : -1];
+	typedef char ProtocolWorldAnchorSlotSizeCheck[(sizeof(WorldAnchorSlot) == 20) ? 1 : -1];
+	typedef char ProtocolWorldAnchorSizeCheck[(sizeof(WorldAnchorPayload) == 180) ? 1 : -1];
+	typedef char ProtocolWorldSnapshotSizeCheck[(sizeof(WorldSnapshotPayload) == 1048) ? 1 : -1];
+
+	// The snapshot message plus its header has to fit one datagram. Checked here rather
+	// than trusted, because WorldChunkBytes is the kind of constant somebody raises later
+	// without thinking about the cap.
+	typedef char ProtocolWorldSnapshotFitsCheck
+	    [(sizeof(WorldSnapshotPayload) + sizeof(MessageHeader) <= 1200) ? 1 : -1];
 
 	const char* MessageKindName(uint8_t kind);
 	const char* RejectReasonText(uint8_t reason);

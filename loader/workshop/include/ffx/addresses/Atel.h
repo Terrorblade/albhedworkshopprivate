@@ -143,7 +143,20 @@ namespace ffx
 		const DWORD AtelPullActorPosFromChr = 0x00469E40;
 		const DWORD AtelPushActorPosToChr = 0x00466800;
 		const DWORD AtelSetActorPos = 0x00470B20;
+
+		// CAREFUL. Same as AtelSetActorPos but XZ only, and it does NOT leave Y alone, it
+		// writes Y = 0. Since +Y is down in FFX, zero is up in the air rather than a
+		// harmless no change. Almost never the one you want.
 		const DWORD AtelSetActorPosXZ = 0x00470970;
+
+		// int __cdecl (int actor). The actor's pending move command block.
+		//
+		// A placement has to cancel this or the character walks straight back to
+		// wherever the script was sending it. The kind word at moveCmd+2 is the switch:
+		// while it is non-zero, FFX_Atel_ApplyMoveToChr re-asserts m_speed from the actor
+		// record every frame, which also means a bare m_speed = 0 does not stick. Write
+		// zero to moveCmd+2 and the same function then forces m_speed = 0 for you.
+		const DWORD AtelGetMoveCmd = 0x0046C0A0;
 
 		// ---------------------------------------------------------------------------
 		// Firing an event. THE co-op command executor.
@@ -307,6 +320,7 @@ namespace ffx
 				AtelPushActorPosToChr,
 				AtelSetActorPos,
 				AtelSetActorPosXZ,
+				AtelGetMoveCmd,
 				AtelFireActorEvent,
 				AtelFireActorEventSync,
 				AtelFireEventOnChrActor,

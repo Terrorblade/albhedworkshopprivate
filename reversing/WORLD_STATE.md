@@ -474,7 +474,11 @@ ATEL context's byte 0 set, and the call consumes it. A second call in the same c
 refused unless `g_ffxDebugMode 0x133C910` is 1. **`FFX_Map_RequestChange` has no gate of any kind**,
 so a mod should call that directly and set the fade itself.
 
-### The late-joiner primitive, already written and orphaned
+### The resume primitive, already written and orphaned
+
+(Called "the late-joiner primitive" in an earlier draft. It is not one. It goes to the CHECKPOINT,
+not to where the host is, so a late joiner wants the pending flag on its own instead. See "Why step
+6 is not resume-from-checkpoint" above.)
 
 **Confirmed.** `FFX_Map_RequestResumeFromCheckpoint 0x88DD60` is:
 
@@ -663,14 +667,190 @@ The complete recipe, with every step justified above:
            This is the step the save load makes and FFX_Debug_ApplyViewerSave skips.
            It rebuilds g_ffxEquipStatBonus and then every character's derived stats,
            effective stats, ability masks and HP/MP clamps.
-6. Client: call FFX_Map_RequestResumeFromCheckpoint 0x88DD60.
-           Reads the map and entry point out of the block you just transplanted and raises
-           the deferred request. One simulation step later the engine loads the map itself.
-           If you want a specific map instead, call FFX_Map_RequestChange 0x88EA60
-           (mapId, entryPoint). Prefer it over FFX_Map_WarpTo, which has a consuming gate.
-7. Client: place the joining CHR at the host's actual position afterwards, through the
-           Phase 1 character layer. The save only identifies a doorway, not a position.
+6. Client: raise g_ffxMapChangePending 0x133084C = 1 and nothing else.
+           CORRECTED, see "Why step 6 is not resume-from-checkpoint" below. The live map
+           id at +0x00 and the live entry point at +0x0C already hold the host's current
+           location, because they arrived inside the block. All that is missing is the
+           load, and the pending flag is the only thing either shipped request function
+           does that this case needs.
+7. Client: place EVERY party character at the host's actual positions afterwards.
+           The save only identifies a doorway, not a position. BUILT, see "Step 7, the
+           arrival" below. The engine's own teleport is FFX_Atel_SetActorPos 0x870B20
+           and it does far more than move an actor, so use it rather than writing the
+           position. snapPrev must be 1.
 ```
+
+### Step 7, the arrival
+
+This is built now, as `plugins/pilgrimage/world/Arrival.cpp` plus protocol message 13. Four
+things had to be settled that were not obvious from the recipe.
+
+**Use the engine's teleport, not a position write.** `FFX_Atel_SetActorPos 0x870B20` is
+`int __cdecl (void *actor, float x, float y, float z, int snapPrev)` and it does all of this:
+
+- writes the actor's position vector, at pos+0
+- for a CHR backed actor, calls `FFX_Ch_SetPos` and then `FFX_Ch_MarkDirty`, so the drawable
+  and the actor record agree on the same frame rather than one apart
+- when the actor IS the bound player, shifts the context player cache at ctx+536 down into
+  ctx+552 and writes the new position into ctx+536. That pair is what every line, box, path
+  and volume trigger compares against, so getting it updated is not cosmetic
+- refreshes the encounter ground attribute at savedata+16 from `FFX_Map_GroundAttrGetEnc`,
+  and the area id at savedata+14 through `sub_870EF0(FFX_Map_GroundAttrGetDic(chr))`, so a
+  random battle rolled right after a placement uses the destination's table rather than the
+  origin's
+- ORs 0x10 into the byte at ctx+2
+
+Writing six floats by hand gets none of that.
+
+**snapPrev MUST be 1 for a placement.** With it 0 the engine keeps the old previous position,
+so the swept segment runs from wherever the character used to be to where it now is. Every
+line and box trigger along that imaginary line then fires. A joiner arriving in a new map
+would trip every trigger between the map origin and its feet. The scripts that pass 0 are
+doing a deliberate nudge where they WANT the sweep counted.
+
+**Send every character's position, not the leader's.** The followers trail the leader by a
+few metres and those offsets are part of the world state. Sending one position and fanning
+the others out from it puts the two machines in different places, which is the exact thing
+the step is for. So the anchor message carries up to 8 slots, one per save block character
+index, each with x, y, z and the facing read from the CHR's `m_rotY`.
+
+**The APPLIED reply has to wait for the placement, not for the bytes.** The host unfreezes on
+that reply. Replying as soon as the transplant is in lets the host walk away while the
+joiner's map is still loading, and the anchor goes stale before it can be used. The transfer
+then ends with two identical worlds and two parties standing in different places.
+
+The joiner's own hold has to come off BEFORE the reply though, and that is not a
+contradiction. The map load is consumed inside `FFX_MainStep`, which the simulation hold
+skips, so holding through the load waits forever for something that cannot happen. The
+lockstep clock is gated separately on "the world is installed", which stays false until the
+placement finishes. So the joiner steps locally through its map load without exchanging input
+against a world it has not reached yet.
+
+### The traps in the placement path
+
+`reversing/PLACEMENT.md` is the full audit and the numbered recipe. The short version of what
+bites, in the order it bites you. `ffx::PlaceActor` does all of this.
+
+**The destination has to be on the walkmesh, and you can ask before committing.** When
+`FFX_Ch_WalkmeshFindTri` fails, `FFX_Ch_WalkmeshMove` does `posX += velX * 10` and
+`posZ += velZ * 10` and runs nothing else, leaving `m_groundHeight`, the ground normal and
+`m_groundAttrs` stale. With the velocity zeroed that is survivable, with velocity the
+character gets flung. It leaves `m_walkmeshTri` at -1 rather than storing a bad index, so it
+retries next frame. `ffx::PointIsOnWalkmesh` is the pre-check, and note the engine's own
+function takes WALKMESH space, not world space, while the world-space wrapper at `0x83EAE0`
+is dead code that divides the triangle index by the scale.
+
+**`m_speed` is the carry-over, not the velocity.** `FFX_Ch_ResolveCollisionsAll` zeroes
+`m_velX/Y/Z` every frame anyway, so they are not what walks a placed character away. `m_speed`
+at CHR+0x154 is, plus `m_vertVel` at CHR+0x504 for the water mode.
+
+**And a bare `m_speed = 0` does not even stick if the actor has a pending ATEL move command.**
+While the kind word at `moveCmd+2` is non-zero, `FFX_Atel_ApplyMoveToChr` re-asserts `m_speed`
+from the actor record every frame and walks the character back toward the script's target. So
+the placement appears to work for one frame and then unwinds. Zero that word and the same
+function forces `m_speed = 0` for you. `FFX_Atel_GetMoveCmd` is RVA 0x46C0A0 and
+`ffx::CancelActorMoveCommand` wraps it.
+
+**Copy the engine's Y bias.** `FFX_Atel_PushActorPosToChr` calls
+`FFX_Ch_SetPos(chr, x, y - 0.1f, z)`, lifting the character clear of the stated Y so it does
+not start inside the floor.
+
+**The networked Y only has to pick the right deck.** `FFX_Ch_Allocate` sets `m_groundMode = 1`,
+which makes the motion pass overwrite `posY` with `m_groundHeight` every frame, so the engine
+computes the exact height itself. Y is still worth getting roughly right, because
+`FindTri` uses it to choose between stacked floors, and since +Y is down, too small a Y means
+too high up and that is the safe direction.
+
+**Facing needs both halves.** `m_flags1` bit `0x400` slews `m_rotY` toward `m_moveDir` at 0.314
+to 0.524 radians per sub-step, so writing the rotation alone turns the character to where you
+asked and then smoothly turns it away. `FFX_Ch_SetRotAndMoveDir` RVA 0x42B1B0 writes both in
+one call. And for a script driven actor that is still not enough: `FFX_Atel_StepActor`
+overwrites the CHR's speed, move direction and rotation from the actor record every frame
+unless `actor+0x34` bit `0x20` is set, which is the player-controlled bit.
+
+**`FFX_Ch_SetPos` deliberately leaves `m_walkmeshTri` at -1**, which is the engine's "needs
+relocating" sentinel rather than an error. The recovery normally happens in the next frame's
+motion pass, but that pass skips hidden characters, so a hidden one is never relocated. Call
+`ffx::BindToWalkmesh` after every placement. The full deadlock is written up in
+`workshop/include/ffx/Walkmesh.h`.
+
+**Two things that look like traps and are not**, both checked properly rather than assumed, so
+nobody has to spend an afternoon on them again:
+
+- `g_ffxSuppressNextSetPos` at `0x12FFAD8` would make the next `FFX_Ch_SetPos` do nothing, and
+  **it cannot be armed**. Its only setter, `FFX_Ch_SuppressNextSetPos 0x82ACC0`, has zero
+  callers, and it is not in `g_ffxMagicHostApiTable` either, confirmed by searching the whole
+  image for its address. The byte is in uninitialised `.data`, so it is 0 at startup and stays
+  0. Placement clears it anyway because the read is free and the failure it would cause is
+  invisible.
+- `m_flags1` bit `0x02000000`, which `FFX_Ch_SetPos` sets on every write, **has no reader
+  anywhere**. Three writers, zero readers, verified by an immediate search across `.text`, a
+  byte-pattern sweep of every test and bit-test encoding, and a decompile of all 76 functions
+  that touch displacement 0x194. It is wiped by `FFX_Ch_ClearFlags1StepBits 0x832DB0` at the
+  top of every frame along with bits 24 and 26. A dead latch, nothing to redo and nothing to
+  clear.
+
+### A correction to the actor position offsets
+
+`ffx::AtelPos::X` and `ffx::AtelPos::PrevX` were **the wrong way round** in the kit, and the
+fix is in. **pos+0 is the CURRENT position and pos+16 is the PREVIOUS one.** Three functions
+agree and none of them is ambiguous:
+
+- `FFX_Atel_PullActorPosFromChr 0x869E40` runs every frame and starts with
+  `pos[4..6] = pos[0..2]`, which is "shift current into previous", then fills `pos[0..2]` from
+  the live CHR with `FFX_Ch_GetPos`.
+- `FFX_Atel_SetActorPos 0x870B20` writes the new position to `pos[0..2]` and only copies it
+  down to `pos[4..6]` when it is snapping the previous as well.
+- Both of them feed ctx+536, the CURRENT half of the player cache, from `pos[0..2]`.
+
+Getting this backwards does not fault, it reads one frame stale, which is the kind of wrong
+that survives a long time. `ffx::ActorPosition()` had been returning the previous position and
+the nearby-actor search was reading it. Do not flip it back without reading those three
+functions.
+
+A useful corollary from the same reading: in the steady state **the CHR is the authority and
+the actor record is the mirror**, because `PullActorPosFromChr` copies the live CHR position
+into the actor record every frame. So a CHR-only position write propagates up to the actor by
+itself one frame later. The reverse is not automatic, because
+`FFX_Atel_PushActorPosToChr 0x866800` only pushes actor -> CHR when the actor's dirty bit at
+`actor+0x38` bit 1 is set. `FFX_Atel_SetActorPos` writes both sides, which is a third reason
+to prefer it.
+
+### Why step 6 is not resume-from-checkpoint
+
+This correction came out of implementing the recipe. The earlier version of step 6 said to call
+`FFX_Map_RequestResumeFromCheckpoint 0x88DD60`, and that is wrong for a join in progress.
+
+Look again at what that function actually does:
+
+```c
+entry = saveData.word[0xB8];   map = saveData.word[0xBA];   // the CHECKPOINT
+saveData.word[0x00] = map;                                  // over the LIVE map
+saveData.byte[0x0C] = entry;                                // over the LIVE entry point
+```
+
+It reads the checkpoint and writes it **over** the live fields. The checkpoint is the host's last
+save sphere or story checkpoint, which can be a whole region behind where the host is standing. So
+calling it after a transplant does not put the joiner where the host is, it puts the joiner at the
+host's last save point. For loading a save from disk that is exactly right, which is why the
+function exists and why the boot path calls it. For joining a game in progress it is not.
+
+`FFX_Map_RequestChange 0x88EA60` with the live values read back out is also wrong, for a subtler
+reason. Its first two stores are:
+
+```c
+saveData.byte[0x0D] = saveData.byte[0x0C];   // previous entry point
+saveData.word[0x02] = saveData.word[0x00];   // previous map id
+```
+
+Passing it the values that are already there makes previous equal current. Those two fields are
+readable by scripts through `FFX_SaveData_GetPrevEntryPoint 0x88D610`, so a client whose history
+differs from the host's is a divergence in state the simulation can observe. Under lockstep that is
+the kind of difference that does not show up as a glitch, it shows up much later as an unexplained
+desync.
+
+So the right action is the single store both functions finish with. The mod exposes it as
+`ffx::RequestLoadLiveLocation()`, and the comment on that function says the same thing.
 
 Six things that make this easier than it looked:
 

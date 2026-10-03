@@ -155,12 +155,22 @@ namespace workshop
 			localStep = step;
 		}
 
-		// Hands unhandled messages to the lockstep layer. Pass NULL to detach. The
-		// session does not own the sink and will not delete it.
-		void SetMessageSink(MessageSink* sink)
-		{
-			messageSink = sink;
-		}
+		// Hands unhandled messages to the layers above. Sinks are offered a message in
+		// registration order until one of them claims it by returning true, so an
+		// unclaimed kind still gets counted as ignored exactly as before.
+		//
+		// There is more than one sink because there is more than one subsystem that owns
+		// message kinds: the lockstep clock owns input, commands and checksums, and world
+		// sync owns the snapshot transfer. Making them share one sink would have meant one
+		// of them forwarding for the other, which puts a dependency between two things
+		// that have no reason to know about each other.
+		//
+		// The session does not own a sink and will not delete it. Registering the same
+		// sink twice is a no-op rather than a duplicate.
+		bool AddMessageSink(MessageSink* sink);
+
+		// Removes one sink. Safe to call for a sink that was never added.
+		void RemoveMessageSink(MessageSink* sink);
 
 		// Sends one message to a session peer id, or to everyone else when peer is
 		// BroadcastPeer. This is how a layer above sends on the session's link
@@ -239,7 +249,12 @@ namespace workshop
 		// to. Conflating those two is an easy and very confusing bug.
 		int transportSlotForPeer[MaxPlayers];
 
-		MessageSink* messageSink;
+		// Four is comfortably more than the subsystems that exist, and a fixed array
+		// keeps the session free of allocation, which matters because it is pumped from
+		// the frame path.
+		static const int MaxMessageSinks = 4;
+		MessageSink* messageSinks[MaxMessageSinks];
+		int messageSinkCount;
 
 		uint32_t frame;
 		uint32_t nextSequence;

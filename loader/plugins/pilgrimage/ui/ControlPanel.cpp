@@ -10,6 +10,11 @@
 #include "diag/InteractProbe.h"
 #include "menu/EscMenuRows.h"
 #include "net/LockstepLink.h"
+#include "world/Arrival.h"
+#include "battle/BattleSync.h"
+#include "world/BoosterSync.h"
+#include "world/DialogueSync.h"
+#include "world/WorldSync.h"
 #include "workshop/Log.h"
 #include "ffx/HideFlags.h"
 #include "ffx/Walkmesh.h"
@@ -243,6 +248,11 @@ namespace pilgrimage
 			    "status    : %s\r\n"
 			    "probe     : %s   (shift+F8 starts it)\r\n"
 			    "lockstep  : %s\r\n"
+			    "world     : %s\r\n"
+			    "arrival   : %s\r\n"
+			    "boosters  : %s\r\n"
+			    "battle    : %s\r\n"
+			    "dialogue  : %s\r\n"
 			    "interact  : %s\r\n"
 			    "menu row  : %s\r\n"
 			    "pool      : %ld live of %ld slots\r\n"
@@ -273,6 +283,11 @@ namespace pilgrimage
 			    Status(),
 			    HashProbeStatus(),
 			    LockstepSummary(),
+			    WorldSyncStatus(),
+			    ArrivalStatus(),
+			    BoosterSyncStatus(),
+			    BattleSyncStatus(),
+			    DialogueSyncStatus(),
 			    InteractProbeStatus(),
 			    EscMenuRowTestStatus(),
 			    telemetry.poolLive, telemetry.poolTotal,

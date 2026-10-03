@@ -24,6 +24,10 @@
 #include "net/NetLink.h"
 #include "workshop/Log.h"
 #include "world/TriggerPass.h"
+#include "battle/BattleSync.h"
+#include "world/BoosterSync.h"
+#include "world/DialogueSync.h"
+#include "world/WorldSync.h"
 
 namespace pilgrimage
 {
@@ -141,6 +145,16 @@ namespace pilgrimage
 				SetTriggerPassArmed(!TriggerPassArmed());
 			if (InterlockedExchange(&requests.logTriggerPass, 0))
 				LogTriggerPass();
+
+			if (InterlockedExchange(&requests.logWorldSync, 0))
+			{
+				LogWorldSync();
+				LogBoosterSync();
+				LogBattleSync();
+				LogDialogueSync();
+			}
+			if (InterlockedExchange(&requests.requestWorldResync, 0))
+				RequestWorldFromHost(workshop::kWorldRequestManual);
 
 			if (InterlockedExchange(&requests.stopNetworking, 0))
 				StopNetworking();

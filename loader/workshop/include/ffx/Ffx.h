@@ -30,6 +30,7 @@
 #include "ffx/AnimateHook.h"
 #include "ffx/Atel.h"
 #include "ffx/Api.h"
+#include "ffx/Battle.h"
 #include "ffx/Camera.h"
 #include "ffx/Character.h"
 #include "ffx/Cutscene.h"
@@ -46,3 +47,4 @@
 #include "ffx/RenderProbe.h"
 #include "ffx/VerifyLayout.h"
 #include "ffx/Walkmesh.h"
+#include "ffx/WorldState.h"

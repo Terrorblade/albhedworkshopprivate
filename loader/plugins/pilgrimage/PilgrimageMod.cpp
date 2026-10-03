@@ -46,10 +46,12 @@
 #include "ffx/MainLoop.h"
 #include "ffx/Pad.h"
 #include "ffx/VerifyLayout.h"
+#include "battle/BattleSync.h"
 #include "hooks/FrameHook.h"
 #include "net/LockstepLink.h"
 #include "world/EncounterSync.h"
 #include "world/RemotePlayers.h"
+#include "world/DialogueSync.h"
 #include "world/TriggerPass.h"
 #include "hooks/Hotkeys.h"
 #include "hooks/VisibilityDetour.h"
@@ -141,6 +143,28 @@ namespace pilgrimage
 			// random battle, and the engine behaves exactly as the shipped game does.
 			if (!InstallEncounterSync())
 				Log("remote movement will not contribute to random encounters");
+
+			// Installed unconditionally and harmless when nothing is connected, because
+			// the callback leaves the pad block alone unless a session is active. Without
+			// it a message box runs off whichever hardware pad is plugged into the machine
+			// showing it, which diverges the moment anybody talks to anything.
+			if (!InstallDialogueSync())
+				Log("message boxes will not be driven by replicated input, so talking to "
+				    "anything in a session is a divergence");
+
+			// Installed unconditionally, same reasoning as the dialogue hook: both
+			// callbacks pass straight through until a session starts, so a solo game is
+			// byte for byte the shipped game with these in.
+			//
+			// Not fatal, and the consequence splits in two. Without the capture sites a
+			// battle action is committed on this machine alone. Without the open hook
+			// both machines open a menu for the same unit, and since the staging record
+			// is one global, the two cursors corrupt each other's command. Either way a
+			// battle in a session is a divergence, which InstallBattleSync says out loud
+			// per hook.
+			if (!InstallBattleSync())
+				Log("battle commands will not be replicated, so the first battle in a "
+				    "session will diverge");
 
 			// Not fatal. Only the force-visible diagnostic depends on it.
 			if (!InstallVisibilityDetour())

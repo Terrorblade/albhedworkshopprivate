@@ -1,6 +1,10 @@
 #include "net/NetLink.h"
 
 #include "net/LockstepLink.h"
+#include "battle/BattleSync.h"
+#include "world/BoosterSync.h"
+#include "world/DialogueSync.h"
+#include "world/WorldSync.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -244,13 +248,35 @@ namespace pilgrimage
 		session.Step();
 		const SessionState after = session.State();
 
-		// The clock runs only while there is a session to run it against. Starting it
-		// the moment the handshake completes, rather than when hosting begins, means
-		// it starts from a step both ends know about.
+		// World sync comes up first, so a joining client's request for the world is on
+		// the wire before anything else happens.
 		if (after == SessionActive && before != SessionActive)
-			BeginLockstep();
+		{
+			StartWorldSync();
+			StartBoosterSync();
+			StartBattleSync();
+			StartDialogueSync();
+		}
 		if (after != SessionActive && before == SessionActive)
+		{
 			EndLockstep();
+			StopWorldSync();
+			StopBoosterSync();
+			StopBattleSync();
+			StopDialogueSync();
+		}
+
+		// Pace the transfer and, on a client, install a completed one.
+		if (after == SessionActive)
+			ServiceWorldSync();
+
+		// The clock runs only while there is a session to run it against, AND only once
+		// both ends are simulating the same world. On the host that is immediately. On a
+		// client it is after the snapshot has been installed, which is why this is a
+		// per-frame check and not a one-shot on the transition: the clock starts on
+		// whichever frame the world turns up.
+		if (after == SessionActive && !LockstepRunning() && WorldSyncReady())
+			BeginLockstep();
 
 		// The session line, then the link quality underneath it when Steam can tell
 		// us. GetP2PSessionState is documented as debug-only, so it goes on screen

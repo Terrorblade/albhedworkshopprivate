@@ -105,10 +105,39 @@ namespace workshop
 	// the session starts and what the ring is primed with.
 	InputFrame NeutralInput();
 
-	// The one place a stick float becomes a wire byte and back. Both machines must
+	// The one place a stick float becomes a wire value and back. Both machines must
 	// simulate from the SAME number, so even the local player's own input goes
 	// through this round trip before it is used. Getting this wrong is the classic
 	// way to build a lockstep that drifts slowly and inexplicably.
+
+	// The movement encoding. An angle rather than a vector, so the precision does not
+	// collapse at low deflection. See the InputFrame comment in Protocol.h.
+	//
+	// The angle wraps, so any input is valid and nothing has to be clamped by a caller.
+	// 0 is along +X and 16384 is along +Z, matching the heading convention
+	// FFX_Ch_UpdateMotionAll integrates against.
+	uint16_t QuantiseAngle(float radians);
+	float DequantiseAngle(uint16_t value);
+
+	// Deflection, 0 to 1. Clamped, so a stick that reads slightly over 1 is not wrapped
+	// round to nothing.
+	uint8_t QuantiseMagnitude(float value);
+	float DequantiseMagnitude(uint8_t value);
+
+	// The deadzone applied BEFORE anything reaches the wire.
+	//
+	// It lives here rather than in the sender because it is part of the encoding now: a
+	// deflection under this never leaves the machine, so stick noise around centre cannot
+	// make a remote character creep or jitter. Anything driving a character locally must use
+	// this same number or the two will not feel the same.
+	//
+	// Radial, not the game's own per-axis band. The game checks each axis separately, which
+	// gives a square dead region and a noticeable notch on the diagonals.
+	const float kStickDeadzone = 0.25f;
+
+	// Still here, still the same contract, no longer used by InputFrame. Kept because a
+	// raw axis is a reasonable thing for something else to want to replicate one day, and
+	// the comment above is the part worth keeping.
 	int8_t QuantiseStick(float value);
 	float DequantiseStick(int8_t value);
 
@@ -131,6 +160,47 @@ namespace workshop
 		}
 
 		void SetInputDelay(int steps);
+
+		// ------------------------------------------------------------------
+		// Adaptive input delay
+		//
+		// One step is 33 ms at 29.97 Hz, and that number cuts both ways. Every step of
+		// delay is 33 ms of lag on your own character. Every step the gate refuses is a
+		// 33 ms freeze of the whole game. So the best delay is the smallest one the link
+		// can actually keep up with, and that is not a constant: it changes with the
+		// route, the other player's upload, and whatever else is on their connection.
+		//
+		// On so the clock finds it by itself. Raising is quick and lowering is slow, on
+		// purpose: a hitch is far more noticeable than 33 ms of extra lag, so the cost of
+		// guessing too low is much worse than the cost of guessing too high.
+		//
+		// This needs no agreement with the other end. See the long comment on
+		// SetInputDelay for why the delay is a purely local choice.
+		// ------------------------------------------------------------------
+		void SetAdaptiveInputDelay(bool wanted);
+		bool AdaptiveInputDelay() const
+		{
+			return adaptiveDelay;
+		}
+
+		// The floor adaptation will not go below. Raise it if a link is known to be bad and
+		// the hunting itself is the annoyance.
+		void SetInputDelayFloor(int steps);
+		int InputDelayFloor() const
+		{
+			return delayFloor;
+		}
+
+		// How many times adaptation has moved the delay, so a player can tell "the link is
+		// unstable" from "the link is bad but steady".
+		uint32_t DelayRaises() const
+		{
+			return delayRaises;
+		}
+		uint32_t DelayDrops() const
+		{
+			return delayDrops;
+		}
 		int InputDelay() const
 		{
 			return inputDelay;
@@ -158,6 +228,14 @@ namespace workshop
 		//    The local player's input comes back from here too, not from the pad, so
 		//    both machines are stepping from identical numbers.
 		const InputFrame* InputForStep(uint8_t peer) const;
+
+		//    Whether that frame was actually RECEIVED, as opposed to being the neutral
+		//    stand-in. These are not the same question and the difference is visible on
+		//    screen: InputForStep hands back a neutral frame when the ring has nothing,
+		//    and neutral means zero deflection, which means a remote character comes to a
+		//    dead stop for that step. A caller that cannot tell the two apart cannot tell
+		//    "they let go of the stick" from "their packet is late", so it stutters.
+		bool HasInputForStep(uint8_t peer) const;
 
 		// 4. The commands that take effect on the current step, in a stable order
 		//    (by id, which the host assigns). Drained by AdvanceStep.
@@ -293,6 +371,8 @@ namespace workshop
 		int checksumInterval;
 
 		uint32_t currentStep;
+		void AdaptDelay(bool steppedAfterStall);
+
 		uint32_t localInputThrough; // the highest step we have stamped our input for
 
 		RingSlot ring[InputRingSteps];
@@ -314,6 +394,16 @@ namespace workshop
 		uint32_t peerInputThrough[MaxPlayers];
 
 		uint32_t stepsRun;
+		// Adaptation state. quietSteps counts steps since the last stall run ended, and
+		// stallRuns counts stall RUNS rather than stalled steps, because one late packet
+		// that costs four steps is one problem and not four.
+		bool adaptiveDelay;
+		int delayFloor;
+		uint32_t quietSteps;
+		uint32_t stallRuns;
+		uint32_t delayRaises;
+		uint32_t delayDrops;
+
 		uint32_t stepsStalled;
 		uint32_t longestStall;
 		uint32_t currentStall;

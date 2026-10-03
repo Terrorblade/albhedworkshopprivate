@@ -24,15 +24,28 @@ namespace ffx
 		const DWORD Id = 0x000;    // short
 		const DWORD InUse = 0x002; // byte
 
+		// Position. FFX_Ch_SetPos writes Position and mirrors it into PreviousPosition
+		// itself, so a caller never has to touch the second one.
+		const DWORD Position = 0x00C;         // float[4], x y z w. +Y IS DOWN
+		const DWORD PreviousPosition = 0x01C; // float[4]
+		const DWORD WalkmeshPosition = 0x03C; // float[4], the position in walkmesh space
+
 		// Motion, which is all this mod writes to drive a character
-		const DWORD VelocityX = 0x04C;     // float
-		const DWORD VelocityZ = 0x054;     // float
-		const DWORD Speed = 0x154;         // float
-		const DWORD Facing = 0x158;        // float, m_rotY
-		const DWORD MoveDirection = 0x168; // float, m_moveDir
-		const DWORD RunThreshold = 0x170;  // float, defaults to 18.0
-		const DWORD GroundHeight = 0x16C;  // float, m_groundHeight
-		const DWORD WalkmeshTri = 0x824;   // short, -1 means off the walkmesh
+		const DWORD VelocityX = 0x04C;        // float
+		const DWORD VelocityY = 0x050;        // float
+		const DWORD VelocityZ = 0x054;        // float
+		const DWORD Speed = 0x154;            // float
+		const DWORD Facing = 0x158;           // float, m_rotY
+		const DWORD MoveDirection = 0x168;    // float, m_moveDir
+		const DWORD RunThreshold = 0x170;     // float, defaults to 18.0
+		const DWORD GroundHeight = 0x16C;     // float, m_groundHeight
+		const DWORD WalkmeshTri = 0x824;      // short, -1 means off the walkmesh
+		const DWORD GroundAttributes = 0x828; // dword, refilled from the bound triangle
+
+		// m_vertVel. The separate vertical velocity, which the water mode drives.
+		// VelocityX/Y/Z are zeroed every frame by FFX_Ch_ResolveCollisionsAll, so THIS
+		// and Speed are the two that actually carry motion across a placement.
+		const DWORD VerticalVelocity = 0x504;
 
 		// Visibility and render state
 		const DWORD HideFlags = 0x180;  // byte, see namespace Hide
@@ -61,6 +74,43 @@ namespace ffx
 		const DWORD PartBoneFlag = 0x83C;   // dword, 1 when part bone buffers exist
 
 	} // namespace Chr
+
+	// ---------------------------------------------------------------------------
+	// m_flags1 bits, the ones that have been identified. The dword is at Chr::Flags1.
+	//
+	// Worth knowing before hunting one of these: FFX_Ch_ClearFlags1StepBits 0x432DB0
+	// wipes bits 24, 25 and 26 at the top of every frame, so those three are per-frame
+	// signals rather than state.
+	// ---------------------------------------------------------------------------
+	namespace ChrFlag1
+	{
+
+		// Free move. Reading this corrects an older note in the IDB that called it
+		// 0x80000000.
+		const DWORD FreeMove = 0x00000080;
+
+		// The locomotion driver slews m_rotY toward m_moveDir while this is set, at
+		// 0.314 to 0.524 radians per sub-step depending on the gait. So writing the
+		// facing without also writing m_moveDir turns the character to where you asked
+		// and then smoothly turns it away again. FFX_Ch_SetRotAndMoveDir writes both.
+		const DWORD SlewToMoveDirection = 0x00000400;
+
+		// Set by FFX_Ch_SetPos, FFX_Ch_SetPosXZ and FFX_Ch_UpdateMotionAll on every
+		// position write.
+		//
+		// NOTHING READS IT. Checked properly rather than assumed: an immediate search
+		// across all of .text, a byte pattern sweep for every test, bt and byte-test
+		// encoding, and a decompile of all 76 functions that touch displacement 0x194.
+		// Zero readers. It is wiped by the per-frame clear above along with bits 24 and
+		// 26. So it is a dead latch, there is nothing to redo when it is set and nothing
+		// to clear. Recorded so the next person does not spend an afternoon on it.
+		const DWORD PositionChanged = 0x02000000;
+
+		// What FFX_Ch_MarkDirty's vertex rebuild is gated on. A character without this
+		// bit gets only the flag set, which is why MarkDirty is cheap in the common case.
+		const DWORD HasPartVertexBuffers = 0x00200000;
+
+	} // namespace ChrFlag1
 
 	// ---------------------------------------------------------------------------
 	// m_hideFlags bits, named from the game's own debug GUI at

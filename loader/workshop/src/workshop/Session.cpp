@@ -51,7 +51,7 @@ namespace workshop
 	      buildId(0),
 	      sharedSettingsHash(0),
 	      localStep(0),
-	      messageSink(NULL),
+	      messageSinkCount(0),
 	      frame(0),
 	      nextSequence(1),
 	      lastHeartbeatFrame(0),
@@ -285,12 +285,59 @@ namespace workshop
 			break;
 
 		default:
-			// Not one of the session's own kinds, so offer it to whatever is
-			// layered on top before writing it off.
-			if (!messageSink ||
-			    !messageSink->OnSessionMessage(header, payload, payloadLength))
+		{
+			// Not one of the session's own kinds, so offer it to each layer above in
+			// turn before writing it off. First to claim it wins.
+			bool claimed = false;
+			for (int i = 0; i < messageSinkCount && !claimed; ++i)
+			{
+				if (messageSinks[i]->OnSessionMessage(header, payload, payloadLength))
+					claimed = true;
+			}
+
+			if (!claimed)
 				++messagesIgnored;
+
 			break;
+		}
+		}
+	}
+
+	bool Session::AddMessageSink(MessageSink* sink)
+	{
+		if (!sink)
+			return false;
+
+		// Registering twice would double-deliver, which for a chunked transfer means the
+		// same chunk applied twice. Quietly idempotent is the right behaviour here.
+		for (int i = 0; i < messageSinkCount; ++i)
+		{
+			if (messageSinks[i] == sink)
+				return true;
+		}
+
+		if (messageSinkCount >= MaxMessageSinks)
+			return false;
+
+		messageSinks[messageSinkCount++] = sink;
+		return true;
+	}
+
+	void Session::RemoveMessageSink(MessageSink* sink)
+	{
+		for (int i = 0; i < messageSinkCount; ++i)
+		{
+			if (messageSinks[i] != sink)
+				continue;
+
+			// Order matters, because sinks are offered a message in registration order,
+			// so close the gap rather than swapping the last one into the hole.
+			for (int j = i; j + 1 < messageSinkCount; ++j)
+				messageSinks[j] = messageSinks[j + 1];
+
+			--messageSinkCount;
+			messageSinks[messageSinkCount] = NULL;
+			return;
 		}
 	}
 

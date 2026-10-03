@@ -646,17 +646,67 @@ actual end). Battle camera modes are 11, 12, 13, 15 and 16 of the 18 in `g_ffxCa
 movement from battle script, which is more evidence that per-character control is the engine's own
 idiom.
 
-**Unknown, and this is the research that has not started:** where a battle command is read from input
-and committed to a unit. Per-character ownership means intercepting that commit point and gating it on
-who owns the unit. The shape to look for is a function that takes a battle unit plus a chosen command
-and queues it.
+**FOUND, and it is better than hoped.** The commit point is a single function and the player menu
+and the monster AI both go through it. `reversing/BATTLE_COMMAND.md` has the derivation and
+`workshop/include/ffx/addresses/Battle.h` has every address with a comment.
+
+```
+FFX_Btl_CmdQueue_Push   0x7B0B90   the store
+FFX_Btl_CommitCommand   0x792D60   one level up, and the one to call
+
+int __cdecl FFX_Btl_CommitCommand(u8 *cmd72, int gilCost, unsigned variant)
+```
+
+Ten callers, all decompiled: the menu confirm, four menu page escape shortcuts, three forced-action
+paths for confuse, berserk and provoke, `FFX_Btl_SendMenu` pushing an empty placeholder, and
+`FFX_Btl_RunAiAndCommit 0x7ACEB0`. That last one is the point. The AI stages into its own 72 byte
+record and then calls the identical commit, so there is **one record shape and one commit for the
+player and for every monster in the game**. The command path is already data driven and the acting
+unit is already a parameter, so a second player's command needs no simulation at all.
+
+**Gates at commit:** the queue's 62 slot capacity, and `variant <= 1`. That is the whole list. No
+CTB readiness test, no MP check, no status check, no "this actor already acted" flag. So a record
+replayed a few steps later is accepted, which is exactly what an ordered command channel needs. The
+legality checking happens earlier in the menu and again later in the executor, and the only two
+things the executor can still refuse on are `FFX_Btl_ResolveTargets` (the target must still be
+alive) and `FFX_Btl_CheckCommandCost` (MP at actor+0x5D4, overdrive at actor+0x5BC). Both are
+deterministic given the same world.
+
+**The target is a 32 bit bitmask**, bit n = unit index n. Single and multi target are the same
+field, which removes a whole category of special case.
+
+**One thing commits at push time that is easy to miss:** `FFX_Btl_Cmd_ConsumeItems`. Committing an
+item command is what decrements the inventory. So both machines have to push, or their inventories
+part company, and "let the non-owner skip the command" is not an option.
+
+**THE DESIGN: one menu, replicated records. Do not run two menus.** The menu's staging record
+`g_ffxBtlMenuStagedCmd 0x23CC040` is 72 bytes and is rebuilt from scratch out of the page stack
+every frame, stamping `record+0` from page 0's owner. The page stack, the page depth, the menu
+owner and the target cursor are all one slot as well. Two cursors on that is not a race to tune,
+it is one player's command being attributed to the other player's actor. So whoever owns the acting
+unit drives the shipped menu on their own machine, the 72 bytes are captured at confirm, the local
+commit is suppressed, and the record goes out on the ordered command channel. Every machine then
+calls `FFX_Btl_CommitCommand`. The non-owning machine never opens a menu for that unit, and the
+arriving command is what satisfies the engine, because `CommitCommand` retires the turn queue entry
+exactly as the menu's own confirm does.
+
+The shape to copy for anything that does need to be per player is already in the binary:
+`g_ffxBtlMenuCursorMemValid` and `g_ffxBtlMenuCursorMem` are **already per actor**, because the
+shipped menu remembers each character's cursor separately.
+
+**And a piece of evidence rather than a feature:** `g_ffxBtlDbgMonInput 0x112A8FA` is a shipped
+debug flag that makes AI driven units open the PLAYER menu instead of running their script. It is
+in the retail binary. The engine already contains a path where the menu drives an arbitrary unit,
+which is the strongest available argument that per unit menu control is something this engine
+does rather than something we are bolting on.
 
 **The Aeon case** the requirements call out is a genuine design problem rather than a research one.
 Whoever controls the summoner controls the Aeon, with a settings option to change it. That is an
-ownership-table question, not a binary question, so it can be deferred until the ownership mechanism
-exists.
+ownership-table question, not a binary question, and the ownership table is the piece being built
+now, so it is the natural place for it. Worth noting that an Aeon is a unit in the same array with
+the same command record, so "controls the Aeon" costs nothing structurally once the table exists.
 
-**A caveat worth stating now:** the ATB turn order means battle is not symmetric like field movement.
+**A caveat worth stating now:** the CTB turn order means battle is not symmetric like field movement.
 Only one character acts at a time, so battle sync is closer to a turn-based lockstep than to continuous
 state streaming. That is easier to get right, but it means the input gating has to be exact: if both
 sides think they own the current turn, or neither does, the battle stalls.
@@ -997,6 +1047,148 @@ world responded to somebody who is not the bound player.
 `FFX_Atel_StepActor` runs before the proximity test, and must not, because those integrate the
 actor's position and running them twice in one frame would move every NPC twice. That is correct for
 triggers. It does mean this pass is a trigger pass and not a general second-player actor step.
+
+## Dialogue and choices: two hard hazards and one easy answer
+
+From `reversing\DIALOGUE.md`. This is the layer an event script reaches once a trigger has
+fired, so it is the second half of "a client can open a chest" and nothing above it works
+without it.
+
+**The easy answer first, because it removes most of the problem.** Replicate the chosen
+ANSWER, not the input that chose it. The answer is a single s16, produced in one function
+from three reads, living at `choiceObject+24`. Writing that on both machines on an agreed
+step sidesteps three separate sources of divergence in one move:
+
+- the cursor's auto-repeat, which is the only wall-clock read in the whole layer
+  (`FFX_Input__getTimeSeconds` in `FFX_MesWin_SamplePadPort0 0x8B7CD0`, 0.2333 s then
+  0.1333 s). A single confirm press is a pure edge test and is deterministic. **A held
+  direction is not.**
+- the typewriter rate, which the LANGUAGE sets (30 versus 25), so two machines on different
+  languages lay text out at different speeds
+- the catch-up draw skip, below
+
+**Hazard 1: the input focus is ONE GLOBAL, and two choice boxes deadlock.** `shell+6`, set
+by `FFX_MesWin_SetInputFocus 0x8AF7D0`, which clears all eight slots and sets one.
+`FFX_Atel_MesWinPullStateAndGatePlayer 0x871F30` then re-asserts it **every frame** onto the
+highest-indexed waiting window. So if two players open a choice box at once, the
+lower-indexed one **hangs forever**. It is deterministic, so it is not a desync, but a hang
+is not better than a desync from the player's side. Everything else in the layer is one per
+(bank, window index) and all 7 ATEL contexts share the same 8 windows. The answer is the
+only genuinely per-conversation slot, being one per ATEL thread.
+
+This is the per-WHAT question again, and it is the fourth time it has been the thing that
+mattered. Ask of every slot not "is there one of these" but "one per WHAT".
+
+**Hazard 2: one player's choice box freezes BOTH characters.** A choice box sets `ctx+1`
+bit 0x04, which blocks `FFX_Atel_BindPlayerChr`, which leaves
+`FFX_Atel_UnbindPlayerChr`'s unconditional "zero every controllable CHR's move speed" in
+effect. A plain text box does NOT set that bit, so reading a sign is harmless and being
+asked a question is not.
+
+**This is a product decision, not a reversing one.** The engine's behaviour is "everybody
+stops while anybody is answering". Leaving it alone is the least work and matches the
+single-player feel. Lifting it means deciding what the other player may do while a
+conversation they are not in is open, and that decision then applies to every scripted
+conversation in the game.
+
+**The catch-up trap, which is worse than it looks.** The choice arms, state 0 to 1, only
+inside `FFX_MesWin_DrawAllWindows 0x8ABD30`, and `FFX_MainStep` SKIPS that on a catch-up
+step. `g_ffxPendingSteps` comes from real wall-clock dt, so catch-up steps already differ
+between two machines frame by frame. That makes this a **draw-pass dependency inside the
+simulation**, which is the one thing the determinism audit assumed it would not find. It is
+also the strongest argument for replicating the answer: the answer does not care which
+machine drew which frame.
+
+**And it is made much more likely by the speed booster.** `FFX_Booster_IsSpeedUpActive`
+being set makes `FFX_StepPacing_AllowCatchUp` return 1 unconditionally, overriding the
+game's own whitelist of scenes where frame skipping is forbidden. So the speed booster does
+not merely need syncing, it actively widens this hole. Two independent reversing rounds
+arrived at "the speed booster is the dangerous one" from opposite directions.
+
+## Booster settings must be synced as values, and this is now built
+
+Four runtime globals, NONE of them inside the 26,816 byte save block, so the world transfer
+does not carry them:
+
+| global | VA | what a mismatch does |
+| --- | --- | --- |
+| `g_boosterEncounterRate` | `0xC421D8` | **moves the RNG.** See below |
+| `g_boosterAutoBattle` | `0x133D6E0` | forges a confirm press into the shared menu pad word |
+| `g_boosterInvincible` | `0x12FB7CC` | refills HP and MP as a real battle event |
+| `g_boosterSpeedIndex` | `0xCE82B4` | multiplies the simulation STEP COUNT, plus the catch-up hole above |
+
+**The encounter rate is the one that cannot be allowed to drift.** It is read once, in
+`FFX_Field_StepRandomEncounter`. 0 forces the walked distance to zero and clears the enable
+flag, 2 multiplies it by ten. A successful roll then draws `FFX_Rand_Stream(0)` and then
+stream 1. So a mismatch does not just give one player more fights, it makes one machine
+**consume RNG the other does not**, and every random draw in the game after that point is
+offset. Nothing recovers from that except a fresh world transfer, and the symptom appears
+nowhere near the cause.
+
+**Values, not keypresses, and the reason is not obvious.** Replaying the press looks like
+the clean hook and is not safe: for Invincible and EncounterRate the engine only commits
+the new value if a toast can be shown, and that check bottoms out in whether an Iggy movie
+handle has loaded. The commit therefore depends on local UI load state, so the same press
+on two machines can produce two different outcomes. Auto battle commits unconditionally and
+would have been fine. One path that works and three that do not is not a mechanism.
+
+Built as `plugins/pilgrimage/world/BoosterSync.cpp`, and it is **the command channel's
+first real caller**, which is a good sign for the channel's design: a setting change is
+exactly the thing that cannot be derived from replicated input. Either player may press the
+key, the change goes out as a request, the host orders it, and both apply it on the step the
+host picked. Between the press and the answer the local globals are held back to the agreed
+values, because for the encounter rate specifically those few steps in flight are enough to
+draw from a stream the other machine does not.
+
+## Landing a joiner beside the host, and why it is not a position sync
+
+The save block transfer makes the two worlds identical in every respect but one: the block names a
+**doorway**, a (map id, entry point) pair, not a position. So a joiner that installs it and loads
+arrives at the last door the host walked through, which can be most of a map away. That is built
+now, as `plugins/pilgrimage/world/Arrival.cpp` plus protocol message 13.
+
+**This is a placement, not a sync, and the difference is the whole design.** Under lockstep both
+machines simulate the same world, so the party characters are the SAME characters on both. If the
+joiner moves them and the host does not, that is a divergence in the very state the two machines
+are about to start agreeing on. There is no shared step at which both could do an identical
+placement either, because the joiner's map is still loading while the host's is not.
+
+What makes it work is that **the host is frozen for the whole transfer**. World sync holds the
+simulation on both ends and releases only on the joiner's APPLIED reply. So the host has not moved
+since it read the positions, the joiner places its characters exactly there, and when the clock
+starts the two machines genuinely agree. The placement happens once, before there is a shared step
+to diverge on. After that, nothing ever snaps a position again: movement stays replicated input
+integrated by each machine's own physics.
+
+Three things had to be got right.
+
+**Every character, not the leader.** Followers trail the leader by a few metres and those offsets
+are world state. Sending one position and fanning the others out from it puts the two machines in
+different places, which is the exact failure the step exists to prevent. The anchor carries up to
+8 slots, one per save block character index, each with a position and the facing read off the CHR's
+`m_rotY`.
+
+**The APPLIED reply waits for the placement, not for the bytes.** The host unfreezes on that reply.
+An early one lets it walk away while the joiner's map is still loading, and the anchor is stale
+before it is used. So the install is split in two and the reply goes out from the second half.
+
+**The joiner's own hold comes off before the reply**, which looks like a contradiction and is not.
+The map load is consumed inside `FFX_MainStep`, which the simulation hold skips, so holding through
+the load would wait forever for something that cannot happen. The lockstep clock is gated
+separately on "the world is installed", which stays false until the placement finishes. So the
+joiner steps locally through its map load without exchanging input against a world it has not
+reached yet. Those few free running frames replay the map entry the host already did, which is
+inherent to joining by loading a map rather than by copying a running one.
+
+If the anchor never arrives, or the map never becomes ready inside 20 seconds, the arrival gives up
+and replies anyway. The joiner is then standing at the doorway with a correct world, which is a far
+better outcome than the host being frozen forever waiting.
+
+The engine's own teleport does the heavy lifting and `reversing/WORLD_STATE.md` has the detail,
+and `reversing/PLACEMENT.md` is the full audit, with a numbered recipe. The three that would
+have cost a day each: `m_speed` is the carry-over rather than the velocity, a pending ATEL move
+command re-asserts that speed every frame so the placement unwinds a frame later, and the
+facing needs both `m_rotY` and `m_moveDir` or bit 0x400 slews it straight back.
 
 ## The lockstep layer, as built
 

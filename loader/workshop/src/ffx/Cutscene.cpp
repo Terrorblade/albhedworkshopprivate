@@ -409,6 +409,19 @@ namespace ffx
 		return true;
 	}
 
+	bool SetDialoguePad(WORD pressedMask, WORD heldMask)
+	{
+		WORD* held = PadField(MesWinPad::Held);
+		WORD* pressed = PadField(MesWinPad::Pressed);
+		if (!held || !pressed)
+			return false;
+
+		// Assign, deliberately. See the header for why OR is wrong here.
+		*held = heldMask;
+		*pressed = pressedMask;
+		return true;
+	}
+
 	bool InjectDialogueConfirm(bool alsoHeld)
 	{
 		const WORD confirm = (WORD)Btn::Circle;

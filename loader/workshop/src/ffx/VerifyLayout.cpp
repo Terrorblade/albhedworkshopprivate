@@ -43,6 +43,7 @@ namespace ffx
 			{ "magic dll", &Rva::MagicDllRvaList },
 			{ "data file", &Rva::DataFileRvaList },
 			{ "debug", &Rva::DebugRvaList },
+			{ "memory", &Rva::MemoryRvaList },
 			// Add new areas here, one line each, after adding the include to
 			// include/ffx/Addresses.h.
 		};
@@ -141,26 +142,80 @@ namespace ffx
 			return true;
 		}
 
-		bool AnimateSlotMatches()
+		// ---------------------------------------------------------------------------
+		// A vtable slot test that survives another plugin getting there first.
+		//
+		// THIS USED TO BE A BARE "found == expected" AND IT DISABLED PILGRIMAGE
+		// ENTIRELY whenever the cheats plugin was also installed. Load order put
+		// cheats first, cheats hooked the animate slot, and then Pilgrimage's layout
+		// check read 0x6B957570, saw that it was not the engine function, and logged
+		// LAYOUT CHECK FAILED, nothing will be hooked. Both plugins were fine. The
+		// check was wrong.
+		//
+		// The point of the test is "are these the addresses for this build". A slot
+		// that has already been detoured cannot answer that question either way, so
+		// the honest result is to say who holds it and carry on, not to fail.
+		//
+		// A slot still pointing somewhere else INSIDE the host image is a real
+		// failure, because no hook does that and a different engine function sitting
+		// there means a different build.
+		// ---------------------------------------------------------------------------
+		bool SlotMatchesOrIsHooked(DWORD slotRva, DWORD expectedRva, const char* what)
 		{
-			DWORD found = *(volatile DWORD*)workshop::ModuleAddress(Rva::AnimateVtableSlot);
-			DWORD expected = (DWORD)(UINT_PTR)workshop::ModuleAddress(Rva::AnimateExpected);
-			Log("  vtable slot animate = 0x%08X expected 0x%08X %s",
-			    found, expected, found == expected ? "OK" : "MISMATCH");
-			return found == expected;
+			const DWORD found = *(volatile DWORD*)workshop::ModuleAddress(slotRva);
+			const DWORD expected = (DWORD)(UINT_PTR)workshop::ModuleAddress(expectedRva);
+
+			if (found == expected)
+			{
+				Log("  vtable slot %-7s = 0x%08X expected 0x%08X OK", what, found, expected);
+				return true;
+			}
+
+			if (workshop::InsideImage((const void*)(UINT_PTR)found))
+			{
+				Log("  vtable slot %-7s = 0x%08X expected 0x%08X MISMATCH, and it points "
+				    "into the game itself, so these addresses are for a different build",
+				    what, found, expected);
+				return false;
+			}
+
+			// Outside the image, so something detoured it. Name the owner.
+			wchar_t owner[MAX_PATH] = { 0 };
+			HMODULE module = NULL;
+			if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+			            | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			        (LPCWSTR)(UINT_PTR)found, &module)
+			    && module)
+			{
+				GetModuleFileNameW(module, owner, MAX_PATH);
+			}
+
+			if (owner[0] == 0)
+			{
+				Log("  vtable slot %-7s = 0x%08X is hooked by something with no module, "
+				    "probably a generated trampoline. Accepting it, since a detoured slot "
+				    "cannot confirm or deny the build.",
+				    what, found);
+				return true;
+			}
+
+			Log("  vtable slot %-7s = 0x%08X is already hooked by %S. That is expected "
+			    "when another workshop plugin loaded first, so it is not a failure.",
+			    what, found, owner);
+			return true;
 		}
 
-		// The frame slot that latches the input mask, three slots past animate. Same
-		// cheap test: if the vtable entry does not hold the function we expect, this is
-		// not the build these addresses came from. Checked separately from animate
-		// because input injection depends on this one specifically.
+		bool AnimateSlotMatches()
+		{
+			return SlotMatchesOrIsHooked(Rva::AnimateVtableSlot, Rva::AnimateExpected, "animate");
+		}
+
+		// The frame slot that latches the input mask, three slots past animate. Checked
+		// separately from animate because input injection depends on this one
+		// specifically.
 		bool UpdateSlotMatches()
 		{
-			DWORD found = *(volatile DWORD*)workshop::ModuleAddress(Rva::UpdateVtableSlot);
-			DWORD expected = (DWORD)(UINT_PTR)workshop::ModuleAddress(Rva::UpdateExpected);
-			Log("  vtable slot update  = 0x%08X expected 0x%08X %s",
-			    found, expected, found == expected ? "OK" : "MISMATCH");
-			return found == expected;
+			return SlotMatchesOrIsHooked(Rva::UpdateVtableSlot, Rva::UpdateExpected, "update");
 		}
 
 		bool EveryCallTargetLooksCallable()

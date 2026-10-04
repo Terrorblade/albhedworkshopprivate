@@ -12,6 +12,24 @@
 // Nothing else in the project may contain a literal address. If you need a new
 // one it goes in one of the files below.
 //
+// AND IT IS AN RVA, SO SUBTRACT 0x00400000 FROM WHAT IDA SHOWS. This is worth
+// saying twice because getting it wrong is silent. VerifyLayout only checks that
+// an RVA is inside SizeOfImage, which is 0x0237D000, so a VA pasted in whole is
+// still "valid" and the guard says nothing. One went in as 0x00C94F00 instead of
+// 0x00894F00 and the overlay then polled the wrong address forever and reported
+// that the game had no swapchain, which sent the debugging somewhere else
+// entirely.
+//
+// To audit the lot, pull every "const DWORD NAME = 0x...;" out of the files
+// below and, for each, ask IDA whether the RAW value looks more like a real item
+// than raw + 0x400000 does, scoring on is_loaded, having a name that is not
+// generated, and being a function start. Over 1426 addresses that gives about
+// nine flags. Expect two kinds of false positive: a data address past the end of
+// initialized .data (RVA 0x0088B5FF) scores nothing either way because IDA has
+// no bytes up there, and a raw value can land inside an unrelated function by
+// coincidence. A contiguous group of addresses a fixed stride apart is a group,
+// not nine separate mistakes.
+//
 // ## Adding a subsystem
 //
 // Research lands here as code, so a new area is a new file rather than more
@@ -57,5 +75,6 @@
 #include "ffx/addresses/MagicDll.h"
 #include "ffx/addresses/MainLoop.h"
 #include "ffx/addresses/MenuSystem.h"
+#include "ffx/addresses/Memory.h"
 #include "ffx/addresses/Minigames.h"
 #include "ffx/addresses/WorldState.h"

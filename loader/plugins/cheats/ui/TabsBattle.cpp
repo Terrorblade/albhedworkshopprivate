@@ -14,6 +14,7 @@
 #include "ffx/Battle.h"
 #include "ffx/BattleDebug.h"
 #include "ffx/GameLists.h"
+#include "ffx/KernelTables.h"
 #include "ffx/GameState.h"
 #include "workshop/OverlayWidgets.h"
 
@@ -228,6 +229,44 @@ namespace cheats
 
 			ImGui::PopID();
 		}
+
+		// ---------------------------------------------------------------
+		// The monster name table
+		// ---------------------------------------------------------------
+		//
+		// All 366 of them load from the battle kernel at boot and nothing was offering
+		// them, which was the one name table in the game with no picker on it. It is a
+		// LOOKUP, not a spawner: a monster id is not an encounter id, and the thing that
+		// starts a fight takes (map, encounter). Naming a fight by its monsters needs
+		// the formation data, which is a separate question.
+		if (ImGui::CollapsingHeader("Monster names"))
+		{
+			const PickerList& monsters = ffx::KernelList(ffx::KernelMonsters);
+
+			if (monsters.Empty())
+				ImGui::TextDisabled("the battle kernel has not been read. It needs the "
+				                    "game's file system, so this is the state until the "
+				                    "first simulation step.");
+			else
+			{
+				static PickerState monsterPick;
+				static int monsterId = 0;
+				PickerById("monster", monsters.Items(), monsters.Count(), &monsterPick,
+				    &monsterId);
+				ImGui::TextDisabled("%s", monsters.Describe());
+				ImGui::TextDisabled("id %d, 0x%03X", monsterId, (unsigned)monsterId);
+
+				const char* name = ffx::KernelName(ffx::KernelMonsters, monsterId);
+				ImGui::TextDisabled("name as the kernel spells it: %s",
+				    name ? name : "(none)");
+			}
+
+			ImGui::TextWrapped("monster1.bin, monster2.bin and monster3.bin merged, ids "
+			                   "0 to 365. The ordering is the game's own, so a run of "
+			                   "ids is usually one area's bestiary.");
+		}
+
+		ImGui::Separator();
 
 		PendingNote("Mode names",
 		    "The 20 names are not in the exe. They live in the kernel string blob and "

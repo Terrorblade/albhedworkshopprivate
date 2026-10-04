@@ -45,6 +45,11 @@ namespace workshop
 		int g_panelCount = 0;
 
 		PresentFn g_originalPresent = nullptr;
+
+		// Where the host keeps its IDXGISwapChain *. Supplied by the game layer so this
+		// file needs no game addresses of its own. For FFX that is
+		// ffx::Rva::PhyreD3DSwapChain, the PhyreEngine D3D context singleton + 0x74.
+		void* const* g_swapChainSlot = nullptr;
 		ResizeBuffersFn g_originalResizeBuffers = nullptr;
 
 		IDXGISwapChain* g_swapChain = nullptr;
@@ -326,7 +331,26 @@ namespace workshop
 			return true;
 		}
 
-		bool ProbeAndPatch()
+		// ---------------------------------------------------------------------------
+		// Hooking the game's OWN swapchain.
+		//
+		// THIS USED TO CREATE A THROWAWAY DEVICE, WINDOW AND SWAPCHAIN just to read the
+		// shared IDXGISwapChain vtable, and that cost a boot crash. A second swapchain
+		// appearing in the process makes the Steam overlay install its Present hook a
+		// second time, and its second trampoline's stolen bytes are its own jump back to
+		// itself. The result was a two frame cycle about 21,000 deep wholly inside
+		// gameoverlayrenderer.dll, a stack overflow, and no frame of ours anywhere on the
+		// stack. Square Enix's own CSERHelper then died writing CoreDump.dmp, so the only
+		// evidence was a dbgcore.dll fault that pointed nowhere near the cause.
+		//
+		// So no device of our own now. The host tells us where it keeps its swapchain,
+		// we wait for it to exist, and we take the vtable from that. Same vtable, since
+		// every IDXGISwapChain in the process shares it, but nothing new is created.
+		//
+		// The slot is supplied rather than hardcoded so this file stays game agnostic,
+		// which is what FFX-2 will need.
+		// ---------------------------------------------------------------------------
+		bool HookGameSwapChain()
 		{
 			// imgui_impl_dx11 compiles its two shaders with D3DCompile, which pulls in
 			// d3dcompiler_47.dll. That import is delay loaded, so a machine without the
@@ -339,109 +363,89 @@ namespace workshop
 				return false;
 			}
 
-			HMODULE d3d11 = LoadLibraryA("d3d11.dll");
-			if (!d3d11)
+			if (!g_swapChainSlot)
 			{
-				Log("overlay: d3d11.dll would not load, GetLastError=%lu", GetLastError());
+				Log("overlay: no swapchain slot was supplied, so there is nothing to hook. "
+				    "Call workshop::SetOverlaySwapChainSlot before InstallOverlay.");
 				return false;
 			}
 
-			CreateDeviceAndSwapChainFn create = (CreateDeviceAndSwapChainFn)GetProcAddress(
-			    d3d11, "D3D11CreateDeviceAndSwapChain");
-			if (!create)
-			{
-				Log("overlay: d3d11.dll has no D3D11CreateDeviceAndSwapChain");
-				return false;
-			}
-
-			WNDCLASSEXA probeClass;
-			memset(&probeClass, 0, sizeof(probeClass));
-			probeClass.cbSize = sizeof(probeClass);
-			probeClass.lpfnWndProc = DefWindowProcA;
-			probeClass.hInstance = GetModuleHandleA(NULL);
-			probeClass.lpszClassName = "AlBhedWorkshopOverlayProbe";
-			RegisterClassExA(&probeClass);
-
-			HWND probeWindow = CreateWindowExA(0, probeClass.lpszClassName, "probe", 0,
-			    0, 0, 16, 16, NULL, NULL, probeClass.hInstance, NULL);
-			if (!probeWindow)
-			{
-				Log("overlay: the probe window would not open, GetLastError=%lu", GetLastError());
-				UnregisterClassA(probeClass.lpszClassName, probeClass.hInstance);
-				return false;
-			}
-
-			DXGI_SWAP_CHAIN_DESC desc;
-			memset(&desc, 0, sizeof(desc));
-			desc.BufferCount = 1;
-			desc.BufferDesc.Width = 16;
-			desc.BufferDesc.Height = 16;
-			desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-			desc.BufferDesc.RefreshRate.Numerator = 60;
-			desc.BufferDesc.RefreshRate.Denominator = 1;
-			desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-			desc.OutputWindow = probeWindow;
-			desc.SampleDesc.Count = 1;
-			desc.SampleDesc.Quality = 0;
-			desc.Windowed = TRUE;
-			desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-
-			const D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0 };
+			// The slot lives past the end of the host's initialized data, so it reads 0
+			// until the engine creates the swapchain. Wait for it rather than assuming.
 			IDXGISwapChain* swapChain = nullptr;
-			ID3D11Device* device = nullptr;
-			ID3D11DeviceContext* context = nullptr;
-
-			HRESULT hr = create(nullptr, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, levels,
-			    (UINT)(sizeof(levels) / sizeof(levels[0])), D3D11_SDK_VERSION, &desc,
-			    &swapChain, &device, nullptr, &context);
-			if (FAILED(hr) || !swapChain)
+			const DWORD deadline = GetTickCount() + 60000;
+			for (;;)
 			{
-				// A machine with no hardware D3D11 still runs the game through the
-				// warp device, and the vtable is the same either way.
-				hr = create(nullptr, D3D_DRIVER_TYPE_WARP, NULL, 0, levels,
-				    (UINT)(sizeof(levels) / sizeof(levels[0])), D3D11_SDK_VERSION, &desc,
-				    &swapChain, &device, nullptr, &context);
+				if (Readable(g_swapChainSlot, sizeof(void*)))
+				{
+					void* held = *g_swapChainSlot;
+					if (LooksLikePointer((DWORD)(DWORD_PTR)held)
+					    && Readable(held, sizeof(void*)))
+					{
+						swapChain = (IDXGISwapChain*)held;
+						break;
+					}
+				}
+
+				if (GetTickCount() > deadline)
+				{
+					Log("overlay: the game never published a swapchain, so there is no "
+					    "overlay. The slot stayed empty for 60 seconds.");
+					return false;
+				}
+				Sleep(25);
 			}
+
+			// The vtable is the one in dxgi.dll, shared by every swapchain in the
+			// process. Check it before writing to it.
+			void** vtable = *(void***)swapChain;
+			if (!Readable(vtable, sizeof(void*) * (SlotResizeBuffers + 1)))
+			{
+				Log("overlay: the swapchain at 0x%08X has no readable vtable",
+				    (unsigned)(DWORD_PTR)swapChain);
+				return false;
+			}
+
+			Log("overlay: using the game's own swapchain 0x%08X, vtable 0x%08X",
+			    (unsigned)(DWORD_PTR)swapChain, (unsigned)(DWORD_PTR)vtable);
 
 			bool ok = false;
-			if (SUCCEEDED(hr) && swapChain)
+			void* present = nullptr;
+			void* resize = nullptr;
+			if (PatchSlot(vtable, SlotPresent, (void*)&PresentHook, &present, "Present"))
 			{
-				void** vtable = *(void***)swapChain;
-				void* present = nullptr;
-				void* resize = nullptr;
-				if (PatchSlot(vtable, SlotPresent, (void*)&PresentHook, &present, "Present"))
+				g_originalPresent = (PresentFn)present;
+				ok = true;
+
+				// Worth saying, because it tells us whether another hook got there
+				// first and therefore who we are chained behind.
+				HMODULE owner = NULL;
+				if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+				            | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				        (LPCWSTR)present, &owner)
+				    && owner)
 				{
-					g_originalPresent = (PresentFn)present;
-					ok = true;
-					if (PatchSlot(vtable, SlotResizeBuffers, (void*)&ResizeBuffersHook, &resize, "ResizeBuffers"))
-						g_originalResizeBuffers = (ResizeBuffersFn)resize;
-					else
-						Log("overlay: Present is hooked but ResizeBuffers is not, so a "
-						    "resolution change will leave the overlay blank");
+					wchar_t name[MAX_PATH] = { 0 };
+					GetModuleFileNameW(owner, name, MAX_PATH);
+					Log("overlay: the Present we chain to lives in %S", name);
 				}
-			}
-			else
-			{
-				Log("overlay: no probe swapchain, hr=0x%08lX", (unsigned long)hr);
+
+				if (PatchSlot(vtable, SlotResizeBuffers, (void*)&ResizeBuffersHook, &resize, "ResizeBuffers"))
+					g_originalResizeBuffers = (ResizeBuffersFn)resize;
+				else
+					Log("overlay: Present is hooked but ResizeBuffers is not, so a "
+					    "resolution change will leave the overlay blank");
 			}
 
-			if (context)
-				context->Release();
-			if (swapChain)
-				swapChain->Release();
-			if (device)
-				device->Release();
-			DestroyWindow(probeWindow);
-			UnregisterClassA(probeClass.lpszClassName, probeClass.hInstance);
 			return ok;
 		}
 
-		// Creating a D3D11 device loads DLLs, so it cannot run under the loader lock.
-		// InstallOverlay is called from a plugin's DllMain, so the work goes on a
-		// thread that waits for the lock to clear on its own.
-		DWORD WINAPI ProbeThread(LPVOID)
+		// InstallOverlay is called from a plugin's DllMain, and this waits minutes for
+		// the engine to publish its swapchain and calls LoadLibrary on the way, neither
+		// of which is allowed under the loader lock. So it goes on its own thread.
+		DWORD WINAPI HookThread(LPVOID)
 		{
-			if (ProbeAndPatch())
+			if (HookGameSwapChain())
 			{
 				g_installed = true;
 				Log("overlay: swapchain hooked, waiting for the first frame");
@@ -455,6 +459,76 @@ namespace workshop
 
 	} // namespace
 
+	namespace
+	{
+		// <game dir>\AlBhedWorkshop\overlay_off, presence only, contents ignored.
+		//
+		// This exists because the overlay is the one part of the kit that has to share
+		// the swapchain with whatever else is injected into the process, and when that
+		// goes wrong it takes the whole game down before anything can be logged. A file
+		// the user can create and delete splits "the kit is broken" from "the overlay is
+		// broken" in one run, with no rebuild.
+		bool OverlayTurnedOffByFile()
+		{
+			wchar_t path[MAX_PATH];
+			if (GetModuleFileNameW(NULL, path, MAX_PATH) == 0)
+				return false;
+
+			int cut = -1;
+			for (int i = 0; path[i]; ++i)
+				if (path[i] == L'\\' || path[i] == L'/')
+					cut = i;
+			if (cut < 0)
+				return false;
+			path[cut] = 0;
+
+			wchar_t marker[MAX_PATH];
+			_snwprintf_s(marker, _countof(marker), _TRUNCATE,
+			    L"%s\\AlBhedWorkshop\\overlay_off", path);
+			return GetFileAttributesW(marker) != INVALID_FILE_ATTRIBUTES;
+		}
+
+		// Who else is in here fighting over the swapchain. Worth saying out loud,
+		// because a Present hook that works alone can still recurse forever next to
+		// another one, and then there is no log to read afterwards.
+		void LogSwapchainNeighbours()
+		{
+			static const wchar_t* const known[] = {
+				L"gameoverlayrenderer.dll", // Steam
+				L"GameOverlayRenderer.dll",
+				L"RTSSHooks.dll",           // RivaTuner, so MSI Afterburner
+				L"d3d11_nvngx.dll",
+				L"NvCamera64.dll",
+				L"nvngx_dlss.dll",
+				L"DiscordHook.dll",
+				L"overlay.dll",
+				L"GamePP.dll",
+				L"EOSOVH-Win32-Shipping.dll", // Epic
+			};
+
+			int found = 0;
+			for (int i = 0; i < (int)(sizeof(known) / sizeof(known[0])); ++i)
+			{
+				if (GetModuleHandleW(known[i]))
+				{
+					Log("overlay: ANOTHER OVERLAY IS IN THIS PROCESS: %S. Two Present "
+					    "hooks can recurse into each other, and that ends as a stack "
+					    "overflow with nothing in the log.",
+					    known[i]);
+					++found;
+				}
+			}
+			if (!found)
+				Log("overlay: no other known overlay DLL is loaded");
+		}
+
+	} // namespace
+
+	void SetOverlaySwapChainSlot(void* const* slot)
+	{
+		g_swapChainSlot = slot;
+	}
+
 	bool InstallOverlay()
 	{
 		static bool started = false;
@@ -462,7 +536,18 @@ namespace workshop
 			return true;
 		started = true;
 
-		HANDLE thread = CreateThread(NULL, 0, ProbeThread, NULL, 0, NULL);
+		if (OverlayTurnedOffByFile())
+		{
+			Log("overlay: OFF, because AlBhedWorkshop\\overlay_off exists. Delete that "
+			    "file to get the overlay back. Everything else in the kit still runs, so "
+			    "if the game is stable like this the overlay is what was killing it.");
+			started = false;
+			return false;
+		}
+
+		LogSwapchainNeighbours();
+
+		HANDLE thread = CreateThread(NULL, 0, HookThread, NULL, 0, NULL);
 		if (!thread)
 		{
 			Log("overlay: CreateThread failed, GetLastError=%lu", GetLastError());

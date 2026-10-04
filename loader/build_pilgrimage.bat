@@ -52,7 +52,10 @@ cl /nologo /c /EHsc /MT /O2 /W4 /DNDEBUG /DWIN32 /D_WINDOWS /D_CRT_SECURE_NO_WAR
    /I"%MODDIR%" /I"%LIBINC%" /I"%IMGUI%" /I"%IMGUI%\backends" /Fo"%OBJDIR%\\" !SOURCES!
 if errorlevel 1 goto :fail
 
-link /nologo /DLL /MACHINE:X86 /SUBSYSTEM:WINDOWS /DYNAMICBASE /NXCOMPAT ^
+rem /MAP SO A CRASH REPORT CAN BE READ. There are no PDBs here on purpose, so a
+rem report gives module+RVA and nothing else. The map file turns an RVA back into
+rem a function name: python tools\mapsym.py build\PilgrimageTogether.map 0x5BA13
+link /nologo /DLL /MACHINE:X86 /SUBSYSTEM:WINDOWS /DYNAMICBASE /NXCOMPAT /MAP ^
      /OUT:"%OUTDIR%\PilgrimageTogether.dll" "%OBJDIR%\*.obj" "%OUTDIR%\AlBhedWorkshop.lib" ^
      kernel32.lib user32.lib gdi32.lib delayimp.lib ^
      /DELAYLOAD:d3dcompiler_47.dll

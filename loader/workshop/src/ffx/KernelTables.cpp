@@ -71,6 +71,12 @@ namespace ffx
 		}
 
 		// Adds every row of one kernel file to a list. Returns how many were added.
+		//
+		// EVERY DECLARED ROW GETS A ROW, including the ones whose name does not decode.
+		// The row count comes from the file's own first and last id, so a record with a
+		// blank name is still a real id the game can hold: an unused slot, a placeholder
+		// the developers left in, or something a mod is free to fill. Dropping those was
+		// hiding real ids, and an editor needs to see the gap it is filling.
 		int AddFile(PickerList& list, const BYTE* file, int bytes, int idBase)
 		{
 			if (!file || bytes < kHeaderBytes)
@@ -113,16 +119,25 @@ namespace ffx
 				// is whether anything decodes, below.
 				const int nameOffset = (int)Rd16(rec + kOffRecordName);
 				const int at = blobStart + nameOffset;
-				if (at >= bytes)
-					continue;
 
 				char text[96];
-				const int written = DecodeKernelText(file + at, bytes - at, text,
-				    (int)sizeof(text));
-				if (written <= 0)
-					continue;
+				int written = 0;
+				if (at < bytes)
+					written = DecodeKernelText(file + at, bytes - at, text,
+					    (int)sizeof(text));
 
-				if (list.Add(idBase + firstId + row, text))
+				const int id = idBase + firstId + row;
+
+				if (written > 0)
+				{
+					if (list.Add(id, text))
+						++added;
+				}
+				// A blank name, or a name offset past the end of the file. Both mean the
+				// record is there and nothing named it, so the id goes in with the only
+				// label that is true about it. "unnamed" is at the front where a filter
+				// will find it.
+				else if (list.AddFormatted(id, "unnamed %d", id - idBase))
 					++added;
 			}
 			return added;
@@ -230,6 +245,27 @@ namespace ffx
 	int KernelTablesLoaded()
 	{
 		return g_loaded;
+	}
+
+	int CacheableKernelLists(workshop::CacheableList* out, int max)
+	{
+		// The names are the file names, so they stay stable even if the enum moves.
+		static const char* const names[KernelTableCount] = {
+			"kernel-items",
+			"kernel-commands",
+			"kernel-auto-abilities",
+			"kernel-weapon-names",
+			"kernel-monsters",
+		};
+
+		int wrote = 0;
+		for (int i = 0; i < (int)KernelTableCount && wrote < max; ++i)
+		{
+			out[wrote].name = names[i];
+			out[wrote].list = &g_lists[i];
+			++wrote;
+		}
+		return wrote;
 	}
 
 	const PickerList& KernelList(KernelTable which)

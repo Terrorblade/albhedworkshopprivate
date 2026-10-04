@@ -63,6 +63,12 @@
 #include <stdarg.h>
 #include <string.h>
 
+// The only part of the Al Bhed Workshop library the proxy links. It is deliberately
+// self contained, so this costs one object file and no other dependency. Installing
+// here is what makes a crash inside a plugin's DllMain produce a report, which is
+// exactly the case where the loader log otherwise stops mid scan and says nothing.
+#include "workshop/CrashHandler.h"
+
 #if !defined(_M_IX86)
 #error "Al Bhed Workshop proxy must be built for 32-bit x86. FFX.exe is a 32-bit process."
 #endif
@@ -550,7 +556,20 @@ static DWORD WINAPI BootstrapThread(LPVOID)
 	// NOTE for plugin authors: FFX.exe has DYNAMIC_BASE set and ships a .reloc
 	// section, so it is ASLR-relocated. Every address above is an RVA. Always
 	// compute GetModuleHandle(NULL) + RVA; never use a literal VA.
+	// Reads each loaded module's preferred base off the disk. Here rather than in
+	// DllMain because it opens files, and before LoadPlugins so that FFX.exe's preferred
+	// base is already known if a plugin faults inside its own DllMain. That is the exact
+	// case that previously left nothing behind but a WER entry.
+	workshop::WarmCrashHandler();
+
+	Log("crash handler: %s. A crash writes albhed_crash.log with a call chain, and "
+	    "that covers each plugin's DllMain, which is where the loader log would "
+	    "otherwise just stop.",
+	    workshop::CrashHandlerInstalled() ? "installed" : "COULD NOT BE INSTALLED");
+
+	workshop::CrashContext("loader: scanning for plugins");
 	LoadPlugins();
+	workshop::CrashContext("loader: the plugin scan finished");
 	return 0;
 }
 
@@ -581,6 +600,13 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID)
 		// does not affect plugins; they get their own DllMain notifications.
 		DisableThreadLibraryCalls(hModule);
 		SetUpPaths();
+
+		// Before the bootstrap thread, so it covers LoadPlugins and therefore every
+		// plugin's DllMain. SetUnhandledExceptionFilter and the named section the
+		// handler uses for its state are both safe here: no loader lock, no wait on
+		// another thread, no disk.
+		workshop::InstallCrashHandler();
+		workshop::CrashContext("loader: DllMain, about to start the bootstrap thread");
 
 		HANDLE th = CreateThread(NULL, 0, BootstrapThread, NULL, 0, NULL);
 		if (th)

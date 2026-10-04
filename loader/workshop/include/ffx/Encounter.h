@@ -2,6 +2,8 @@
 
 #include <windows.h>
 
+#include "ffx/addresses/Encounter.h"
+
 // Random encounters, readable and steerable.
 //
 // Two things a co-op mod needs from this subsystem, and they are very different sizes.
@@ -91,11 +93,136 @@ namespace ffx
 	void ReadEncounterHookStats(EncounterHookStats* out);
 
 	// ---------------------------------------------------------------------------
+	// THE ENCOUNTER TABLE, enumerated from memory
+	// ---------------------------------------------------------------------------
+	//
+	// This is where EVERY battle in the game is listed, the developers' test and debug
+	// fights included, and none of it has to be baked. One 4096-byte file, loaded once at
+	// battle init, laid out as scenes -> zones -> formation entries:
+	//
+	//     scene      one per map that has any battle data. EncounterSceneCount of them,
+	//                and the scene carries the 8 character battle scene base name
+	//     zone       a region of that map with its own encounter rate. Rate 0 means no
+	//                RANDOM battles there, which says nothing about scripted ones
+	//     formation  one fight. Its encounter id plus a weight for the random roll
+	//
+	// A scripted battle is named by (mapId << 16) | encounterId, so walking all three
+	// levels yields every battle the game can start. That is what RequestScriptedBattle
+	// searches internally, so an id that comes out of here is one it will accept.
+	//
+	// EMPTY UNTIL THE FIRST BATTLE INIT has loaded btl.bin. Every call fails safe before
+	// that, so a zero count means "not loaded yet", not "no battles exist".
+	//
+	// Nothing here is cached. It is a handful of pointer adds per call, and caching would
+	// mean deciding when a file the engine reloads has changed.
+
+	struct EncounterScene
+	{
+		int sceneIndex;
+		int mapId;
+		char name[Rva::EncMapEntrySceneNameBytes + 1]; // terminated by this struct
+		int zoneCount;
+	};
+
+	struct EncounterZone
+	{
+		int zoneIndex;
+		int rate;        // 0 means no random battles in this zone
+		int weightTotal; // the modulo total the random roll uses, see the caveat below
+		int formationCount;
+	};
+
+	// THE WEIGHTS ARE REPORTED, NOT RELIED ON. The engine reads a formation entry's
+	// weight as the high nibble of the byte after the encounter id, but an older note
+	// in the IDB records the shipped btl.bin storing those weights raw rather than
+	// shifted up, which would make the accumulator always 0. Nothing here needs the
+	// weight: the encounter id beside it is what starts a fight.
+
+	// How many scenes the loaded table declares, or 0 before it loads.
+	int EncounterSceneCount();
+
+	bool EncounterSceneAt(int sceneIndex, EncounterScene* out);
+
+	// The engine's own lookup, which is a linear search. -1 when this map has no battle
+	// data at all, which is the cleanest "nothing happens here". Going through the
+	// engine means a caller gets the same answer a battle request would.
+	//
+	// MAP ID 0 ALWAYS RETURNS -1. That search tests "mapId > 0" before it looks at
+	// anything, so a scene declaring map 0 could never be found through it.
+	int EncounterSceneForMap(int mapId);
+
+	bool EncounterZoneAt(int sceneIndex, int zoneIndex, EncounterZone* out);
+
+	// One fight. outEncounterId is the low byte of a scripted battle id and outWeight is
+	// its share of the random roll, 0 for a formation the roll can never pick.
+	bool EncounterFormationAt(int sceneIndex, int zoneIndex, int slot, int* outEncounterId,
+	    int* outWeight);
+
+	// How many formation entries the whole table holds, which is the battle count. Walks
+	// it, so call it once rather than per frame.
+	int EncounterFormationTotal();
+
+	// ---------------------------------------------------------------------------
 	// Diagnostics
 	// ---------------------------------------------------------------------------
 
 	// Logs the accumulators, every gate with whether it is currently blocking, the pending
 	// request, and the hook stats. One call says why a battle is or is not coming.
 	void LogEncounterState();
+
+	// One line per scene, with its zones and formation counts. The quick way to see what
+	// the enumeration above can actually reach.
+	void LogEncounterTable();
+
+	// ---------------------------------------------------------------------------
+	// NAMING A FIGHT BY ITS MONSTERS, before it starts
+	// ---------------------------------------------------------------------------
+	//
+	// The encounter table says which fight, not what is in it. The monsters are in the
+	// fight's own battle field file, asset kind 14, one per (scene, zone, slot), and the
+	// link between the two is the scene entry's +4 asset index base:
+	//
+	//     fieldAssetIndex = sceneEntry[+4] + (formations in zones before this one) + slot
+	//     path            = AssetResolvePath(AssetKindBaseTable[14] + fieldAssetIndex)
+	//     monsterSection  = file + *(u32 *)(file + 12)
+	//     8 u16 at monsterSection + 12, 0xFFFF empty, low 12 bits the kernel monster id
+	//
+	// 862 of the 863 fights in the shipped btl.bin resolve to a file that is there and
+	// parses, and 856 have at least one enemy. The one that does not is scene 0 slot 0,
+	// whose path is the developers' own host0:/home/$USER$/battle/jp/btl/output.bin.
+	//
+	// THE ROSTER IS COMPLETE AND CANNOT CHANGE MID BATTLE. These 8 ids include units that
+	// only appear partway through, which is why Penance's arms and Yu Yevon's pagodas are
+	// already in the file.
+	//
+	// ONE ARCHIVE READ PER CALL, a VBF open plus an inflate of 2 to 30 KB. Fine for the
+	// selected row in a panel, far too slow per frame and for all 863 at once unless you
+	// mean it. CACHE WHAT YOU ASK FOR.
+
+	const int kEncounterMonsterSlots = 8;
+
+	struct EncounterMonsters
+	{
+		int count;                       // how many of the 8 slots are filled
+		int ids[kEncounterMonsterSlots]; // kernel monster ids, the KernelMonsters space
+	};
+
+	// Which battle field file a fight uses. -1 when the table is not loaded or the
+	// (scene, zone, slot) does not name a fight. Seven scenes share another scene's base
+	// and so legitimately return an index inside that scene's run.
+	int EncounterFieldAssetIndex(int sceneIndex, int zoneIndex, int slot);
+
+	// The archive path for that file, already converted from the engine's "host0:/" form
+	// to the "ffx_ps2/..." form ffx::ReadDataFile wants. outBytes wants at least 272.
+	bool EncounterFieldPath(int sceneIndex, int zoneIndex, int slot, char* out, int outBytes);
+
+	// The enemy roster for a fight. Reads the archive, so see the caching note above.
+	// False when the file is not there or does not parse. A fight with no enemies comes
+	// back true with count 0, which is a real answer and not a failure.
+	bool EncounterMonstersAt(int sceneIndex, int zoneIndex, int slot, EncounterMonsters* out);
+
+	// The roster of the fight that is RUNNING, straight out of the live section pointer
+	// with no archive read at all. False outside a battle.
+	bool LiveEncounterMonsters(EncounterMonsters* out);
 
 } // namespace ffx

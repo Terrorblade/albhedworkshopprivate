@@ -476,7 +476,7 @@ All RVAs. Add 0x400000 for the IDA VA. These are the ones I would promote.
 | 0x477730 | function | `FFX_Atel_SysFuncPoll`, entry+4 |
 | 0x4777F0 | function | `FFX_Atel_SysFuncResult`, entry+8 float, entry+12 int |
 | 0x477880 | function | `FFX_Atel_RegisterSysFuncLib` |
-| 0xF28558 | ptr[16] | `g_ffxAtelSysFuncLibs`, library table, filled at init, 0xFFFFFFFF in the file |
+| 0xF28558 | ptr[16] | `g_ffxAtelSysFuncLibs`, library table, filled at init, reads 0 before that (past the end of initialized .data, so the 0xFF IDA shows is an artefact) |
 | 0x852B60 | data | `g_ffxAtelSysFuncLibEmpty`, the table unregistered libraries point at |
 | 0x46D6D0 | function | `FFX_Atel_Init`, registers the eleven real libraries |
 

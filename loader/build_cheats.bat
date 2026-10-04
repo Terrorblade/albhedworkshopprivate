@@ -48,12 +48,26 @@ if not defined SOURCES (
     exit /b 1
 )
 
+rem A BISECT SWITCH, NOT A SHIPPING OPTION. Set ALBHED_NO_OVERLAY=1 and the plugin
+rem never starts the overlay: no Present hook, no ImGui context, no panel. The
+rem layout check, the lists, the export cache and every table dump still run, so a
+rem crash that survives this build is not the overlay doing it.
+rem
+rem   set ALBHED_NO_OVERLAY=1 ^& build_cheats.bat
+rem
+set "EXTRADEFS="
+if defined ALBHED_NO_OVERLAY set "EXTRADEFS=/DALBHED_NO_OVERLAY"
+if defined ALBHED_NO_OVERLAY echo *** BISECT BUILD: the overlay is never started ***
+
 echo === building AlBhedCheats.dll ===
-cl /nologo /c /EHsc /MT /O2 /W4 /DNDEBUG /DWIN32 /D_WINDOWS /D_CRT_SECURE_NO_WARNINGS ^
+cl /nologo /c /EHsc /MT /O2 /W4 /DNDEBUG /DWIN32 /D_WINDOWS /D_CRT_SECURE_NO_WARNINGS !EXTRADEFS! ^
    /I"%MODDIR%" /I"%LIBINC%" /I"%IMGUI%" /I"%IMGUI%\backends" /Fo"%OBJDIR%\\" !SOURCES!
 if errorlevel 1 goto :fail
 
-link /nologo /DLL /MACHINE:X86 /SUBSYSTEM:WINDOWS /DYNAMICBASE /NXCOMPAT ^
+rem /MAP SO A CRASH REPORT CAN BE READ. There are no PDBs here on purpose, so a
+rem report gives module+RVA and nothing else. The map file turns an RVA back into
+rem a function name: python tools\mapsym.py build\AlBhedCheats.map 0x5BA13
+link /nologo /DLL /MACHINE:X86 /SUBSYSTEM:WINDOWS /DYNAMICBASE /NXCOMPAT /MAP ^
      /OUT:"%OUTDIR%\AlBhedCheats.dll" "%OBJDIR%\*.obj" "%OUTDIR%\AlBhedWorkshop.lib" ^
      kernel32.lib user32.lib gdi32.lib delayimp.lib ^
      /DELAYLOAD:d3dcompiler_47.dll

@@ -62,6 +62,8 @@
 #include "hooks/Hotkeys.h"
 #include "hooks/VisibilityDetour.h"
 #include "workshop/HostModule.h"
+#include "workshop/CrashHandler.h"
+#include "workshop/HangWatchdog.h"
 #include "workshop/Log.h"
 #include "ui/OverlayPanel.h"
 
@@ -94,6 +96,15 @@ namespace pilgrimage
 		// hooked, in which case the log already says why.
 		bool Startup()
 		{
+			// Before anything that can fault, and before the log, because it writes its
+			// own file. Returns false when another Al Bhed module got there first, which
+			// is the normal case when the proxy or the cheat plugin is present.
+			const bool tookCrashHandler = InstallCrashHandler();
+
+			// The freeze watchdog. One per process, first plugin to ask owns it.
+			const bool tookWatchdog = StartHangWatchdog();
+			CrashContext("pilgrimage: Startup");
+
 			OpenLog(L"pilgrimage_together.log");
 			BindHostModule();
 
@@ -109,6 +120,17 @@ namespace pilgrimage
 			Log("host       : %S", exePath);
 			Log("module base: 0x%08X (preferred 0x00400000, ASLR slide %+d)",
 			    (unsigned)(UINT_PTR)ModuleBase(), (int)((INT_PTR)ModuleBase() - 0x00400000));
+			Log("crash handler: %s, reports go to albhed_crash.log",
+			    tookCrashHandler ? "installed by this plugin"
+			                     : (CrashHandlerInstalled()
+			                               ? "already installed by another Al Bhed module"
+			                               : "COULD NOT BE INSTALLED"));
+
+			Log("hang watchdog: %s, threshold %lu ms. A freeze writes the same report a "
+			    "crash does, for the thread that stopped stepping.",
+			    tookWatchdog ? (HangWatchdogRunning() ? "running" : "not running")
+			                 : "COULD NOT START",
+			    HangThresholdMs());
 
 			if (_wcsicmp(FileNameOf(exePath), L"FFX.exe") != 0)
 			{

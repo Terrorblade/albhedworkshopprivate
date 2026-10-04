@@ -442,7 +442,7 @@ namespace cheats
 				if (ffx::SetEquipEntryAbility(entry, i, write))
 				{
 					ffx::RecomputeDerivedStats();
-					RefreshCheatLists();
+					RequestCheatListRefresh();
 				}
 			}
 
@@ -454,7 +454,7 @@ namespace cheats
 				if (ffx::SetEquipEntryAbility(entry, i, 0))
 				{
 					ffx::RecomputeDerivedStats();
-					RefreshCheatLists();
+					RequestCheatListRefresh();
 				}
 			}
 
@@ -488,7 +488,7 @@ namespace cheats
 			if (ffx::EquipItemOn((BYTE)wearer, armour, (WORD)slotId))
 			{
 				ffx::RecomputeDerivedStats();
-				RefreshCheatLists();
+				RequestCheatListRefresh();
 			}
 		}
 
@@ -498,7 +498,7 @@ namespace cheats
 			if (ffx::EquipItemOn((BYTE)wearer, armour, (WORD)ffx::kEquipSlotIdNone))
 			{
 				ffx::RecomputeDerivedStats();
-				RefreshCheatLists();
+				RequestCheatListRefresh();
 			}
 		}
 	}
@@ -533,7 +533,7 @@ namespace cheats
 				// is used rather than writing the count byte. It also maintains the
 				// two change masks the menu reads.
 				ffx::AddItem((WORD)itemId, delta);
-				RefreshCheatLists();
+				RequestCheatListRefresh();
 			}
 		}
 
@@ -542,30 +542,75 @@ namespace cheats
 
 		const PickerList& all = ffx::KernelList(ffx::KernelItems);
 		if (all.Empty())
-		{
 			ImGui::TextDisabled("the item name table has not loaded yet. It is read out "
 			                    "of the archive once the game has booted, so press "
 			                    "refresh lists.");
-			return;
-		}
-
-		static PickerState spawnPick;
-		static int spawnKernelId = 0;
-		PickerById("item", all.Items(), all.Count(), &spawnPick, &spawnKernelId);
-
-		static int spawnCount = 99;
-		IntRow("how many", &spawnCount, 1, ffx::kItemCountMax);
-
-		if (ImGui::Button("add"))
+		else
 		{
-			// AddItem wants the tagged id, the same space the inventory stores.
-			const WORD tagged = (WORD)(ffx::kItemIdSpace | (spawnKernelId & 0x0FFF));
-			ffx::AddItem(tagged, spawnCount);
-			RefreshCheatLists();
+			static PickerState spawnPick;
+			static int spawnKernelId = 0;
+			PickerById("item", all.Items(), all.Count(), &spawnPick, &spawnKernelId);
+
+			static int spawnCount = 99;
+			IntRow("how many", &spawnCount, 1, ffx::kItemCountMax);
+
+			if (ImGui::Button("add"))
+			{
+				// AddItem wants the tagged id, the same space the inventory stores.
+				const WORD tagged = (WORD)(ffx::kItemIdSpace | (spawnKernelId & 0x0FFF));
+				ffx::AddItem(tagged, spawnCount);
+				RequestCheatListRefresh();
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("you hold %d",
+			    ffx::ItemCount((WORD)(ffx::kItemIdSpace | (spawnKernelId & 0x0FFF))));
 		}
-		ImGui::SameLine();
-		ImGui::TextDisabled("you hold %d",
-		    ffx::ItemCount((WORD)(ffx::kItemIdSpace | (spawnKernelId & 0x0FFF))));
+
+		// -------------------------------------------------------------------
+		// Key items
+		// -------------------------------------------------------------------
+		//
+		// A different store from the inventory: 128 flags at SaveData+0x448C rather
+		// than a count per slot, and the game's own menu only ever shows the ones you
+		// hold. important.bin declares 64 rows and about 52 are named, so the unnamed
+		// ones are listed too. An unnamed row is still a flag the save file carries.
+		ImGui::Separator();
+		if (ImGui::CollapsingHeader("Key items"))
+		{
+			const PickerList& keys = ffx::KeyItemList();
+
+			if (keys.Empty())
+				ImGui::TextDisabled("important.bin has not loaded. The names come out of "
+				                    "the battle kernel, so this wants the game past the "
+				                    "title screen.");
+			else
+			{
+				static PickerState keyPick;
+				static int keyId = ffx::kKeyItemIdBase;
+				PickerById("key item", keys.Items(), keys.Count(), &keyPick, &keyId);
+				ImGui::TextDisabled("%s", keys.Describe());
+
+				const bool haveKey = ffx::HasKeyItem((WORD)keyId);
+				ImGui::Text("id 0x%04X, %s", (unsigned)keyId,
+				    haveKey ? "you have it" : "you do not have it");
+
+				if (ImGui::Button(haveKey ? "take it away" : "give it"))
+				{
+					ffx::SetKeyItem((WORD)keyId, !haveKey);
+					RequestCheatListRefresh();
+				}
+
+				ImGui::SameLine();
+				if (ImGui::Button("give every one"))
+				{
+					// Through the game's own setter per id, not a memset of the flag
+					// block, because the setter is what the rest of the save agrees with.
+					for (int i = 0; i < keys.Count(); ++i)
+						ffx::SetKeyItem((WORD)keys.Items()[i].id, true);
+					RequestCheatListRefresh();
+				}
+			}
+		}
 	}
 
 } // namespace cheats

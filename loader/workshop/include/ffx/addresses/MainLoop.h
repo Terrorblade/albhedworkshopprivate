@@ -219,6 +219,45 @@ namespace ffx
 		// Keep it in step with the constants. If you add an address and forget this
 		// list, nothing breaks today and something breaks confusingly in a year.
 		// ---------------------------------------------------------------------------
+		// ---------------------------------------------------------------------------
+		// PhyreEngine's D3D11 context, and the game's own swapchain
+		// ---------------------------------------------------------------------------
+
+		// THESE ARE RVAs, WHICH IS THE WHOLE FILE'S RULE, AND THEY WERE WRONG ONCE.
+		// They went in as the VAs IDA shows, 0x00C94F00 and friends, and the overlay
+		// then polled ModuleBase()+0xC94F00 forever and logged "the game never
+		// published a swapchain" while the game was plainly rendering. Both numbers
+		// are inside SizeOfImage, so the range guard passed and said nothing.
+		// IDA VA 0x00C94F00 is RVA 0x00894F00. Subtract 0x00400000, every time.
+		//
+		// A STATIC OBJECT, NOT A POINTER. Callers do "mov ecx, offset ...", so this
+		// address is the object. Filled by FFX_Phyre_CreateDeviceAndSwapChain, the only
+		// caller of D3D11CreateDeviceAndSwapChain in the binary, which is reached from
+		// Phyre__PApplication__onInit -> FFX_Phyre_InitDisplay.
+		//
+		// This is above the end of initialized .data, so every field below reads 0 until
+		// Phyre fills it in. Poll for non-zero, never assume.
+		const DWORD PhyreD3DContext = 0x00894F00;
+		const DWORD PhyreD3DDevice = 0x00894F6C;           // ID3D11Device *
+		const DWORD PhyreD3DImmediateContext = 0x00894F70; // ID3D11DeviceContext *
+		const DWORD PhyreD3DFeatureLevel = 0x00894FB4;     // D3D_FEATURE_LEVEL
+
+		// THE ONE AN OVERLAY WANTS. Hooking the game's own swapchain means never
+		// creating a throwaway device and swapchain to read the shared dxgi vtable, and
+		// a second swapchain in this process is what appears to make the Steam overlay
+		// install its Present hook twice. Its second trampoline then jumps back into its
+		// own hook, which recurses about 21,000 deep and blows the stack with not one
+		// frame of the mod on it.
+		const DWORD PhyreD3DSwapChain = 0x00894F74; // IDXGISwapChain *
+
+		const DWORD PhyreCreateDeviceAndSwapChain = 0x00195800; // thiscall, this = the above
+		const DWORD PhyreInitDisplay = 0x00195750;
+
+		// IDXGISwapChain vtable slots, for the record: IUnknown 0-2, IDXGIObject 3-6,
+		// IDXGIDeviceSubObject 7, then Present 8 and ResizeBuffers 13.
+		const int DxgiSwapChainSlotPresent = 8;
+		const int DxgiSwapChainSlotResizeBuffers = 13;
+
 		inline const DWORD* MainLoopRvaList(int* count)
 		{
 			static const DWORD list[] = {
@@ -266,6 +305,13 @@ namespace ffx
 				BoosterSpeedApplied,
 				PlayerGetSubStepCount,
 				PlayerSubStepCount,
+				PhyreD3DContext,
+				PhyreD3DDevice,
+				PhyreD3DImmediateContext,
+				PhyreD3DFeatureLevel,
+				PhyreD3DSwapChain,
+				PhyreCreateDeviceAndSwapChain,
+				PhyreInitDisplay,
 			};
 			if (count)
 				*count = (int)(sizeof(list) / sizeof(list[0]));

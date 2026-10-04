@@ -493,6 +493,13 @@ namespace ffx
 		const DWORD BtlGetAbilityNameString = 0x004B8D70;
 		const DWORD KeyItemGetNameString = 0x00390860;
 
+		// important.bin declares 64 rows and about 52 of them are named, so a walk of
+		// the whole range turns up the unnamed slots as well. The name comes back in the
+		// battle kernel's own text encoding, NOT as plain ASCII, so it needs
+		// ffx::DecodeKernelText the same as any other kernel string.
+		const int KeyItemIdBase = 0xA000;
+		const int KeyItemCount = 64;
+
 		// int (void). Non-zero while a battle is running. One flag for the whole
 		// process, which is what makes SaveDataGetCharCurrentStats ambiguous in co-op.
 		const DWORD BattleIsActive = 0x00395970;

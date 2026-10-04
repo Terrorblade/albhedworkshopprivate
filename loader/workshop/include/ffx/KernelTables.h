@@ -27,7 +27,7 @@
 //
 // Read reversing\DATA_FILES.md for the file format and the text encoding.
 
-#include "workshop/PickerList.h"
+#include "workshop/PickerCache.h"
 
 namespace ffx
 {
@@ -55,6 +55,10 @@ namespace ffx
 
 	// The list for one table. Empty with Live() false until it has loaded.
 	const workshop::PickerList& KernelList(KernelTable which);
+
+	// All five name tables for the list cache. They are kernel files in the
+	// archive, so they are fixed by it. See ffx/ListExport.h.
+	int CacheableKernelLists(workshop::CacheableList* out, int max);
 
 	// The name for one id, or null when the table has not loaded or the id is not in it.
 	// Points into the list's own storage, which lives as long as the process.

@@ -26,6 +26,8 @@
 #include "net/LockstepLink.h"
 #include "net/NetLink.h"
 #include "workshop/Events.h"
+#include "workshop/CrashHandler.h"
+#include "workshop/HangWatchdog.h"
 #include "workshop/Log.h"
 #include "workshop/Overlay.h"
 #include "world/TriggerPass.h"
@@ -230,6 +232,15 @@ namespace pilgrimage
 			// calls Present, and this is how a panel can tell whether that is the same
 			// thread before it calls an engine function.
 			workshop::NoteOverlayGameThread();
+
+			// Puts our top level exception filter back if the game replaced it, and
+			// records this thread as the game thread for the crash report.
+			workshop::ReassertCrashHandler();
+
+			// WHAT TURNS A FREEZE INTO A CALL STACK. The watchdog thread watches this
+			// counter, and when it stops moving it suspends this thread and reports its
+			// stack the same way the crash handler does.
+			workshop::NoteHangWatchdogStep();
 
 			if (GameHasFocus())
 				PollHotkeys();

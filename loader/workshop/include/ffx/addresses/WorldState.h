@@ -215,8 +215,83 @@ namespace ffx
 		// and put them back when you are done enumerating.
 		const DWORD AssetSelectKind = 0x0036C510;       // int (int kind), the base or -1
 		const DWORD AssetGetPathForIndex = 0x00642830; // char *(int index), shared buffer
+
+		// unsigned (int index). SLOT 5, the PC size getter, and THE EXISTENCE TEST a
+		// picker needs. It resolves the path and then OPENS THE FILE to measure it,
+		// rounding the length up to 16, and returns 0 when it cannot open it. So a
+		// non-zero answer means the file really is in the archive right now, which is
+		// strictly better evidence than any baked list and is the only way a package an
+		// editor ADDS will be noticed.
+		//
+		// ONE FILE OPEN PER CALL, so probe the id space once and cache it rather than
+		// asking per frame. Kind 12 is not in its early-out kind set, so for events it
+		// always takes the open path.
+		const DWORD AssetGetSizeForIndex = 0x006428A0;
 		const DWORD AssetCurrentKindBase = 0x01F10C60; // slot 8, what the selector sets
 		const DWORD AssetCurrentKind = 0x01F10C64;     // slot 9
+
+		// char *(int absolutePathIndex), FFX_Asset_ResolvePathWithDebugOverrides.
+		//
+		// THE ONE TO CALL WHEN YOU WANT A PATH AND NOT A LOAD. It bounds checks the
+		// index, reads only AssetPathTable, and touches NEITHER AssetCurrentKind NOR
+		// AssetCurrentKindBase, so it needs no kind selection and no save and restore.
+		// Slot 4 of the loader table, the selector, writes both of those, so going
+		// through slot 22 costs a save and restore that this does not.
+		//
+		// The index is ABSOLUTE, so add the kind's base from AssetKindBaseTable
+		// yourself rather than letting the selector do it.
+		//
+		// The answer lands in a SHARED 255 BYTE BUFFER, Rva::AssetResolvedPathBuf in
+		// addresses/Minigames.h, so copy it before the next call.
+		const DWORD AssetResolvePath = 0x00642C00;
+
+		// s16[65], the per-kind base path index, from cdrom.fid. Loader slot 11, and a
+		// POINTER SLOT, so read the pointer and then index it. -1 means the kind is
+		// unused. Kind 12's base is 562 and kind 14's is 7942 on the shipped archive,
+		// but read them rather than baking them.
+		const DWORD AssetKindBaseTable = 0x01F10C6C;
+
+		// The path table itself, cdrom.fnd, 811,400 bytes and 16,305 paths. Loader slot
+		// 12, also a POINTER SLOT. Layout is u32 count, then count+1 u32 byte offsets
+		// RELATIVE TO THE TABLE BASE, then the strings. A zero length slot has no path,
+		// which is the validity test. Walking this directly needs no engine call at all.
+		const DWORD AssetPathTable = 0x01F10C70;
+
+		const int AssetKindBattleField = 14; // the per-fight battle field .bin
+
+		// THE SHIPPED PATH OVERRIDE HOOK, which the "debug overrides" in the resolver's
+		// name actually are. 16 key/value slots, and the resolver replaces EVERY
+		// occurrence of the first matching key in EVERY resolved asset path, not just an
+		// event one. The value may be longer than the key.
+		//
+		// The game uses exactly one slot, FFX_Ev_SetLocalizedEventDirForMode mapping the
+		// localised event directory, so 15 are free for the life of the process.
+		//
+		// HAZARD: the engine's register asserts when all 16 are taken and THEN WRITES
+		// keys[16] ANYWAY, and keys[16] is values[0]. So a 17th registration silently
+		// destroys slot 0's value. ffx::RegisterAssetSubstitution refuses instead.
+		const DWORD AssetPathSubstKeys = 0x01685BB0;   // const char *[16]
+		const DWORD AssetPathSubstValues = 0x01685BF0; // const char *[16]
+		const int AssetPathSubstSlots = 16;
+
+		// int (const char *key, const char *value), returning the slot. IT KEEPS THE
+		// POINTERS, so the strings have to outlive the registration.
+		const DWORD AssetRegisterPathSubstitution = 0x00643220;
+		const DWORD AssetUnregisterPathSubstitution = 0x00642F30; // void (int slot)
+
+		// 128 BYTES PER PATH, and this is where that limit comes from rather than from
+		// the resolver. FFX_RomDev_EnqueueRead, loader slot 0, copies the resolved path
+		// into a queue with a 128-byte stride, "shl edx, 7" at 0x36BCE1 and
+		// "cmp ecx, 80h" at 0x36BD39. The copy stops at the NUL, so a path of 128 bytes
+		// or more is stored WITHOUT a terminator and runs into the next slot's buffer.
+		//
+		// The longest shipped kind-12 sub-index-0 path is 59 bytes, so there is room.
+		const int AssetRomReadPathMaxBytes = 128;
+
+		// The engine's own path table swap, void (const char *path). Its only caller is
+		// debug only, but it works, and it is the supported alternative to storing a
+		// pointer into AssetPathTable by hand.
+		const DWORD AssetReloadPathTable = 0x00642B70;
 
 		// void (int tag). Reads /ffx/proj/event/header/eventid.bin and fills the name
 		// table below. Safe to call from a mod: the read resolves into the archive. Only
@@ -259,8 +334,11 @@ namespace ffx
 			    AutoTestJumpMap, MapChangePending, MapChangeDelayFrames,
 			    MapChangeDelayFlag, SceneLoaded, QuitPseudoMapId, DebugMode,
 			    SaveDataGetMapId, SaveDataGetEntryPoint, SaveDataGetSceneId,
-			    GetAssetLoader, AssetLoaderTable, AssetSelectKind, AssetGetPathForIndex,
-			    AssetCurrentKindBase, AssetCurrentKind, LoadEventIdTable, EventIdNameTable,
+			    GetAssetLoader, AssetLoaderTable, AssetSelectKind, AssetGetPathForIndex, AssetGetSizeForIndex,
+			    AssetCurrentKindBase, AssetCurrentKind, AssetResolvePath, AssetKindBaseTable,
+			    AssetPathTable, AssetPathSubstKeys, AssetPathSubstValues,
+			    AssetRegisterPathSubstitution, AssetUnregisterPathSubstitution,
+			    AssetReloadPathTable, LoadEventIdTable, EventIdNameTable,
 			    EventIdNameCount, EventIdTableLoaded, MapGetCurrentMapName,
 			    AutoTestExecCommand, AutoTestDrainQueue, AutoTestManagerSingleton,
 			};

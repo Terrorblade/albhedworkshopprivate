@@ -15,6 +15,8 @@
 #include "ffx/DebugMenu.h"
 #include "ffx/GameState.h"
 #include "ffx/WorldState.h"
+#include "workshop/CrashHandler.h"
+#include "workshop/HangWatchdog.h"
 #include "workshop/Events.h"
 #include "workshop/Log.h"
 #include "workshop/OverlayWidgets.h"
@@ -184,19 +186,19 @@ namespace cheats
 		if (ImGui::Button("99 of every item"))
 		{
 			ffx::DebugFullItems();
-			RefreshCheatLists();
+			RequestCheatListRefresh();
 		}
 		ImGui::SameLine();
 		if (ImGui::Button("one of every item"))
 		{
 			ffx::DebugOneOfEveryItem();
-			RefreshCheatLists();
+			RequestCheatListRefresh();
 		}
 		ImGui::SameLine();
 		if (ImGui::Button("empty the inventory"))
 		{
 			ffx::DebugClearInventory();
-			RefreshCheatLists();
+			RequestCheatListRefresh();
 		}
 
 		if (ImGui::Button("98 sphere levels for everybody"))
@@ -244,6 +246,98 @@ namespace cheats
 			                   "before the step, and the part that needs a decision "
 			                   "rather than more research is who gets the pointer while "
 			                   "an ImGui window wants it.");
+		}
+
+		// -------------------------------------------------------------------
+		// The crash log
+		// -------------------------------------------------------------------
+		ImGui::Separator();
+		if (ImGui::CollapsingHeader("Crash reports"))
+		{
+			ImGui::TextWrapped(
+			    "When the game dies, the normal logs just stop and say nothing about "
+			    "where. This writes a report instead, to albhed_crash.log next to the "
+			    "other logs: the exception, the registers, the bytes at the faulting "
+			    "instruction, what the kit was doing at the time, and a call chain.");
+			ImGui::TextWrapped(
+			    "Every frame is given as module+RVA and then as the address that "
+			    "module's own IDB uses, so a line pastes into IDA with no arithmetic. "
+			    "Frames in this project's modules are marked.");
+
+			if (workshop::CrashHandlerInstalled())
+			{
+				const char* owner = workshop::CrashHandlerOwner();
+				ImGui::Text("installed, %s", owner[0] ? "by this plugin" : "by another Al Bhed module");
+			}
+			else
+				ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+				    "NOT INSTALLED, so a crash will leave nothing behind.");
+
+			ImGui::TextDisabled("the game replaces the top level filter during its own "
+			                    "startup, so the kit puts ours back once per step.");
+
+			if (ImGui::Button("write a report now"))
+			{
+				if (workshop::WriteCrashReportNow("asked for from the cheat panel"))
+					Log("cheats: wrote a crash report to albhed_crash.log");
+				else
+					Log("cheats: the crash report could not be written");
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("no crash, just the same report for this thread. Worth "
+			                    "doing once to check the frames resolve.");
+
+			ImGui::TextDisabled("note: this writes the report for the thread that draws "
+			                    "the overlay, which is the Present thread, so the frames "
+			                    "will be D3D and ImGui rather than the game's.");
+
+			ImGui::Separator();
+
+			if (ImGui::Button("report the GAME thread now"))
+			{
+				const unsigned long game = workshop::GameThreadId();
+				if (game == 0)
+					Log("cheats: the game thread is not known yet, so there is nothing to report");
+				else if (workshop::WriteThreadReportNow(game, "asked for from the cheat panel"))
+					Log("cheats: wrote a report for game thread %lu", game);
+				else
+					Log("cheats: the report for game thread %lu could not be written", game);
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("suspends the simulation thread for a moment, reads its "
+			                    "stack, resumes it. This is the one that shows game frames.");
+		}
+
+		if (ImGui::CollapsingHeader("Freeze watchdog"))
+		{
+			ImGui::TextWrapped(
+			    "A freeze leaves even less behind than a crash does. A watchdog thread "
+			    "watches a counter the simulation thread bumps every step, and when that "
+			    "stops moving it suspends the thread and writes the same report a crash "
+			    "writes. It samples up to six times, twenty seconds apart, because the "
+			    "same EIP twice is what proves a spin rather than something merely slow.");
+
+			if (workshop::HangWatchdogRunning())
+				ImGui::Text("running, threshold %lu ms", workshop::HangThresholdMs());
+			else
+				ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+				    "NOT RUNNING, so a freeze will leave nothing behind.");
+
+			if (workshop::GameThreadLooksHung())
+				ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+				    "THE GAME THREAD IS NOT STEPPING RIGHT NOW.");
+			else
+				ImGui::TextDisabled("the game thread is stepping");
+
+			ImGui::Text("reports written this run: %lu", workshop::HangReportCount());
+
+			static int threshold = 0;
+			if (threshold == 0)
+				threshold = (int)workshop::HangThresholdMs();
+			if (ImGui::SliderInt("threshold ms", &threshold, 1000, 60000))
+				workshop::SetHangThresholdMs((unsigned long)threshold);
+			ImGui::TextDisabled("a real map load on this engine takes a couple of seconds, "
+			                    "so going much below 5000 reports loads as freezes.");
 		}
 	}
 

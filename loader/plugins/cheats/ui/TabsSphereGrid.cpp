@@ -45,17 +45,36 @@ namespace cheats
 			return kGridNames[id];
 		}
 
+		// Whether the empty slots are in the list. Off by default, because on a normal
+		// grid most of the 1024 are empty and nothing can be activated in one. On,
+		// because an empty slot is still a real slot and seeing the gap is the whole
+		// point if something is going to fill it.
+		bool g_showEmptySlots = false;
+		bool g_listedEmpty = false;
+
 		void RebuildNodeList()
 		{
-			g_nodes.Reset("sphere grid node array");
+			g_nodes.Reset(g_showEmptySlots ? "sphere grid node array, all 1024 slots"
+			                               : "sphere grid node array");
+			g_listedEmpty = g_showEmptySlots;
 			if (!ffx::SphereGridReadable())
 				return;
 
 			for (int slot = 0; slot < ffx::kGridNodeSlotsScanned; ++slot)
 			{
 				const int kind = ffx::GridNodeKind(slot);
-				if (kind < 0 || kind == ffx::kGridNodeEmpty)
+				if (kind < 0)
 					continue;
+
+				if (kind == ffx::kGridNodeEmpty)
+				{
+					// "empty" goes at the front where a filter will find it, and the
+					// slot number is still offered because that is the thing an editor
+					// would be looking for.
+					if (g_showEmptySlots)
+						g_nodes.AddFormatted(slot, "empty  slot %d", slot);
+					continue;
+				}
 
 				// The mask is in the label on purpose. It is the only way to see at a
 				// glance which nodes a character is missing without clicking each one.
@@ -70,7 +89,16 @@ namespace cheats
 		// do per frame and it means there is no stale-list button to remember.
 		void KeepNodeListFresh()
 		{
-			if (g_nodes.Count() != ffx::GridNodeCount())
+			if (g_listedEmpty != g_showEmptySlots)
+			{
+				RebuildNodeList();
+				return;
+			}
+
+			// With the empties in, the count the list should have is every readable
+			// slot rather than just the filled ones, so the node count alone is not the
+			// staleness test any more.
+			if (!g_showEmptySlots && g_nodes.Count() != ffx::GridNodeCount())
 				RebuildNodeList();
 		}
 
@@ -125,6 +153,12 @@ namespace cheats
 
 		ImGui::Text("grid %d, %s. %d of %d slots hold a node.", ffx::GridId(),
 		    GridName(ffx::GridId()), ffx::GridNodeCount(), ffx::kGridNodeSlotsScanned);
+
+		if (ImGui::Checkbox("show empty slots", &g_showEmptySlots))
+			RebuildNodeList();
+		ImGui::SameLine();
+		ImGui::TextDisabled("nothing can be activated in an empty slot, but the slot is "
+		                    "real and the gap is worth seeing");
 
 		const bool menuUp = ffx::SphereGridMenuOpen();
 		if (menuUp)

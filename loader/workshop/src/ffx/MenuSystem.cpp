@@ -118,8 +118,11 @@ namespace ffx
 			return work;
 		}
 
-		// The module table's .data initialiser. A slot that still holds this has never
-		// been registered, and dereferencing it would fault on a near-null address.
+		// A slot that still holds this has never been registered, and dereferencing it
+		// would fault on a near-null address. This is NOT the table's initialiser,
+		// whatever IDA suggests: the table is past the end of initialized .data so an
+		// unregistered slot reads 0 at runtime. Keep the test, but the "slot == 0" half
+		// next to it is the one that does the work.
 		const DWORD kModuleSlotEmpty = 0xFFFFFFFFu;
 
 		bool ValidModuleId(int id)

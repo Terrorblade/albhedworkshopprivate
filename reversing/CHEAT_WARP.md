@@ -1121,3 +1121,321 @@ three columns once a package is loaded.
 390 en/endg0400  423 1   0    391 az/azmm0000  191 2  41    392 ma/matu0000  395 1   0
 ```
 
+
+---
+
+## 12. ADDING NEW CONTENT - EXTENDING THE PATH TABLE AND THE LOOSE FILE ROUTE
+
+Subject: can an editor make the engine load a `.ebp` that no id can reach today, and can it load one
+from a loose file on disk. Both answers are yes. This section is additive to section 1.1, which
+already established the table's shape.
+
+### 12.0 The one-paragraph answer
+
+**A loose file on disk already works with no hook at all**, because `FFX_fios_openFile 0x207F40`
+searches the VBF first and then falls through to `CreateFileW` on the real file system. A path the
+archive does not contain is opened from disk. **And the path table can be repointed with a single
+aligned dword store to `g_ffxAssetPathTable`, asset loader slot 12, VA imagebase + `0x1F10C70`**,
+because nothing in the binary caches a pointer into the table, no length or checksum is kept
+anywhere, there is no second copy, and the table is loaded exactly once at boot. There is also a
+shipped, supported 16-entry string substitution hook applied to every resolved asset path, with 15
+slots free, which covers redirection without touching the table at all.
+
+### 12.1 THERE IS ALREADY AN OVERRIDE HOOK, check this before building anything
+
+**CONFIRMED.** The "debug overrides" in `FFX_Asset_ResolvePathWithDebugOverrides 0x642C00` are not
+just the three hardcoded package swaps section 1.5 lists. The function also runs every resolved path
+through a **16-entry key/value substitution table**:
+
+| global | RVA | what |
+|---|---|---|
+| `g_ffxAssetPathSubstKeys[16]` | `0x1685BB0` | the substring to look for |
+| `g_ffxAssetPathSubstValues[16]` | `0x1685BF0` | what to replace it with |
+
+| function | RVA | signature |
+|---|---|---|
+| `FFX_Asset_RegisterPathSubstitution` | `0x643220` | `int __cdecl (const char* key, const char* value)` |
+| `FFX_Asset_UnregisterPathSubstitution` | `0x642F30` | `void __cdecl (int slot)` |
+| `FFX_Asset_InitPathSubstitutionTable` | `0x643130` | zeroes all 16, once, at boot |
+
+The substitution loop runs at every character position of the stored path and replaces **every**
+occurrence of a key with its value. The first matching slot in index order wins. **The value may be
+longer than the key**, there is no bound check against the 255-byte output buffer, so the only real
+limit is the 128 bytes section 12.5 sets.
+
+`Register` scans the keys for the first zero and stores there. **The game itself uses exactly one
+slot**: `FFX_Ev_SetLocalizedEventDirForMode 0x479F00`, called from `FFX_Ev_LoadEventPackage`, maps
+`/ffx/proj/event/<lang>/` to `/ffx/master/<lang>pc/event/` and five sibling variants, and
+`FFX_Ev_RegisterLocalizedEventDirSubstitution 0x479430` releases its own previous slot before
+re-registering. So a plugin that claims slots early keeps them, and **15 slots are free for the life
+of the process.**
+
+**HAZARD, CONFIRMED in the body.** When all 16 are taken the index reaches 16, `sub_76EFA0` prints
+the assert `i!=FILE_NAME_CHG_TBL_CNT` from `read_debug.c:126`, and the function **then writes
+`keys[16]` anyway**. `keys[16]` is `g_ffxAssetPathSubstValues[0]`. Cap yourself at 15.
+
+**What this buys an editor.** Redirecting an id that already has a path needs no table work:
+
+```c
+// Make event id 62, bl/bltz0000, load your file instead.
+Register("bl/bltz0000/bltz0000.ebp", "bl/bltz0000/mine_bltz0000.ebp");
+```
+
+Pick a key distinctive enough to hit only what you mean, because the substitution is applied to
+**every asset kind, not just kind 12**. `.ebp` alone would be a disaster. What it does **not** do is
+create a path for an id that has none, because a zero-length slot returns `nullptr` before the
+substitution loop is ever reached. For that, see 12.3.
+
+### 12.2 THE LOOSE FILE ROUTE, and it needs no hook
+
+**CONFIRMED, read out of `FFX_fios_openFile 0x207F40`:** the VBF is consulted first via
+`FFX_VbfManager__openFileStream 0x21BF10`, and **only when that returns 0** does it `CreateFileW` the
+original wide path. `FFX_fios_fileExists 0x207E00`, which `FFX_File_OpenHost0` calls first, has the
+same two stages. So **any path the archive does not contain is read from disk.** New content needs no
+archive edit, no repack and no file hook, only a path that is not already an archive key.
+
+The full chain, every step read from the disassembly:
+
+```
+path table string   "host0:/ffx/master/jppc/event/obj/te/test22/test22.ebp"
+FFX_File_OpenHost0 0x22FA30
+    strcpy(buf, "/ffx_ps2/"); strcpy(buf+9, path+7);
+    -> "/ffx_ps2/ffx/master/jppc/event/obj/te/test22/test22.ebp"
+FFX_fiosUnifyFilename 0x279820
+    prepends g_ffxDataRoot, the literal "../../.." set by FFX_InitFileSystem 0x2795B0,
+    UNLESS the path already contains the substring "../../..", in which case the prefix
+    is &byte_B8FBEB, a bare NUL, and nothing is prepended
+    -> "../../../ffx_ps2/ffx/master/jppc/event/obj/te/test22/test22.ebp"
+FFX_VbfManager__openFileStream 0x21BF10
+    hashes the path offset by rootPathLen, which FFX_VbfManager__setRootPath stored as
+    strlen("../../../") == 9, giving exactly "ffx_ps2/ffx/master/..." which is the archive key
+MISS -> CreateFileW on "../../../ffx_ps2/ffx/master/..." relative to the PROCESS CWD
+```
+
+**The CWD is the directory holding `FFX.exe`. CONFIRMED two ways:** `FFX_VbfArchive__open 0x21DAC0`
+does a bare `fopen("data\FFX_Data.vbf", "rb")` with no prefix and that succeeds in retail, and
+nothing reachable in the binary calls `SetCurrentDirectory`. There is no
+`SetCurrentDirectoryW` import at all, and the one call to `__imp_SetCurrentDirectoryA`, at RVA
+`0x2FFE2`, sits in an unreferenced `.text` block past the end of `sub_42FE10` (which ends at
+`0x2FF6A`) with no incoming reference of any kind. It is dead linked-in CRT code.
+
+**So the default loose file location is three directories above the install directory**, under
+`ffx_ps2/`. For a stock Steam install that is
+`<steam>\ffx_ps2\ffx\master\jppc\event\obj\<group>\<name>\<name>.ebp`. Ugly, but it is free and it
+needs nothing written to the table at all for any id that already has a path.
+
+**To put the file inside the game folder instead**, spend the fixed `../../../ffx_ps2/` prefix. It is
+net two levels up, so store a path that climbs one more and walks back down through the real folder
+names, which a plugin knows from `GetModuleFileName`:
+
+```
+host0:/../steamapps/common/<installDirName>/mod/event/obj/te/test22/test22.ebp
+```
+
+That canonicalises to `<CWD>/mod/event/obj/te/test22/test22.ebp`, because Win32 resolves `..`
+lexically and `ffx_ps2` never has to exist. **INFERRED**, in that the lexical canonicalisation is
+Windows behaviour I did not observe in this process. Watch the 128-byte cap in 12.5 and note the
+string must still contain `/event/obj/`, see 12.4.
+
+Note `FFX_fios_FileHandle__ctor`'s `readOnly` argument must be non-zero, which it is on this path
+(`FFX_File_OpenHost0` passes 1), or the fallback uses `OPEN_ALWAYS` and **creates** the file.
+
+### 12.3 THE PATH TABLE IS WRITABLE AND REPOINTABLE
+
+**CONFIRMED.** `read_debug__fA42AB0 0x642AB0` opens the file, seeks to the end for the size, calls
+`FFX_MemAlloc((size+3) & ~3)` and reads the whole thing in one go. So slot 12 points at an ordinary
+811,400-byte heap block holding `cdrom.fnd` verbatim. Both the offsets and the string blob are
+writable in place.
+
+**The exact layout, read at `0x642C1C..0x642C41`:**
+
+```
+0x642C1C  mov ecx,[eax+30h]        table = assetLoader[12]        nullptr -> nullptr
+0x642C27  cmp esi,[ecx]
+0x642C29  jge ...                  *** count AT table[0] IS A HARD BOUND ***
+0x642C2F  mov edx,[ecx+esi*4+4]    offs[i]
+0x642C33  mov eax,[ecx+esi*4+8]    offs[i+1]
+0x642C37  sub eax,edx
+0x642C39  jle ...                  length <= 0 -> nullptr, SIGNED
+0x642C41  lea esi,[edx+ecx]        string = tableBase + offs[i]
+```
+
+Verified against the shipped file: `count` 16305, 16306 offsets occupying bytes 4 to 65228, string
+blob 65228 to 811399, **every non-empty string has exactly one trailing NUL so there is zero spare
+room in the blob**, and 2548 slots are zero length. Offsets are monotonic and absolute from the table
+base.
+
+Answers to the specific questions:
+
+* **Is `count` used as a bound.** Yes, `0x642C27`. An entry past the original 16305 is **not** read
+  unless `table[0]` is raised too.
+* **Does anything cache a pointer into the table, or a resolved path.** No. **CONFIRMED by
+  decompiling all 72 callers of `FFX_GetAssetLoader` and checking every reference to index 12.** The
+  only readers are `FFX_Asset_ResolvePathWithDebugOverrides 0x642C00`, which resolves into the shared
+  `g_ffxResolvedAssetPathBuf` every call, plus two bare null-checks in `FFX_Asset_GetSizeForIndex
+  0x6428A0` and `FFX_Asset_GetPathForIndexChecked 0x6429D0`.
+* **Is there a checksum, length field or second copy.** None. `FFX_Asset_LoadIndexTables 0x642FC0`
+  passes `nullptr` for the size out-param at `0x64300E`, so the byte length is thrown away. The only
+  bound is `table[0]`.
+* **Does the table get reloaded.** No, in retail. `FFX_Asset_LoadIndexTables` is reached only as
+  `FFX_MainInit -> tklib__f88D710 0x48D710 -> sub_88E880 0x48E880 -> sub_76F100 0x36F100 ->
+  libmscd__f76C560 0x36C560`, and `libmscd__f76C560` sets `byte_1128A85` (`sa_file_read_init`) to 1,
+  asserts if it is already set, and **nothing in the binary ever clears it** (three references in
+  total, all in libmscd). **So a repointed slot 12 survives for the life of the process, including a
+  return to title.**
+
+**And the engine already swaps the table itself.** `FFX_Asset_ReloadPathTable 0x642B70`,
+`void* __cdecl (const char* fndPath)`, is asset loader slot 24. It `FFX_MemFree`s the current table
+and loads the named file in its place. Its one caller is
+`FFX_Asset_LoadDebugPathTableVariant 0x382770`, which in debug mode and only when `byte_112A8F6` is 1
+or 2 builds `host0:/ffx/proj/battle/<region>/cddata/cdrom_cd.fnd` or `..._lc.fnd` and hands it over.
+Neither file ships. Combined with 12.2, **a plugin could put a complete replacement `cdrom.fnd` on
+disk and call `FFX_Asset_ReloadPathTable` on it**, which is the least code of any route.
+
+Two reasons to prefer an in-memory build anyway. `FFX_Asset_ReloadPathTable` **frees** the old block,
+so nothing may be mid-resolve, and `read_debug__fA42AB0` asserts `fd != 0` and **then dereferences
+the null handle regardless**, so a missing file is a crash and not a fallback.
+
+### 12.4 THE WRITE RECIPE
+
+The trap is that **offset boundaries are shared**: `offs[i+1]` is both slot `i`'s end and slot
+`i+1`'s start. Writing two dwords to fill an empty slot therefore touches its neighbours.
+
+**The safe version, which is an insert and shift.** Build one new block and never free the old one:
+
+```
+newSize = 4 + 4*(count+1) + blobLen + sum(len(newString)+1 for each)
+copy count to newBlock[0]                       (unchanged, we are not adding slots)
+for each slot we fill, in ascending index order:
+    insert the string bytes at the blob position offs[i] already points at
+    offs[i+1] = offs[i] + len + 1
+    add (len+1) to every offs[j] for j > i
+copy the offsets array and the two blob halves into the new block
+*(void**)Va(0x1F10C70) = newBlock                one aligned dword store
+```
+
+Monotonicity is preserved, no slot's length changes except the ones being filled, and no neighbour is
+disturbed. The store is a single aligned dword so it is atomic on x86 and needs no lock. Do it from a
+game-thread hook. Leaving the 811 KB original allocated removes any use-after-free risk, and nothing
+will ever free the new block because the only two writers of slot 12 never run again.
+
+**The quick version, two dwords, and when it is safe.** For an empty slot `i`, append the string past
+the end of the existing blob at offset `P` and write `offs[i] = P`, `offs[i+1] = P + len + 1`. This
+needs the block to be grown anyway, so it is only simpler if you are already copying.
+
+* Slot `i+1` is unharmed. It becomes `[P+len+1, offs[i+2])`, a **negative** length, and the test at
+  `0x642C39` is signed, so it still reads as empty. **CONFIRMED that for all 54 empty kind-12 ids,
+  sub-index 1 is also empty**, so this always holds.
+* Slot `i-1` becomes `[offs[i-1], P)`, a hugely inflated length. Harmless **if slot `i-1` was
+  non-empty**, because the length is only used for the `> 0` test and the copy stops at the NUL. But
+  if slot `i-1` was **empty**, it now resolves to a bogus path. Slot `i-1` is sub-index 17 of the
+  previous id, the 15th `.mgrp`.
+* **Measured on the shipped table: only 14 of the 54 empty ids have a non-empty preceding slot.**
+  Those 14 are `3, 24, 66, 101, 111, 114, 246, 251, 278, 281, 328, 343, 378, 393`. For the other 40
+  the two-dword patch corrupts a motion-group slot. Use the insert-and-shift version.
+
+**What the string must look like. CONFIRMED and load-bearing.**
+
+* The first **7 bytes are discarded blindly** by `FFX_File_OpenHost0 0x22FA30`. It is `strcpy(buf+9,
+  path+7)`, not a `host0:/` match, so any 7 characters work. Keep `host0:/` for consistency.
+* **It must contain the literal `/event/obj/` and at least one `/` after that.**
+  `FFX_Ev_LoadEventPackage` does `strstr(name, "/event/obj/") + 11` and then
+  `*strrchr(that, '/') = 0` **with no null check**, so a path without `/event/obj/` computes
+  `strrchr(0xB, '/')` and faults. The label the game displays is the text between `/event/obj/` and
+  the last `/`, which is why the shipped shape is `.../event/obj/<group>/<name>/<name>.ebp`.
+* Under 128 bytes total, see 12.5. The longest shipped kind-12 sub-0 path is 59.
+* The file must resolve, either in the VBF or on disk per 12.2.
+
+### 12.5 THE 128-BYTE PATH LIMIT
+
+**CONFIRMED.** `FFX_RomDev_EnqueueRead 0x36B970`, asset loader slot 0, copies the resolved path into
+`g_ffxRomReadQueuePaths` at **128 bytes per queue slot**: `shl edx, 7` at RVA `0x36BCE1` for the
+stride, `cmp ecx, 80h` at RVA `0x36BD39` for the loop bound. The copy breaks on the NUL, so a path of
+128 bytes or more is stored **without a terminator** and runs into the next slot's buffer.
+
+While in there, note the only two fallbacks that exist when the path getter returns `nullptr`, and
+neither is a search path or a loose-file prefix: sub-index 3 can fall back to a hardcoded `.mgrp`
+path through `sub_67AA50`, and sub-index 0 falls back to `FFX_Ev_GetBootPackagePath` for ids 393..399.
+Otherwise the path pointer stays null and the copy loop dereferences it, so **an id with no path
+entry faults here, before section 2.5's `while(1)` is ever reached.**
+
+### 12.6 NO SECOND TABLE KEYED BY ID
+
+**CONFIRMED by reading `FFX_Ev_LoadEventPackage 0x472EF0` end to end.** Everything it looks up by id
+is either the path table or a hardcoded special case:
+
+| what | how |
+|---|---|
+| the package bytes | `FFX_Ev_ReadEventPackageImage(12, 18*id)`, path table |
+| the display name | `FFX_Asset_SelectKindAndGetPath 0x4AB7D0`, which is slot 4 then slot 22, same table |
+| ids 393..399 | `maybe_FFX_IsTitleOrBootMode`, routed to the 7 hardcoded boot paths instead |
+| ids 79 93 97 107 110 136 140 259 291 329 | a `switch` setting `dword_1327104 = 1` |
+| ids 23 93 291, names containing `bltz` or `hiku2` | `g_ffxEvMesWinBlitzTextMode` |
+| `sub_8799B0` / `sub_879A70` | keyed by id but behind `sub_887D10`, which returns a constant 0 |
+
+A brand new id takes the default branch of both hardcoded switches, which is the correct one. The
+`eventid.bin` name table of section 1.2 is debug only and is not consulted on the load path.
+**Everything else the package needs it reads out of its own bytes, so filling one path table slot is
+genuinely all a new id requires.**
+
+One detail worth having. `FFX_Ev_ReadEventPackageImage 0x48D2C0` does `*image = 0` **before** the
+read, which is why a missing package hits section 2.5's `while(1)` deterministically rather than
+occasionally passing on stale heap.
+
+### 12.7 THE ID SPACE CANNOT BE GROWN WITHOUT A FULL REBUILD
+
+**CONFIRMED from the shipped `cdrom.fid`.** Kind 12's base is 562 and **kind 13's base is 7798**, and
+`562 + 18*402 == 7798` exactly. Kind 12's block is precisely 402 rows with no slack, so there is no
+id 402 to hand out. Growing the id space means rebuilding the whole path table with every later
+kind's rows shifted and rewriting `cdrom.fid` in slot 11 (`g_ffxAssetKindBaseTable`, VA imagebase +
+`0x1F10C6C`, also a plain heap block) to match. Mechanical, but a much bigger change than filling an
+empty slot. **54 empty ids is the budget without it, against 67 orphan packages.**
+
+### 12.8 THE 67 ORPHANS, confirmed again and grouped
+
+Re-derived in this pass and it agrees with section 1.3 exactly: 397 `.ebp` in the archive, 330
+referenced by an id, **67 orphans**. They are not all equally interesting:
+
+| group | count | note |
+|---|---|---|
+| `te/test*`, `testpub*`, `testbattle`, `testfont` | 30 | the real dev packages, `te/test22` among them |
+| `sc/scene1..scene7` | 7 | the menu/boot packages, already reachable through the hardcoded array for 393..399 |
+| `bl/*` `cn_` `psv_` `psvcn_` variants | 15 | blitzball alternates, 4 base names |
+| `dbg_nagi0000`, `200thunder_kami0400`, `full_nagi0700` | 3 | **already reachable**, through the three debug flags section 1.5 lists |
+| `sa/sample01`, `sa/sample02`, `so/soundtest`, `sy/sysfp`, `zo/zooo0000`, `hi/psv_hiku2100`, `lc/psvcn_lchb0800` | 7 | samples and oddments |
+
+So the genuinely unreachable and genuinely new material is about 52 packages, which fits inside the
+54 empty ids with nothing to spare.
+
+### 12.9 THE ROUTE I DO NOT RECOMMEND, recorded so nobody re-finds it
+
+There is a shipped `(kind, assetIndex)` external override table: count `dword_1128AB8` RVA
+`0xD28AB8`, rows at `dword_1128AE4` RVA `0xD28AE4`, 512 rows of 52 bytes allocated by
+`sub_76DC70 0x36DC70`, fields `+0` kind byte, `+8` assetIndex, `+12` file offset, `+16` size, `+36`
+name. `FFX_Asset_GetSizeForIndex` consults it through `sub_76D660 0x36D660` and a hit makes
+`FFX_RomDev_ExecuteQueuedRead 0x643740` read from `pfs0:/ex/<name>` at that offset and length instead
+of the path table path. The count comes from `hdd_install_check 0x3791A0`, a PS3 HDD-install probe,
+so it is **0 on retail PC**. A plugin could populate it, but `FFX_File_OpenHost0`'s blind 7-byte strip
+turns `pfs0:/ex/foo` into `/ffx_ps2/x/foo`, and the sub-file extent fields make it a container
+reader. The path table is strictly better.
+
+Mounting a second VBF is also possible, `FFX_VbfManager__mountArchive 0x21C150` has 5 slots and
+`openFileStream` returns the lowest-numbered hit, but `FFX_InitFileSystem` takes slot 0 for
+`FFX_Data.vbf` and `mountArchive` hands out the first **free** slot, so a later mount always loses.
+Winning would mean swapping the two pointers at `manager+16` and `manager+20` by hand. Unnecessary,
+because a brand new path misses the archive anyway and 12.2 then reads it off disk.
+
+### 12.10 WHAT I COULD NOT SETTLE
+
+* **Not executed.** Nothing in this section was run in the process. The reads are all static.
+* The loose file fallback's exact on-disk location depends on Win32 lexical `..` canonicalisation and
+  on the CWD at launch. Both are stated above with the evidence for them, but **the right first
+  experiment is to log `Phyre_TtyPrintf` level 2, which `FFX_fios_openFile` already uses to print
+  `[FFX_section_data_win32] %s` for every single open**, and read the real strings off a running
+  game. That settles the data root and the CWD in one observation and costs nothing.
+* Whether an orphan dev package actually boots once it has a path. They are unfinished by definition
+  and section 5.5's missing-walkmesh risk applies to them more than to retail maps.
+* Whether `FFX_Asset_ResolvePathWithDebugOverrides` is ever called off the game thread. It writes a
+  single process-global 255-byte static, so it cannot be thread safe, which is strong evidence it is
+  game-thread only, but I did not enumerate the call sites by thread. Do the slot 12 store from a
+  game-thread hook regardless.

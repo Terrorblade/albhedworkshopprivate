@@ -1002,3 +1002,247 @@ tables above.
 * **Which of the two per-character ability bitmaps means "learned" and which means "usable".**
   `GAME_STATE.md` already flagged this. The overdrive path uses 0x385C50, so the question does not
   block this feature.
+
+---
+
+## 13. ENUMERATING EVERY BATTLE FROM MEMORY
+
+Added 2026-10-04. This section replaced a hand written table of 42 arena and penalty fights in
+the cheat plugin. It is the answer to "list every fight the game can start, test and debug fights
+included, without baking anything".
+
+### 13.1 The file and the three pointers
+
+**CONFIRMED.** `btl.bin` is one 4096-byte file, loaded once at the first battle init, resolved
+through the shipped cd index to `ffx_ps2/ffx/master/jppc/battle/kernel/btl.bin`. Four globals:
+
+| RVA | name | width | what |
+|---|---|---|---|
+| `0x00D2A9C4` | `g_ffxEncTableBlob` | ptr | the loaded file |
+| `0x00D2A9C8` | `g_ffxEncMapTable` | ptr | base of the scene entry table, 14 bytes per scene |
+| `0x00D2A9CC` | `g_ffxEncZoneBlob` | ptr | base of the variable length zone records |
+| `0x00D2A9D0` | `g_ffxEncMapCount` | **s16** | how many scenes the file declares |
+| `0x00D2A9D2` | `g_ffxEncTableSize` | s16 | sits right after the count |
+
+`FFX_Btl_InitEncounterTablePtrs` RVA `0x0039D250` fills them: the two pointers are
+`blob + hdr[+4]` and `blob + hdr[+8]`, and the count is `(hdr[+8] - hdr[+4]) / 14`, which is the
+magic-divide sequence around the `0x24924925` constant. All four are `0xFFFFFFFF` in the file
+image and stay that way until a battle has initialised.
+
+**THE COUNT IS A SIGNED WORD, NOT AN INT.** Written `mov g_ffxEncMapCount, cx` at `0x79D26D` and
+read back twice with `movsx eax, g_ffxEncMapCount`, at `0x79D19A` and `0x79D1C4`. Reading four
+bytes there pulls `g_ffxEncTableSize` in as the high half and yields a count in the tens of
+millions. This was got wrong once in this project and the symptom was an empty list, not a crash,
+so it is worth stating twice.
+
+### 13.2 The accessors, all four of which clamp rather than refuse
+
+**CONFIRMED**, including both return senses.
+
+| RVA | signature | notes |
+|---|---|---|
+| `0x0039D1C0` | `int (int mapId)` | scene index, or -1. **Also requires mapId > 0**, `test esi,esi / jg` at `0x79D1E7` |
+| `0x0039D190` | `entry * (int scene)` | `g_ffxEncMapTable + 14*scene`. **Clamps a bad index to 0** |
+| `0x0039D170` | `zoneTable * (int scene)` | that scene's zone table inside the blob |
+| `0x0039D210` | `u8 * (int scene, int zone)` | **Clamps a bad zone to 0**, walks `2*rec[0] + 5` per record |
+
+The two clamps are the trap. Zone 99 of a one-zone scene silently reports zone 0's fights, so a
+caller has to bound the zone itself against the scene's own zone count.
+
+### 13.3 The layout
+
+Scene entry, 14 bytes. The map id and the zone offset are both read with `movsx`, so **s16**, which
+means a zone blob offset above `0x7FFF` is unreachable.
+
+```
++0   s16   map id
++2   s16   byte offset into the zone blob for this scene's zone table
++6   char[8]   the battle scene base name, NOT NUL TERMINATED
+```
+
+The name really is unterminated. `FFX_Btl_BeginBattle` at `0x781426` copies `+6..+0xD` byte by byte
+into `0x112C25A`, writes its own `0` at `0x112C262`, then `sprintf("%s_%02d", ...)`. So a reader
+must copy 8 bytes and terminate them itself.
+
+Zone table:
+
+```
++1   u8    how many zone records follow
++2         the zone records start here
+```
+
+Zone record:
+
+```
++0   u8    how many formation entries this zone has
++1   u8    map low
++2   u8    map high
++3   u8    encounter rate. 0 MEANS NO RANDOM BATTLES IN THIS ZONE
++4   u8    the weight modulo total
++5         formation entries start here, stride 2
+           +0  u8  encounter id
+           +1  u8  weight, in the high nibble
+```
+
+`+3` and `+4` are confirmed from `FFX_Field_StepRandomEncounter` RVA `0x00380D10`, which early
+returns if either is 0 and uses the rate as the whole roll:
+`thr = ((steps - rate/2) << 8) / (4 * rate)`.
+
+**Rate 0 is the useful marker.** A zone nothing can walk into holds only fights a script starts,
+which is where the monster arena, the penalty battles and the developers' test fights live.
+
+**The weight nibble is not settled.** The code does read `byte >> 4`, but an older note in the IDB
+on `0x780D10` records the shipped `btl.bin` storing those weights raw rather than shifted up, which
+would make the accumulator always 0. Nothing needs the weight, so it is reported and not relied on.
+
+### 13.4 THE ENCOUNTER ID IS ONE BYTE
+
+**CONFIRMED, and this bounds the whole id space.** `FFX_Btl_ResolveBattleId` RVA `0x003827F0`
+(was `sub_7827F0`) takes a battle id of the form `(mapId << 16) | encounterId`. It splits it with
+`movzx ebx, ax` for the low word and `sar eax,10h / and eax,0FFFFh` for the map id, but the compare
+at `0x78284B` is `movzx ecx, byte ptr [eax] / cmp ebx, ecx`. **So an encounter id above 255 can
+never match anything and the function returns NULL.**
+
+Corroborated twice over: `sub_782970` at `0x782982` and `FFX_Btl_MainStep` at `0x790ED1` both
+compose the live battle id as `((s16)entry[+0] << 16) + formationEntry[0]` with a `movzx` byte, and
+that same byte is the `%02d` in the battle scene filename.
+
+### 13.5 The walk
+
+```
+for scene in 0 .. g_ffxEncMapCount-1            // read the count as s16
+    entry     = GetEncounterMapEntry(scene)
+    mapId     = *(s16 *)(entry + 0)
+    sceneName = entry + 6, 8 chars, copy and terminate yourself
+    zoneTable = GetEncounterZoneTable(scene)
+    for zone in 0 .. zoneTable[1]-1              // bound it yourself, the getter clamps
+        rec = GetEncounterZoneRecord(scene, zone)
+        rate = rec[3]                            // 0 means scripted fights only
+        for i in 0 .. rec[0]-1
+            encounterId = rec[5 + 2*i]           // A BYTE
+            battleId    = (mapId << 16) | encounterId
+```
+
+That `battleId` is exactly what `FFX_Btl_RequestScriptedBattle` takes, and the search it does
+internally is the same walk, so an id that comes out of here is one it will accept.
+
+### 13.6 NAMING A FIGHT BY ITS MONSTERS
+
+**CONFIRMED, and settled completely.** `btl.bin` itself names no monster, but the fight's own
+battle field file does, and the link between the two is **scene entry +4**, which an earlier note
+on the entry getter wrongly said nothing reads. `FFX_Btl_ResolveFieldAssetIndex` RVA `0x0039D0E0`
+(was `sub_79D0E0`) reads it at `0x79D15E` as `movsx eax, word ptr [eax+4]`.
+
+```
+fieldAssetIndex = (s16)sceneEntry[+4]
+                + sum(zoneRecord[z][0] for z < zone)    // formation counts, flat across zones
+                + formationSlot
+```
+
+Then, with `base14 = ((s16 *)*(void **)RVA 0x01F10C6C)[14]`, which is 7942 on the shipped archive:
+
+```
+path = AssetResolvePath(base14 + fieldAssetIndex)     // RVA 0x00642C00, __cdecl(int)
+     -> "host0:/ffx/master/jppc/battle/btl/bjyt02_00/bjyt02_00.bin"
+```
+
+**Call `0x00642C00` directly, not loader slot 22.** It bounds checks the index and reads only
+`g_ffxAssetPathTable`, and it touches neither `0x01F10C60` nor `0x01F10C64`, so unlike the selector
+it needs no kind selection and leaves nothing to put back. The answer is in a shared 255-byte
+buffer, so copy it. `host0:/` is the archive: strip 7 bytes and prepend `ffx_ps2/`, which is what
+`FFX_File_OpenHost0` RVA `0x0022FA30` does itself.
+
+Battle field file, u32 section offsets at +4, +8, +12 and +16, each relative to the file base. The
+third one is the monster section and the other three are undecoded.
+
+```
+sec = file + *(u32 *)(file + 12)
+
+sec+0,+1,+2    u8 V, R, F. The dev window's "V%1dR%1dF%2d". +2 feeds FFX_Btl_LoadFootData
+sec+3          u8
+sec+4..+11     zero in every shipped file, purpose unknown
+sec+12..+27    THE 8 ENEMY TYPE IDS, u16 each
+```
+
+`0xFFFF` is an empty slot. Otherwise the low 12 bits are the kernel monster id, 0..365, which is
+the id space `KernelName(KernelMonsters, id)` already takes. The high nibble is 1 in all 1624
+non-empty entries across all 862 files.
+
+**Proof of the 8 u16s**, from the raw disassembly of `FFX_Btl_SetupUnitRoster` at
+`0x79C549..0x79C5DC`. The decompiler renders this as one counter and it is two:
+
+```
+xor ebx,ebx / lea edi,[ebx+0Ch]          ; ebx = slot 0..7, edi = byte offset from 12
+mov ecx, g_ffxBtlFieldMonsterSection
+mov cx, [edi+ecx] / mov [esi+0Eh], cx    ; -> enemyUnit+14
+add edi,2 / inc ebx / cmp edi,1Ch / jl
+```
+
+Confirmed independently by `SG_DebugWin_BattleInfoProc` at `0x7DBDA0`, which starts at offset
+`0x0C`, steps by 2, and prints `(id & 0xFFF)` as `"M%1d:%03d"`.
+
+**The roster cannot change mid battle.** `FFX_Btl_SetupUnitRoster` is the only writer of
+`enemyUnit+14`, and `actor+4` is derived from it and never recomputed. So those 8 ids are the
+complete set including units that only appear partway through, which is why Penance's arms and Yu
+Yevon's pagodas are already in the file.
+
+**During a battle it is free.** `g_ffxBtlFieldMonsterSection` RVA `0x00D2A9C0` is the live section
+pointer, so the same 16 bytes read with no archive access at all. `FFX_Btl_GetEnemyUnit` RVA
+`0x00395AA0` is the other route, type id at `+14`, and `FFX_Btl_LoadMonsterData` has already copied
+the kernel name string into `unit+80`, 64 bytes, the description at `+144` and a third string at
+`+400`.
+
+### 13.6.1 THE ONE TRAP: do not build the path from the scene name
+
+`sprintf("%s_%02d", sceneEntry+6, encId)`, which is what `FFX_Btl_BeginBattle` writes to
+`g_ffxBtlSceneNameBuf` RVA `0x00D2C25A`, matches the asset directory for only 817 of the 863
+entries. **Seven scenes share another scene's +4 base and so reuse its files:**
+
+| scene | name | shares the base of |
+|---|---|---|
+| 20 | `mihn08` | 19 `mihn07`, base 59 |
+| 23 | `mihn05` | 22 `mihn04`, base 72 |
+| 37 | `mcfr01` | base 170 |
+| 38 | `mcfr02` | base 170 |
+| 51 | `hiku05` | `hiku02`, base 243 |
+| 83 | `cdsp01` | `cdsp00`, base 7 |
+
+For those the name route names a directory that does not exist. That name buffer is only used for
+sound banks and for `FFX_LoadLocalizedBin`, which loads per-battle **text** from
+`new_<lang>/battle/btl/<name>/<name>.bin`, not the monster data.
+
+### 13.6.2 Verified against the archive, row for row
+
+863 fights walked. **862 resolve to a shipped file and parse, 856 have at least one enemy.** The
+one that does not is scene 0 slot 0, whose path is the developers' own
+`host0:/home/$USER$/battle/jp/btl/output.bin`. Six more parse with no enemies: `test10` z8 and z9,
+`zzzz00` enc 0, `zzzz02` enc 74 and 75.
+
+Spot checks come out right. Baaj is `Sahagin x3` then `Geosgaeno`, `Klikk`, `Tros`. Besaid is
+`Dingo / Water Flan / Condor`. `Penance x1, Right Arm x1, Left Arm x1`. `Yu Yevon x1, Yu Pagoda
+x2`. `Seymour Flux x1, Mortiorchis x1`. Map 604 is the full Monster Arena conquest and creation
+list.
+
+**The C++ implementation was then diffed against that offline walk, independently ported, and
+agrees on all 863 rows.** Monster ids 0 and 365 decode to `"Monster 0"` and `""`, which are
+placeholder kernel rows rather than a decode bug: `Tros` is 101 and `Iron Giant` is 181, both
+matching `DATA_FILES.md`.
+
+**Cost.** 862 files of roughly 2 to 30 KB, one archive open plus an inflate each, and the monster
+section sits a few KB in so most of each file is needed. Not measured in the running game. Cache
+it: 16 bytes per row is 14 KB for the lot. `ffx::BattleMonsterNames()` is off by default for
+exactly this reason and `ffx::EncounterMonstersAt` reads one fight at a time.
+
+### 13.7 Where it is implemented
+
+`ffx/Encounter.h` and `src/ffx/Encounter.cpp` in the workshop kit. `EncounterSceneCount`,
+`EncounterSceneAt`, `EncounterSceneForMap`, `EncounterZoneAt`, `EncounterFormationAt`,
+`EncounterFormationTotal`, `LogEncounterTable`. Nothing is cached: it is a handful of pointer adds
+per call, and caching would mean deciding when a file the engine reloads has changed.
+`ffx::BattleList()` in `ffx/GameLists.h` is the picker built from it, and
+`ffx::BattleListLocate` turns a battle id back into the (scene, zone, slot) the battle field file
+is keyed by.
+
+For 13.6: `EncounterFieldAssetIndex`, `EncounterFieldPath`, `EncounterMonstersAt` and
+`LiveEncounterMonsters`, plus `ffx::SetBattleMonsterNames(true)` to put the monster names into the
+picker labels so the list can be filtered by typing a monster.

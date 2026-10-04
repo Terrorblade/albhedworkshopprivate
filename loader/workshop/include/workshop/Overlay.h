@@ -31,7 +31,24 @@ namespace workshop
 
 	typedef void (*OverlayDrawFn)(void* user);
 
-	// Hooks IDXGISwapChain::Present through a throwaway swapchain, so load order
+	// WHERE THE HOST KEEPS ITS IDXGISwapChain *. Call this before InstallOverlay, or
+	// there is nothing to hook and the overlay says so and gives up.
+	//
+	// The overlay deliberately knows no game addresses, so that FFX-2 needs no change
+	// here. For FFX the slot is ffx::Rva::PhyreD3DSwapChain, which is PhyreEngine's
+	// D3D context singleton plus 0x74:
+	//
+	//     workshop::SetOverlaySwapChainSlot(
+	//         (void* const*)ModuleAddress(ffx::Rva::PhyreD3DSwapChain));
+	//     workshop::InstallOverlay();
+	//
+	// It is a SLOT, not a swapchain, because the engine has not created one yet when a
+	// plugin starts. The overlay polls it.
+	void SetOverlaySwapChainSlot(void* const* slot);
+
+	// Hooks IDXGISwapChain::Present on the game's own swapchain. It does NOT create one
+	// of its own: doing that makes the Steam overlay double hook Present and recurse
+	// until the stack is gone. See the long comment in Overlay.cpp.
 	// against the game's own device does not matter. Safe from DllMain.
 	bool InstallOverlay();
 	bool OverlayInstalled();

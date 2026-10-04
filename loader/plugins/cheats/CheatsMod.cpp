@@ -25,7 +25,7 @@
 // LAYOUT
 //   ui/CheatPanel.cpp     the panel shell and the tab bar
 //   ui/TabsSaveData.cpp   gil, party, stats, equipment, inventory
-//   ui/TabsWorld.cpp      warp and events
+//   ui/TabsWorld.cpp      warp, events, and reaching the unreferenced packages
 //   ui/TabsBattle.cpp     the dev battle flags and overdrive modes
 //   ui/TabsSphereGrid.cpp node activation
 //   ui/TabsModels.cpp     the model list and the player model swap
@@ -39,7 +39,9 @@
 #include <wchar.h>
 
 #include "ffx/Api.h"
+#include "ffx/AssetPaths.h"
 #include "ffx/GameLists.h"
+#include "ffx/EngineHeap.h"
 #include "ffx/DebugMenu.h"
 #include "ffx/KernelTables.h"
 #include "ffx/Minigames.h"
@@ -50,6 +52,9 @@
 #include "workshop/HostModule.h"
 #include "workshop/Events.h"
 #include "workshop/Log.h"
+#include "workshop/CrashHandler.h"
+#include "workshop/HangWatchdog.h"
+#include "workshop/Overlay.h"
 
 #if !defined(_M_IX86)
 #error "AlBhedWorkshop plugins must be 32-bit x86."
@@ -80,7 +85,7 @@ namespace cheats
 		// anybody opened the panel.
 		void OnHubEvent(const Event&, void*)
 		{
-			RefreshCheatLists();
+			RequestCheatListRefresh();
 		}
 
 		// The one-shot that gets the archive-backed name tables read. It cannot happen
@@ -91,12 +96,84 @@ namespace cheats
 
 		void OnFirstStep(const Event&, void*)
 		{
+			// The event name table, then the package measurement, then the lists, in
+			// that order. LoadEventTable is what gives the test and sample packages
+			// their real names, and ProbeEventPackages is what proves which ones are
+			// actually in the archive instead of trusting a list baked into this build.
+			// Both go through the engine's file layer, which is why they are here and
+			// not in DllMain.
+			// THE EXPORT CACHE FIRST. When it hits, every archive derived list is
+			// already filled and the event package table is already trusted, so the
+			// probe below sees EventPackagesProbed and does nothing. That is the whole
+			// point: no 402 engine file opens, and no asset kind swapped out from
+			// under the engine while it loads.
+			// ===================================================================
+			// HEAP CHECKS, SCAFFOLDING FOR ONE HUNT. REMOVE WHEN IT IS OVER.
+			//
+			// There is an intermittent crash, about one boot in three with this
+			// plugin loaded and never without it, inside the engine's allocator
+			// coalescing across a block whose header is wrong, with no frame of ours
+			// on the stack. Each of these walks the whole engine heap and validates
+			// every block header, so the first one that fails names the phase that
+			// did the damage. A full walk is far too expensive to keep in a boot
+			// path once the answer is in.
+			// ===================================================================
+			CrashContext("cheats: first step, trying the exported lists");
+			const bool fromCache = cheats::TryExportedCheatLists();
+
+			// ONLY WHEN THE CACHE MISSED. FFX_LoadEventIdTable is the one engine call
+			// in this whole startup that damages the engine heap, because the dev file
+			// reader behind it writes over the allocator's tag field. ffx::LoadEventTable
+			// repairs that straight away, but the better answer is not to call it: a
+			// cache hit already has every event name, so there is nothing to read.
+			//
+			// See the comment on the repair in ffx/GameLists.cpp for the mechanism.
+			if (!fromCache)
+			{
+				CrashContext("cheats: first step, reading the event name table");
+				ffx::LoadEventTable();
+				ffx::ProbeEventPackages();
+			}
+
+			// STAY SUBSCRIBED UNTIL THERE IS SOMETHING WORTH SAYING. The first
+			// simulation step runs during the splash, long before the asset loader or
+			// the archive exist, so logging on the literal first step dumps six empty
+			// tables and then unsubscribes, wasting the one shot. The probe succeeding
+			// is the honest signal that the file layer is up, and both calls above are
+			// idempotent so retrying them costs a guard check.
+			//
+			// The budget is so a build where the loader never comes up still logs once
+			// and says so, instead of retrying for the life of the process. 2000 steps
+			// is about 67 seconds at the simulation's 29.97 Hz.
+			static int waited = 0;
+			if (!ffx::EventPackagesProbed() && ++waited < 2000)
+				return;
+
 			RefreshCheatLists();
+
+			if (!ffx::EventPackagesProbed())
+				Log("the asset loader did not come up within %d steps, so the tables "
+				    "below hold only what was readable without it. The refresh button "
+				    "in the panel picks the rest up once a game is loaded.",
+				    waited);
+
+			CrashContext("cheats: logging the tables");
 			ffx::LogKernelTables();
 			ffx::LogGameLists();
 			ffx::LogModelTables();
 			ffx::LogDebugMenu();
 			ffx::LogMinigames();
+			ffx::LogAssetPaths();
+
+			// ONE CHECK, AT THE END, AND IT IS WORTH ITS COST ONCE.
+			//
+			// A full walk of every block in the engine heap, which is tens of thousands
+			// of them. It stays because it is the only thing that catches this class of
+			// damage before the allocator trips over it seconds later with a useless
+			// stack, and because the damage is the game's own: a mod cannot avoid
+			// touching dev-only code paths forever. If it ever says the heap will
+			// fault, read ffx/EngineHeap.h and the repair comment in ffx/GameLists.cpp.
+			ffx::LogEngineHeap("at the end of the cheat plugin's startup");
 
 			if (g_firstStep)
 			{
@@ -105,11 +182,32 @@ namespace cheats
 			}
 		}
 
-		// The minigame launcher's deferred half. A launch row that names a script entry
-		// cannot fire it at the time of the warp, because the package is not loaded
-		// yet, so the kit holds the request and this hands it a step to land on.
-		void OnStepPumpLaunch(const Event&, void*)
+		// Everything that has to happen on the simulation thread, once per step.
+		//
+		// NoteOverlayGameThread goes here and nowhere else. It is what lets a panel ask
+		// OverlayOnGameThread and get a true answer, and calling it from inside a draw
+		// callback, which is what this plugin used to do, makes the answer always yes
+		// and the check pointless.
+		//
+		// The launch pump is the minigame launcher's deferred half: a launch row that
+		// names a script entry cannot fire it at the time of the warp, because the
+		// package is not loaded yet, so the kit holds the request and this hands it a
+		// step to land on.
+		void OnGameStep(const Event&, void*)
 		{
+			workshop::NoteOverlayGameThread();
+
+			// The game installs its own top level filter during startup, which replaces
+			// rather than chains, so ours has to be put back. This also records the game
+			// thread id so a report can say whether the fault was on it.
+			workshop::ReassertCrashHandler();
+
+			// WHAT TURNS A FREEZE INTO A CALL STACK. The watchdog thread watches this
+			// counter, and when it stops moving it suspends this thread and reports its
+			// stack the same way the crash handler does.
+			workshop::NoteHangWatchdogStep();
+
+			PumpCheatListRefresh();
 			ffx::PumpMinigameLaunch();
 		}
 
@@ -134,6 +232,17 @@ namespace cheats
 		// wrong badly enough that nothing should be hooked, and the log says why.
 		bool Startup()
 		{
+			// FIRST, BEFORE ANYTHING THAT CAN FAULT. It writes its own file and needs no
+			// log, no module binding and no engine, so there is nothing to put ahead of
+			// it. If the proxy already installed one, this returns false and leaves it
+			// alone, which is the normal case.
+			const bool tookCrashHandler = InstallCrashHandler();
+
+			// Starts the thread that watches for a freeze. Only one runs per process,
+			// whichever plugin asks first, and every plugin's step notes feed it.
+			const bool tookWatchdog = StartHangWatchdog();
+			CrashContext("cheats: Startup");
+
 			OpenLog(L"albhed_cheats.log");
 			BindHostModule();
 
@@ -149,6 +258,19 @@ namespace cheats
 				Log("host '%S' is not FFX.exe, doing nothing", FileNameOf(exePath));
 				return false;
 			}
+
+			Log("crash handler: %s. Reports go to albhed_crash.log with every frame as "
+			    "module+RVA and the address to paste into IDA.",
+			    tookCrashHandler ? "installed by this plugin"
+			                     : (CrashHandlerInstalled()
+			                               ? "already installed by another Al Bhed module"
+			                               : "COULD NOT BE INSTALLED"));
+
+			Log("hang watchdog: %s, threshold %lu ms. A freeze writes the same report a "
+			    "crash does, for the thread that stopped stepping.",
+			    tookWatchdog ? (HangWatchdogRunning() ? "running" : "not running")
+			                 : "COULD NOT START",
+			    HangThresholdMs());
 
 			if (!VerifyLayout())
 			{
@@ -175,9 +297,11 @@ namespace cheats
 					    "name tables will not be read until the refresh button is "
 					    "pressed");
 
-				if (!Subscribe(EventStep, &OnStepPumpLaunch))
-					Log("could not subscribe the minigame launch pump, so a launch row "
-					    "that fires a script entry will warp and then do nothing");
+				if (!Subscribe(EventStep, &OnGameStep))
+					Log("could not subscribe the per-step handler, so the lists will "
+					    "never be measured, the game-thread check will always say no, "
+					    "and a launch row that fires a script entry will warp and then "
+					    "do nothing");
 
 				const int taken = SubscribeToRefreshEdges();
 				if (taken != 3)

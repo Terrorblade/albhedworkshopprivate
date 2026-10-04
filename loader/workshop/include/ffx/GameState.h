@@ -468,7 +468,14 @@ namespace ffx
 	// chest in co-op has to reach it once per machine and no more.
 	bool AddItem(WORD itemId, int delta);
 
-	// Key items are flags, not counts.
+	// Key items are flags, not counts. 128 of them at SaveData+0x448C, and the id is
+	// 0xA000 based because that is the key item slice of the game's one tagged id
+	// space. important.bin declares 64 rows and about 52 of them are named.
+	//
+	// ffx::KeyItemList() in ffx/GameLists.h is the picker, with the unnamed rows in it.
+	const int kKeyItemIdBase = 0xA000;
+	const int kKeyItemCount = 64;
+
 	bool HasKeyItem(WORD keyItemId);
 	bool SetKeyItem(WORD keyItemId, bool held);
 

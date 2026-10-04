@@ -38,8 +38,15 @@ rem /MT   static CRT, so the game folder needs no VC redist
 rem /O2   optimise; /W4 keep the warnings honest
 rem /GS-  the forwarding thunks are __declspec(naked); no security cookie can be
 rem       emitted into them, and there are no stack buffers worth protecting here
-set "CL_FLAGS=/nologo /c /EHsc /MT /O2 /W4 /GS- /DNDEBUG /DWIN32 /D_WINDOWS /D_CRT_SECURE_NO_WARNINGS"
+set "CL_FLAGS=/nologo /c /EHsc /MT /O2 /W4 /GS- /DNDEBUG /DWIN32 /D_WINDOWS /D_CRT_SECURE_NO_WARNINGS /I"%SRCDIR%workshop\include""
 set "LINK_FLAGS=/nologo /DLL /MACHINE:X86 /SUBSYSTEM:WINDOWS /DYNAMICBASE /NXCOMPAT /OPT:REF /OPT:ICF kernel32.lib user32.lib"
+
+rem The crash handler, the one piece of the workshop library the proxy links. It
+rem depends on nothing else in the library, so this is a single object and needs no
+rem lib. Built once and linked into both proxy variants.
+echo === building the crash handler ===
+cl %CL_FLAGS% /Fo"crashhandler.obj" "%SRCDIR%workshop\src\workshop\CrashHandler.cpp"
+if errorlevel 1 goto :fail
 
 set "TARGETS=%~1"
 if "%TARGETS%"=="" set "TARGETS=dinput8 version"
@@ -73,7 +80,7 @@ if /i "%T%"=="dinput8" (
 echo === building %OUTNAME% ===
 cl %CL_FLAGS% %DEFS% /Fo"%OBJ%" "%SRCDIR%workshop_proxy.cpp"
 if errorlevel 1 exit /b 1
-link %LINK_FLAGS% /OUT:"%OUTNAME%" "%OBJ%"
+link %LINK_FLAGS% /OUT:"%OUTNAME%" "%OBJ%" "crashhandler.obj"
 if errorlevel 1 exit /b 1
 echo --- exports of %OUTNAME% ---
 dumpbin /nologo /exports "%OUTNAME%" | findstr /r /c:"^ *[0-9]"

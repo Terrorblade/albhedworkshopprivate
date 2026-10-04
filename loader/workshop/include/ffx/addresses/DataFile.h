@@ -121,6 +121,41 @@ namespace ffx
 		const DWORD FileSeek = 0x00279710;
 
 		// ---------------------------------------------------------------------------
+		// THE SG DEBUG LAYER'S LOOSE FILE READER, WHICH CORRUPTS THE ENGINE HEAP
+		//
+		// Sg_PcRead prefixes "host0:", opens through FFX_File_OpenHost0, allocates the
+		// whole file with FFX_MemAlloc and returns that payload. FFX_Ch_ReadFileDev is
+		// Sg_PcRead plus a stamp pass, and THE STAMP PASS IS A BUG:
+		//
+		//     *(u32 *)(buffer - 4) ^= ((*(u32 *)(buffer - 4) ^ key) & 0x3FFFFF0)
+		//
+		// buffer is a raw allocator payload, so buffer - 4 is the engine allocator's own
+		// tag field at header+12. A tag of 2, meaning in use, becomes 0x03FFFFE2. The
+		// write faults nothing. The next free of the block NEXT to this one reads that
+		// tag, takes it for a free list node pointer, dereferences it and kills the
+		// process in sub_9435A0 with no caller of this anywhere on the stack.
+		//
+		// Measured and settled 2026-10-04. It was an intermittent boot crash on this
+		// project, about one run in three, invisible without a mod loaded because
+		// nothing in a retail build calls Sg_PcRead at all. The only retail reachable
+		// door into it is a debug-only function like FFX_LoadEventIdTable.
+		//
+		// IF YOU CALL ANYTHING THAT GOES THROUGH HERE, CALL ffx::RepairEngineHeap
+		// STRAIGHT AFTERWARDS. The repair is exact rather than a workaround: the tag's
+		// correct value is 2, and Sg_PcRead's buffer is never freed, so restoring it is
+		// the truth. See ffx/EngineHeap.h and addresses/Memory.h.
+		// ---------------------------------------------------------------------------
+
+		// void* __cdecl (const char* path, int mode). mode 0 allocates the buffer.
+		const DWORD SgPcRead = 0x0043B1D0;
+
+		// void* __cdecl (const char* path). Sg_PcRead then the stamp pass below.
+		const DWORD ChReadFileDev = 0x0043AE30;
+
+		// int __cdecl (void* buffer). THE OFFENDER. Writes to buffer - 4.
+		const DWORD SgPcReadStampHeaderWord = 0x0043C4E0;
+
+		// ---------------------------------------------------------------------------
 		// The VBF manager
 		// ---------------------------------------------------------------------------
 
@@ -304,6 +339,9 @@ namespace ffx
 				FileGetSize,
 				FileExists,
 				FileSeek,
+				SgPcRead,
+				ChReadFileDev,
+				SgPcReadStampHeaderWord,
 				VbfManagerPtr,
 				VbfManagerGet,
 				VbfManagerOpenFileStream,

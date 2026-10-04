@@ -14,7 +14,7 @@
 // A list whose table was not readable comes back empty with Live() false, so a
 // caller can say "no game loaded" rather than drawing nothing.
 
-#include "workshop/PickerList.h"
+#include "workshop/PickerCache.h"
 
 namespace ffx
 {
@@ -22,6 +22,31 @@ namespace ffx
 	// Rebuilds all of them. Safe with no game loaded, in which case the save-block
 	// lists come back empty.
 	void RefreshGameLists();
+
+	// JUST THE SAVE DERIVED ONES: characters, party, aeons, equipment, inventory.
+	// Those five change as the player plays, so they are the lists the export cache
+	// deliberately does not hold and this is what rebuilds them after a cache load.
+	void RefreshSaveDerivedLists();
+
+	// ---------------------------------------------------------------------------
+	// The per-id package measurement, for the export cache.
+	//
+	// This is the expensive thing and the dangerous thing at once. Producing it
+	// makes the engine open and close 402 files, and it is also what
+	// EventIdLoadable answers from, which is what stops a warp picking an id whose
+	// package does not ship. FFX_Ev_LoadEventPackage answers a missing package with
+	// while(1), so getting this wrong hangs the game with no way out.
+	//
+	// So it is cached with the lists rather than measured every boot. See
+	// ffx/ListExport.h.
+	// ---------------------------------------------------------------------------
+	int EventProbeCount();
+	bool EventProbeRow(int eventId, unsigned* outBytes, bool* outHasPath, char* outLabel, int labelBytes);
+	bool SetEventProbeRow(int eventId, unsigned bytes, bool hasPath, const char* label);
+
+	// Says the probe table is trustworthy without having run the probe, which is
+	// what loading it from the cache means. "how" is kept for the log only.
+	void MarkEventPackagesProbed(const char* how);
 
 	// ---------------------------------------------------------------------------
 	// Events, which are also maps
@@ -32,8 +57,89 @@ namespace ffx
 	// somewhere" and "start this event": the id is what FFX_Map_WarpTo and
 	// FFX_Map_RequestChange take, and it is what EvCurrentEventId holds.
 	//
-	// EMPTY UNTIL SOMETHING CALLS LoadEventTable. See below.
+	// LOADABLE IDS ONLY, so it is safe to warp to anything in it. See
+	// EventIdLoadable below for why that matters.
 	const workshop::PickerList& EventList();
+
+	// EVERY id in the space, loadable or not, which is the list that shows the
+	// developers' test and sample packages: test01 through test39, sample01,
+	// testbattle, testpub1 to 4, testfont, loopdemo, scene1 to 9, startmap0 and the
+	// rest. A row that cannot be loaded carries "[no package]" or "[no path]" at the
+	// front of its label, where a filter will find it.
+	//
+	// NOTHING MAY WARP FROM THIS LIST WITHOUT CALLING EventIdLoadable FIRST. The
+	// marker in the label is for the person reading it, it is not a guard.
+	//
+	// The name comes from eventid.bin when that table has been filled, because
+	// "testbattle" is a name only there. Call LoadEventTable before
+	// RefreshGameLists if you want names rather than path stems.
+	const workshop::PickerList& AllEventList();
+
+	// ---------------------------------------------------------------------------
+	// Measuring which packages actually ship, instead of trusting a baked list
+	//
+	// FFX_Asset_GetSizeForIndex resolves an asset path and then OPENS THE FILE to
+	// measure it, returning 0 when it cannot. That makes it an existence test, and
+	// the only one that will notice a package an editor has ADDED or removed. Once
+	// it has run, both event lists and EventIdLoadable use it in preference to the
+	// baked deny list, in both directions.
+	// ---------------------------------------------------------------------------
+
+	// Takes the measurement and rebuilds the two event lists from it. One file open
+	// per id, 402 of them, so this is a one-shot: calling it again does nothing.
+	//
+	// CALL THIS FROM THE GAME THREAD. It goes through the engine's file layer. It
+	// does nothing before the asset loader table is filled, which is the state
+	// during DllMain, so an early call is harmless but also useless.
+	void ProbeEventPackages();
+
+	// Measures again, for after something has added a package. Same thread rule.
+	void ReprobeEventPackages();
+
+	// Whether the measurement has been taken. False means loadability is coming from
+	// the baked deny list.
+	bool EventPackagesProbed();
+
+	// What the id's .ebp measures, rounded up to 16 by the engine. 0 means the file
+	// is not in the archive, or that nothing has measured yet.
+	unsigned EventPackageBytes(int eventId);
+
+	// ---------------------------------------------------------------------------
+	// Battles
+	// ---------------------------------------------------------------------------
+
+	// EVERY FIGHT THE GAME CAN START, walked out of btl.bin in memory: scenes, then
+	// zones, then formation entries. See ffx/Encounter.h for the walk itself.
+	//
+	// The id is the BATTLE ID, (mapId << 16) | encounterId, which is exactly what
+	// ffx::RequestScriptedBattle takes, so a selection feeds it with no second
+	// lookup.
+	//
+	// EMPTY UNTIL THE FIRST BATTLE. btl.bin is read at the first battle init, so
+	// there is nothing to walk at the title screen and that is not an error. A zone
+	// whose encounter rate is 0 has no random battles, so its fights are the ones a
+	// script starts, and those rows are marked "[scripted]". That is where the
+	// monster arena, the penalty fights and the developers' test battles are.
+	const workshop::PickerList& BattleList();
+
+	// Where a battle id sits in the encounter table. For anything that needs more than
+	// the id, which is everything that wants the fight's own battle field file, because
+	// that is keyed by (scene, zone, slot) rather than by map and encounter. False for
+	// an id that is not in BattleList.
+	bool BattleListLocate(int battleId, int* outScene, int* outZone, int* outSlot);
+
+	// Whether BattleList's labels NAME THE MONSTERS in each fight, so "Sahagin x3"
+	// rather than "bjyt02 map 32 enc 0". That is what makes the picker filterable by
+	// monster, which is how a person actually looks for a fight.
+	//
+	// OFF BY DEFAULT, because turning it on reads one file out of the archive per
+	// fight, 863 of them, each a VBF open plus an inflate. It is a few seconds of
+	// one-off work, not something to do on every boot.
+	//
+	// Setting it takes effect at the next RefreshGameLists, which must be on the game
+	// thread like any other list rebuild.
+	bool BattleMonsterNames();
+	void SetBattleMonsterNames(bool on);
 
 	// ---------------------------------------------------------------------------
 	// Characters
@@ -63,6 +169,17 @@ namespace ffx
 	// game.
 	const workshop::PickerList& InventoryList();
 
+	// ALL 64 KEY ITEM SLOTS, which is the ones with a name and the ones without. The
+	// id is the 0xA000 based id that ffx::HasKeyItem and ffx::SetKeyItem take.
+	//
+	// About 52 are real. The rest are declared rows that nothing named, and they are
+	// listed as "unnamed <n>" because an unnamed row is still a flag the save file
+	// carries and still something an editor could fill.
+	//
+	// Empty until the battle kernel has loaded, because the name function resolves a
+	// string offset against a table pointer that is null before then.
+	const workshop::PickerList& KeyItemList();
+
 	// The auto-abilities that are legal on a weapon, and on an armour, read from the
 	// game's own customise recipe table. The id is the 0x8000 based ability id.
 	//
@@ -72,6 +189,13 @@ namespace ffx
 	// that does. The nine without a recipe do work in a slot, they just only appear
 	// on shipped gear, so a panel that wants them can still fall back to the kernel
 	// list behind a "show everything" toggle.
+	// THE ARCHIVE DERIVED LISTS, for workshop::WritePickerList and friends. These
+	// are the ones whose content cannot change unless the game's archive does, so
+	// they can be exported once and read back on every later boot. The character,
+	// party, aeon, equipment and inventory lists are deliberately NOT here: they
+	// come out of the save block and have to be rebuilt.
+	int CacheableGameLists(workshop::CacheableList* out, int max);
+
 	const workshop::PickerList& WeaponAbilityList();
 	const workshop::PickerList& ArmourAbilityList();
 
@@ -107,12 +231,15 @@ namespace ffx
 	// the simulation thread and the only way out is killing the process.
 	//
 	// Of the 402 ids, 348 have an asset path and 18 of those ship no file, which leaves
-	// 330. Both halves are checked here, the path at runtime and the 18 from a baked
-	// list, because a missing file cannot be detected from inside the process without a
-	// file existence call per id.
+	// 330 on the shipped archive.
+	//
+	// After ProbeEventPackages has run this is a MEASUREMENT: the engine opened the
+	// file. Before it has, it is the path table plus a baked list of the 24 ids known
+	// to ship nothing. The measurement wins when both exist, including when it
+	// disagrees, because a baked list cannot know about content that was added.
 	//
 	// Anything that takes an id from a human, rather than from EventList, must call this
-	// first.
+	// first. That includes everything taken from AllEventList.
 	bool EventIdLoadable(int eventId);
 
 	// Calls the game's own loader to fill the table, and returns whether it is

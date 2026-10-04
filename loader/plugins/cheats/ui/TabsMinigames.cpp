@@ -20,10 +20,13 @@
 
 #include "ffx/Atel.h"
 #include "ffx/Battle.h"
+#include "ffx/Encounter.h"
 #include "ffx/GameLists.h"
+#include "ffx/KernelTables.h"
 #include "ffx/GameState.h"
 #include "ffx/Minigames.h"
 #include "workshop/Log.h"
+#include "workshop/Overlay.h"
 #include "workshop/OverlayWidgets.h"
 #include "workshop/PickerList.h"
 
@@ -41,7 +44,11 @@ namespace cheats
 		const ImVec4 kAmber = ImVec4(1.0f, 0.75f, 0.2f, 1.0f);
 		const ImVec4 kGreen = ImVec4(0.5f, 1.0f, 0.5f, 1.0f);
 
-		// The arena fight list. Built once because it is baked data that cannot change.
+		// The arena fight list, which is a CURATED SUBSET with hand written names, not
+		// the authority. ffx::BattleList is the authority: it walks btl.bin in memory
+		// and has every fight in the game including the developers' test battles. This
+		// one survives because "Nemesis" is a more useful row than "zz1 map 604 enc 18",
+		// and because it works before the first battle has loaded the encounter table.
 		PickerList g_arena;
 
 		void BuildArenaList()
@@ -489,53 +496,197 @@ namespace cheats
 		}
 
 		// ---------------------------------------------------------------
-		// Arena fights
+		// Battles
 		// ---------------------------------------------------------------
-		if (ImGui::CollapsingHeader("Monster Arena fights and the penalty battles"))
+		if (ImGui::CollapsingHeader("Battles, every fight the game can start"))
 		{
+			const bool allowed = ffx::ScriptedBattleAllowed();
+
+			// THE LIST IS WALKED OUT OF MEMORY, scenes then zones then formation
+			// entries, out of the btl.bin the engine already loaded. Nothing here is
+			// baked, which is the point: a fight added to that file turns up in this
+			// picker with no change to this plugin.
+			const PickerList& fights = ffx::BattleList();
+
+			if (fights.Empty())
+			{
+				ImGui::TextColored(kAmber, "the encounter table has not been read yet");
+				ImGui::TextWrapped("btl.bin is loaded at the first battle init, so this "
+				                   "list fills in once one fight has started. It is not "
+				                   "an error at the title screen. Get into a battle, then "
+				                   "press refresh lists.");
+			}
+			else
+			{
+				static PickerState fightPick;
+				static int battleId = -1;
+
+				// The id in this list IS the battle id, so the first draw has to land on
+				// a real row rather than on 0, which is map 0 encounter 0.
+				if (battleId < 0)
+					battleId = fights.Items()[0].id;
+
+				PickerById("fight", fights.Items(), fights.Count(), &fightPick, &battleId);
+				ImGui::TextDisabled("%s, %d scene%s", fights.Describe(),
+				    ffx::EncounterSceneCount(),
+				    ffx::EncounterSceneCount() == 1 ? "" : "s");
+
+				if (fights.Overflowed())
+					ImGui::TextColored(kAmber, "the list overflowed, so some fights are "
+					                           "missing from it");
+
+				const int mapId = (battleId >> 16) & 0xFFFF;
+				const int encId = battleId & 0xFFFF;
+				ImGui::TextDisabled("battle id 0x%08X, which is (map %d << 16) | "
+				                    "encounter %d",
+				    (unsigned)battleId, mapId, encId);
+				ImGui::TextDisabled("a [scripted] row sits in a zone whose encounter rate "
+				                    "is 0, so nothing walks into it. That is the arena, "
+				                    "the penalty fights and the test battles.");
+
+				// WHAT IS ACTUALLY IN THE FIGHT, read out of its own battle field file.
+				// One archive read, so it happens when the selection changes and not per
+				// frame. The roster in that file is complete: units that only turn up
+				// partway through, Penance's arms and Yu Yevon's pagodas, are in it from
+				// the start.
+				static int shownFor = -1;
+				static ffx::EncounterMonsters shownSet = { 0, { 0 } };
+				static bool shownOk = false;
+
+				// ON THE GAME THREAD ONLY. The read goes through the engine's file
+				// layer, and a panel draws on whoever calls Present. The plugin's step
+				// handler is what makes this answer mean anything.
+				const bool canRead = OverlayOnGameThread();
+
+				if (canRead && shownFor != battleId)
+				{
+					shownFor = battleId;
+					shownOk = false;
+
+					int scene = 0;
+					int zone = 0;
+					int slot = 0;
+					if (ffx::BattleListLocate(battleId, &scene, &zone, &slot))
+						shownOk = ffx::EncounterMonstersAt(scene, zone, slot, &shownSet);
+				}
+
+				if (!canRead)
+					ImGui::TextDisabled("the panel is not drawing on the game thread, so "
+					                    "this fight's own file is not being read. The "
+					                    "enemy list needs that thread.");
+				else if (shownOk && shownSet.count > 0)
+				{
+					ImGui::Text("enemies:");
+					for (int i = 0; i < shownSet.count; ++i)
+					{
+						const char* name
+						    = ffx::KernelName(ffx::KernelMonsters, shownSet.ids[i]);
+						ImGui::SameLine();
+						ImGui::Text("%s%s", name && name[0] ? name : "?",
+						    i + 1 < shownSet.count ? "," : "");
+					}
+				}
+				else if (shownOk)
+					ImGui::TextDisabled("no enemies in this one. Seven of the 863 are "
+					                    "like that and they are all test rows.");
+				else
+					ImGui::TextDisabled("could not read this fight's battle field file. "
+					                    "Scene 0 slot 0 is expected to fail, its path is "
+					                    "the developers' own home directory.");
+
+				ImGui::BeginDisabled(!allowed);
+				if (ImGui::Button("start this fight"))
+				{
+					if (!ffx::RequestScriptedBattle(mapId, encId))
+						Log("cheats: battle (map %d, encounter %d) was not taken. The "
+						    "engine's own function returns -1 either way, so this read "
+						    "the pending kind and it did not become 2",
+						    mapId, encId);
+				}
+				ImGui::EndDisabled();
+			}
+
+			if (!allowed)
+			{
+				ImGui::TextColored(kAmber, "battles are disabled or one is already in a "
+				                           "phase other than 0, so nothing here will "
+				                           "start");
+			}
+
+			// FILTERING BY MONSTER, which is how a person actually looks for a fight.
+			// It costs one archive read per fight to put the names in the labels, 863
+			// of them, so it is a deliberate button rather than the default.
+			bool named = ffx::BattleMonsterNames();
+			if (ImGui::Checkbox("name every fight by its monsters", &named))
+			{
+				ffx::SetBattleMonsterNames(named);
+				RequestCheatListRefresh();
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("reads one archive file per fight, 863 of them, once. "
+			                    "Then you can type a monster name to find its fight.");
+
+			// Free during a battle, because the engine already has the section pointer.
+			ffx::EncounterMonsters live;
+			if (ffx::LiveEncounterMonsters(&live) && live.count > 0)
+			{
+				ImGui::Separator();
+				ImGui::Text("the fight running right now:");
+				for (int i = 0; i < live.count; ++i)
+				{
+					const char* name = ffx::KernelName(ffx::KernelMonsters, live.ids[i]);
+					ImGui::SameLine();
+					ImGui::Text("%s%s", name && name[0] ? name : "?",
+					    i + 1 < live.count ? "," : "");
+				}
+			}
+
+			if (ImGui::SmallButton("log the whole encounter table"))
+				ffx::LogEncounterTable();
+			ImGui::SameLine();
+			ImGui::TextDisabled("one line per scene with its map, name, zone count and "
+			                    "every encounter id in it");
+
+			// ---------------------------------------------------------
+			ImGui::Separator();
+			ImGui::TextDisabled("the arena and penalty fights with real names. Same ids, "
+			                    "read out of nagi0700's bytecode, so this one works "
+			                    "before the first battle.");
+
 			if (g_arena.Empty())
 				BuildArenaList();
 
 			static PickerState arenaPick;
 			static int arenaIndex = 0;
-			PickerById("fight", g_arena.Items(), g_arena.Count(), &arenaPick,
+			PickerById("named fight", g_arena.Items(), g_arena.Count(), &arenaPick,
 			    &arenaIndex);
-			ImGui::TextDisabled("%s", g_arena.Describe());
 
-			int mapId = 0;
-			int encId = 0;
+			int arenaMap = 0;
+			int arenaEnc = 0;
 			const char* label = nullptr;
-			const bool have = ffx::ArenaFightAt(arenaIndex, &mapId, &encId, &label);
+			const bool have = ffx::ArenaFightAt(arenaIndex, &arenaMap, &arenaEnc, &label);
 			if (have)
-				ImGui::TextDisabled("battle id 0x%08X, which is (map %d << 16) | "
-				                    "encounter %d",
-				    (unsigned)((mapId << 16) | encId), mapId, encId);
+				ImGui::TextDisabled("map %d encounter %d", arenaMap, arenaEnc);
 
-			const bool allowed = ffx::ScriptedBattleAllowed();
 			ImGui::BeginDisabled(!have || !allowed);
-			if (ImGui::Button("start this battle"))
+			if (ImGui::Button("start the named fight"))
 			{
-				if (!ffx::RequestScriptedBattle(mapId, encId))
-					Log("cheats: the battle request was not taken. The engine's own "
-					    "function returns -1 either way, so this read the pending kind "
-					    "and it did not become 2");
+				if (!ffx::RequestScriptedBattle(arenaMap, arenaEnc))
+					Log("cheats: arena battle (map %d, encounter %d) was not taken",
+					    arenaMap, arenaEnc);
 			}
 			ImGui::EndDisabled();
 
-			if (!allowed)
-			{
-				ImGui::SameLine();
-				ImGui::TextColored(kAmber, "battles are disabled or one is already in a "
-				                           "phase other than 0");
-			}
-
+			// ---------------------------------------------------------
 			ImGui::Separator();
-			ImGui::TextDisabled("any other battle by hand, same packing");
+			ImGui::TextDisabled("any pair by hand, same packing. An encounter id above "
+			                    "255 can never match: the resolver masks the low word of "
+			                    "the battle id but compares it against a byte.");
 
 			static int manualMap = 604;
 			static int manualEnc = 0;
 			IntRow("map id", &manualMap, 0, 65535);
-			IntRow("encounter id", &manualEnc, 0, 65535);
+			IntRow("encounter id", &manualEnc, 0, 255);
 			ImGui::BeginDisabled(!allowed);
 			if (ImGui::Button("start"))
 			{

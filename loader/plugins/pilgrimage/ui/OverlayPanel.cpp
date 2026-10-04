@@ -13,6 +13,7 @@
 #include "clones/CloneSpawner.h"
 #include "diag/HashProbe.h"
 #include "diag/InteractProbe.h"
+#include "ffx/GfxContext.h"
 #include "ffx/HideFlags.h"
 #include "ffx/Hub.h"
 #include "ffx/Walkmesh.h"
@@ -450,6 +451,14 @@ namespace pilgrimage
 	{
 		if (g_panel != 0)
 			return true;
+
+		// WHERE THE SWAPCHAIN IS, BEFORE THE OVERLAY GOES LOOKING FOR IT. The overlay
+		// knows no game addresses, so without this it has nothing to hook. It used to
+		// make a swapchain of its own and that crashed the boot, because a second
+		// swapchain makes the Steam overlay hook Present twice and recurse until the
+		// stack is gone.
+		ffx::PointOverlayAtSwapChain();
+
 		if (!InstallOverlay())
 			return false;
 

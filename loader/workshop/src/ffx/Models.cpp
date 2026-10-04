@@ -121,6 +121,12 @@ namespace ffx
 			{
 				const int* id = (const int*)(base + (size_t)i * Rva::ChrDataRecordBytes
 				    + Rva::ChrDataIdOffForFreeTest);
+				// -1 AND NOT 0, even though this table reads all zeroes before the
+				// engine fills it, because it sits above RVA 0x0088B5FF where the file
+				// has no bytes and the loader zero fills. Counting 0 as free would
+				// overcount badly once the table is real, since 0 is a valid chr id.
+				// Reporting "nothing free" before boot is the safe answer anyway, so
+				// leave this alone.
 				if (*id == -1)
 					++free;
 			}
@@ -281,6 +287,15 @@ namespace ffx
 		}
 
 		g_models.SetLive(!g_models.Empty());
+	}
+
+	int CacheableModelLists(workshop::CacheableList* out, int max)
+	{
+		if (max < 1)
+			return 0;
+		out[0].name = "models";
+		out[0].list = &g_models;
+		return 1;
 	}
 
 	const workshop::PickerList& ModelList()

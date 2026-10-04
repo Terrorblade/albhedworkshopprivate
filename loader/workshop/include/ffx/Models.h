@@ -35,7 +35,7 @@
 
 #include <windows.h>
 #include "ffx/Api.h" // for the Character forward declaration
-#include "workshop/PickerList.h"
+#include "workshop/PickerCache.h"
 
 namespace ffx
 {
@@ -79,6 +79,10 @@ namespace ffx
 	// (pc)" with the character or aeon name appended for the eighteen that have one.
 	// Built once, RefreshModelList rebuilds it.
 	const workshop::PickerList& ModelList();
+
+	// The model list for the list cache. It is the chr ROM index tables, so it is
+	// fixed by the archive. See ffx/ListExport.h.
+	int CacheableModelLists(workshop::CacheableList* out, int max);
 	void RefreshModelList();
 
 	// ---------------------------------------------------------------------------

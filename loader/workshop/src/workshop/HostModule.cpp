@@ -12,6 +12,67 @@ namespace workshop
 		BYTE* base = NULL;
 		DWORD imageSize = 0;
 
+		// Set by SweepImage below, which MEASURES whether the whole host image is
+		// committed and readable rather than assuming it. Readable's fast path is off
+		// until that measurement says yes.
+		bool imageAllReadable = false;
+		DWORD imageRegions = 0;
+
+		// Walks every region of the host image once and answers the question
+		// Readable's fast path depends on: is all of it committed and readable. One
+		// VirtualQuery per region, and the image has about a dozen.
+		void SweepImage()
+		{
+			imageAllReadable = false;
+			imageRegions = 0;
+			if (!base || !imageSize)
+				return;
+
+			const BYTE* end = base + imageSize;
+			const BYTE* at = base;
+
+			// 64 is far more regions than any image has. It is a bound so a surprise
+			// cannot turn a boot time check into a long loop.
+			for (int i = 0; i < 64 && at < end; ++i)
+			{
+				MEMORY_BASIC_INFORMATION info;
+				if (VirtualQuery(at, &info, sizeof(info)) != sizeof(info))
+					return;
+				if (info.State != MEM_COMMIT)
+				{
+					Log("  guard: image region at 0x%08X is not committed (state 0x%lX), "
+					    "so Readable keeps querying every call",
+					    (unsigned)(UINT_PTR)at, info.State);
+					return;
+				}
+				if (info.Protect & (PAGE_NOACCESS | PAGE_GUARD))
+				{
+					Log("  guard: image region at 0x%08X is protect 0x%lX, so Readable "
+					    "keeps querying every call",
+					    (unsigned)(UINT_PTR)at, info.Protect);
+					return;
+				}
+
+				++imageRegions;
+				const BYTE* next = (const BYTE*)info.BaseAddress + info.RegionSize;
+				if (next <= at)
+					return; // no forward progress, so stop rather than spin
+				at = next;
+			}
+
+			if (at < end)
+			{
+				Log("  guard: the image has more than 64 regions, so Readable keeps "
+				    "querying every call");
+				return;
+			}
+
+			imageAllReadable = true;
+			Log("  guard: all %lu regions of the image are committed and readable, so a "
+			    "Readable of a module address needs no syscall",
+			    imageRegions);
+		}
+
 		bool LooksLikePrologue(const BYTE* p)
 		{
 			// push ebp; mov ebp, esp      the overwhelmingly common MSVC frame setup
@@ -102,6 +163,8 @@ namespace workshop
 		imageSize = nt->OptionalHeader.SizeOfImage;
 		Log("  header: in-memory ImageBase=0x%08X SizeOfImage=0x%08X",
 		    nt->OptionalHeader.ImageBase, nt->OptionalHeader.SizeOfImage);
+
+		SweepImage();
 		return true;
 	}
 
@@ -122,10 +185,38 @@ namespace workshop
 		return value >= 0x00010000u && value < 0x80000000u;
 	}
 
+	// ---------------------------------------------------------------------------
+	// WHY Readable HAS A FAST PATH, AND WHY IT IS MEASURED RATHER THAN ASSUMED.
+	//
+	// Readable is a VirtualQuery, which is a syscall that takes the process address
+	// space lock. The kit calls it as a guard before every host read, and most of
+	// those reads are of module globals. One list rebuild was making roughly half a
+	// million of these calls and the game froze for ten seconds inside
+	// NtQueryVirtualMemory.
+	//
+	// The loader maps a PE as one view covering the whole SizeOfImage, and that view
+	// cannot be unmapped while the module is loaded, so for an address inside the
+	// host image the answer is both always yes and permanently fixed. That is the
+	// theory. SweepImage checks it once, with one VirtualQuery per region, and the
+	// fast path stays off unless the measurement agrees. If some build really does
+	// have a no-access page inside its image, nothing changes except the speed.
+	// ---------------------------------------------------------------------------
 	bool Readable(const void* p, SIZE_T bytes)
 	{
 		if (!LooksLikePointer((DWORD)(UINT_PTR)p))
 			return false;
+
+		if (imageAllReadable && bytes != 0)
+		{
+			const BYTE* first = (const BYTE*)p;
+			const BYTE* last = first + bytes - 1;
+
+			// Both ends, because a span starting in the image can run off the end of
+			// it, and the tail would then be somebody else's memory.
+			if (last >= first && InsideImage(first) && InsideImage(last))
+				return true;
+		}
+
 		MEMORY_BASIC_INFORMATION info;
 		if (!VirtualQuery(p, &info, sizeof(info)))
 			return false;

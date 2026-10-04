@@ -108,6 +108,19 @@ namespace ffx
 		const DWORD BtlBeginBattle = 0x00381020; // what the poll calls once the flag is up
 		const DWORD BtlMainStep = 0x00390C10;    // where the poll lives
 
+		// dword. 1 means no battle may start. Both battle request paths test it first,
+		// so anything that wants to know whether a request will be honoured reads this
+		// and FFX_Btl_GetPhase (Rva::BtlGetPhase in addresses/Battle.h) rather than
+		// trusting a return value.
+		const DWORD BattleDisabled = 0x00D2CA2C;
+
+		// THE SCRIPTED BATTLE REQUEST, which is pending kind 2 rather than 1, is
+		// Rva::BtlRequestScriptedBattle in addresses/Minigames.h along with
+		// BtlResolveBattleId and DebugBeginSelectedBattle. It is declared there because
+		// the Monster Arena and the butterfly penalty fights are its only interesting
+		// callers. Note it ALWAYS returns -1, success or not, so the only honest test is
+		// to read BattlePendingKind afterwards and see whether it became 2.
+
 		// ---------------------------------------------------------------------------
 		// The per-map encounter data. One 4096-byte file, loaded once at battle init,
 		// resolved through the shipped cd index to
@@ -149,6 +162,7 @@ namespace ffx
 				BattleFormationIndex,
 				BtlBeginBattle,
 				BtlMainStep,
+				BattleDisabled,
 				EncTableBlob,
 				EncMapTable,
 				EncZoneBlob,

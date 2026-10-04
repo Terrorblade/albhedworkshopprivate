@@ -48,6 +48,8 @@
 #include "ffx/addresses/Battle.h"
 #include "ffx/addresses/Character.h"
 #include "ffx/addresses/Cutscene.h"
+#include "ffx/addresses/DataFile.h"
+#include "ffx/addresses/Debug.h"
 #include "ffx/addresses/Encounter.h"
 #include "ffx/addresses/EscMenu.h"
 #include "ffx/addresses/Input.h"

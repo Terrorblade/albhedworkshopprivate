@@ -1,5 +1,7 @@
 #include "ffx/WorldState.h"
 
+#include "ffx/GameLists.h"
+
 #include <string.h>
 
 #include "ffx/Addresses.h"
@@ -424,6 +426,49 @@ namespace ffx
 		workshop::Log("world state: warped to map %d entry %d. That consumed the context "
 		              "bit, so a second warp in this context will be refused.",
 		    mapId, entryPoint);
+		return true;
+	}
+
+	bool ArmWarpGate()
+	{
+		typedef void(__cdecl * ArmFn)(void);
+		ArmFn arm = Resolve<ArmFn>(Rva::MapArmWarpGate);
+		if (!Readable((void*)arm, 1))
+			return false;
+		arm();
+		return true;
+	}
+
+	bool WarpWithSavedFade(int eventId, int entryPoint)
+	{
+		if (entryPoint < 0 || entryPoint > 255)
+			return false;
+
+		// The loadability check comes before anything else, because getting it wrong does
+		// not produce an error, it produces an unkillable spin inside the load.
+		if (!EventIdLoadable(eventId))
+		{
+			workshop::Log("world state: refusing a warp to event %d. It has no shipped "
+			              "package, and loading one of those spins the simulation thread in "
+			              "while(1) with no way out but killing the process.",
+			    eventId);
+			return false;
+		}
+
+		if (!Block())
+			return false;
+
+		typedef void(__cdecl * WarpSavedFn)(int eventId, char entryPoint, int flag);
+		WarpSavedFn warp = Resolve<WarpSavedFn>(Rva::MapWarpToWithSavedFade);
+		if (!Readable((void*)warp, 1))
+			return false;
+
+		// Arm it ourselves rather than refusing, which is what the engine's own callers
+		// do. The gate is consumed by the warp, so this is per call.
+		ArmWarpGate();
+
+		warp(eventId, (char)entryPoint, 0);
+		workshop::Log("world state: warped to event %d entry %d", eventId, entryPoint);
 		return true;
 	}
 

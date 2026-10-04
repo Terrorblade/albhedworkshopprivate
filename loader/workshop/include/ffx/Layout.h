@@ -52,6 +52,11 @@ namespace ffx
 		const DWORD Byte181 = 0x181;    // byte, read right after HideFlags
 		const DWORD GroundMode = 0x182; // byte, m_groundMode. Allocate sets 1.
 		const DWORD Byte183 = 0x183;    // byte, set by category
+		// Written by FFX_Ch_SetByte184, which is the whole of that function. Field and
+		// weapon CHRs are given 15 right after allocation. Carry it across a model swap
+		// rather than re-deriving it.
+		const DWORD Byte184 = 0x184; // byte
+
 		const DWORD PartyIndex = 0x18C; // int
 
 		// m_objId. For a CHR an event script spawned this IS ITS ATEL ACTOR ID, not an

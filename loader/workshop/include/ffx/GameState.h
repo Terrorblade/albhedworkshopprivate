@@ -61,6 +61,12 @@ namespace ffx
 	// The battle party roster, active members plus reserves.
 	const int kBattlePartySize = 7;
 
+	// SaveData+0x3D58 is one 20-byte array, the three active slots then 17 bench
+	// slots. The engine's own setter bounds only on slot >= 0, so the upper bound is
+	// the caller's job.
+	const int kPartyOrderSlots = 20;
+	const int kBenchPartySize = 17;
+
 	// Inventory. The arrays are physically 256 entries but every gameplay loop in
 	// the binary bounds at 112, so 112 is the capacity that matters.
 	const int kItemSlots = 112;
@@ -108,7 +114,12 @@ namespace ffx
 		// Party flags at +0x2C.
 		const BYTE FlagInParty = 0x01;   // the only membership record there is
 		const BYTE FlagPermanent = 0x02; // cannot be removed from the party
-		const BYTE FlagUnknown04 = 0x04;
+
+		// Locked into its party slot. SaveDataSetPartyOrderSlot refuses any swap where
+		// either side has this, which is the story-forced member lock and the most
+		// likely reason a party write appears to do nothing at all.
+		const BYTE FlagSlotLocked = 0x04;
+
 		const BYTE FlagSelectable = 0x10; // set and cleared with FlagInParty
 	}
 
@@ -201,7 +212,10 @@ namespace ffx
 		const DWORD KernelTable31 = 0x3D28;   // 0x20
 		const DWORD ConfBlock = 0x3D48;       // 0x84, kernel "conf"
 		const DWORD Gil = 0x3D48;             // dword, first field of conf
-		const DWORD FieldParty = 0x3D58;      // 3 bytes, THE ACTIVE PARTY
+		// One 20-byte array: 3 active slots then 17 bench slots, character record
+		// indices with 0xFF for empty. See kPartyOrderSlots.
+		const DWORD FieldParty = 0x3D58;      // BYTE[3], THE ACTIVE PARTY
+		const DWORD PartyBench = 0x3D5B;      // BYTE[17], contiguous with the above
 		const DWORD AeonOrder = 0x3D5B;       // 17 bytes
 		const DWORD SharedAbilities = 0x3D6C; // 32 bytes, ability ids 0x3060+
 		const DWORD StartItemIds = 0x3D8C;    // word[8], new-game starting items
@@ -260,6 +274,53 @@ namespace ffx
 	// outside battle; inside a battle the engine has already copied the party into
 	// its own work RAM, so see BattlePartyMember.
 	bool SetActiveParty(BYTE slot0, BYTE slot1, BYTE slot2);
+
+	// The same three slots through the engine's own setter, which is the one to use
+	// from a UI. It keeps the 17-slot bench a consistent partition of the 20-byte
+	// order array, where writing the bytes raw can leave a character in both halves.
+	//
+	// It also REFUSES silently in two cases, and this reports that: a character who
+	// is not in the party at all, and either side of the swap having the locked bit
+	// set. outRefused, when given, gets a bit per slot that was refused.
+	//
+	// Does NOT make the change visible on a map that is already loaded. Follow it
+	// with RefreshPartyVisibility.
+	bool SetFieldParty(BYTE slot0, BYTE slot1, BYTE slot2, int* outRefused = nullptr);
+
+	// One slot of the 20-byte order array, 0..2 active and 3..19 bench. False when
+	// the engine refused it.
+	bool SetPartyOrderSlot(BYTE charIndex, int slot);
+
+	// The bench, the 17 slots after the three active ones.
+	BYTE BenchPartyMember(int slot);
+
+	// Adds or removes a character through the game's own setter, which also drives
+	// the equipment lock bit and the aeon order array, so it beats poking the flags
+	// byte. Clamped to 0..17 here, because the engine's own version has no bound at
+	// all and an index of 255 writes about 37 KB into the save block.
+	bool SetCharacterInParty(BYTE charIndex, bool inParty);
+
+	// The other three flag bits. Locked is the one that matters: SetPartyOrderSlot
+	// refuses any swap where either side has it, which is the story-forced member
+	// lock, and it is the most likely reason a party write appears to do nothing.
+	bool CharacterPermanent(BYTE charIndex);
+	bool CharacterSelectable(BYTE charIndex);
+	bool CharacterLockedInSlot(BYTE charIndex);
+
+	// Clears or sets the locked bit. There is no engine setter for it, so this pokes
+	// the flags byte, which is why it is a separate call from the rest.
+	bool SetCharacterLockedInSlot(BYTE charIndex, bool locked);
+
+	// Rebuilds the party visible mask and so makes a field party change show up on
+	// the map that is already loaded. Writing the party bytes alone does not.
+	// GAME THREAD ONLY, it walks the actor table.
+	bool RefreshPartyVisibility();
+
+	// The localised name for a character index, bounded to 0..17 here because the
+	// engine's own guard is 30 and index 18 hands back the save block CRC read as a
+	// string. NULL out of range. This is the right label for a picker, where
+	// DebugCharNames only covers the first eight and is not localised.
+	const char* UnitDisplayName(BYTE charIndex);
 
 	// The battle-side roster, 7 entries, [0..2] active. Lives outside the save
 	// block in battle work RAM, and is only meaningful while a battle is running.
@@ -451,6 +512,57 @@ namespace ffx
 
 	// How many of the four are filled.
 	int EquipEntryAbilityCount(const EquipEntryData* e);
+
+	// The slot id for an array index, which is what every setter below wants. The
+	// game's own adder returns 0x5000 plus the index and its decoder takes the index
+	// back out with slotId & 0xFFF, so high nibble 5 names the main 200 entry array.
+	WORD EquipSlotId(int index);
+
+	// The game's own name for a piece, out of w_name.bin. An FFX equipment name is a
+	// FUNCTION of the ability set rather than a stored string, and the row holds one
+	// name per character, so this is the only correct source for a label. NULL when
+	// there is no game or the slot id is not a real one. Points into an engine buffer
+	// that the next call overwrites, so copy it.
+	const char* EquipName(WORD slotId);
+
+	// Writes one ability word directly. This is the only way to clear or replace a
+	// slot, because no engine function removes an auto-ability. Pass 0 to clear.
+	// Refreshes the name afterwards, which is not optional.
+	bool SetEquipEntryAbility(EquipEntryData* e, int index, WORD abilityId);
+
+	// Appends through the game's own adder, which honours the piece's own slot count
+	// at +0x0B and recomputes the derived stats on the way out. False when the piece
+	// is full. Prefer this to the setter when appending, because it is the path the
+	// Customise screen takes.
+	bool AddEquipEntryAbility(EquipEntryData* e, WORD abilityId);
+
+	// Recomputes the name id and the icon word from the ability set. Both writers
+	// above already call it. Exposed for a caller that pokes the words itself.
+	bool RefreshEquipEntryName(EquipEntryData* e);
+
+	// The game's own tests, rather than a reimplementation of the terminator rules.
+	bool EquipEntryHasAbility(const EquipEntryData* e, WORD abilityId);
+	bool EquipEntryHasFreeSlot(const EquipEntryData* e);
+
+	// Whether the Customise screen would accept this piece. force skips the
+	// "somebody is wearing it" part of the rule.
+	bool EquipEntryCustomisable(const EquipEntryData* e, bool force = false);
+
+	// One row of kaizou.bin, the customise recipe table. THE source for which
+	// auto-abilities are legal on a weapon versus an armour, because nothing else in
+	// the game says. 125 rows.
+	struct EquipRecipe
+	{
+		int kind;      // 1 weapon, 2 armour
+		int abilityId; // 0x8000 based
+		int itemId;    // what the Customise screen charges
+		int quantity;
+	};
+
+	// How many recipes there are, and one row. Zero and false before the table has
+	// been filled, which happens during boot.
+	int EquipRecipeCount();
+	bool EquipRecipeAt(int index, EquipRecipe* out);
 
 	// What this character has on. kEquipSlotIdNone when nothing.
 	WORD EquippedWeaponSlotId(BYTE charIndex);

@@ -509,6 +509,61 @@ namespace ffx
 		return Field8(BattleUnit(unitIndex), Unit::CtbCounter, &value) ? (int)value : -1;
 	}
 
+	bool SetUnitOverdrive(int unitIndex, int value)
+	{
+		BYTE* unit = BattleUnit(unitIndex);
+		BYTE max = 0;
+		if (!Field8(unit, Unit::OverdriveMax, &max))
+			return false;
+		if (!Readable(unit + Unit::Overdrive, 1))
+			return false;
+
+		if (value < 0)
+			value = 0;
+		// The engine's full test is gauge == max, so a gauge above max would read as
+		// not full rather than as more than full.
+		if (value > (int)max)
+			value = (int)max;
+
+		unit[Unit::Overdrive] = (BYTE)value;
+		return true;
+	}
+
+	bool FillUnitOverdrive(int unitIndex)
+	{
+		BYTE* unit = BattleUnit(unitIndex);
+		BYTE max = 0;
+		if (!Field8(unit, Unit::OverdriveMax, &max))
+			return false;
+		if (!Readable(unit + Unit::Overdrive, 1))
+			return false;
+
+		// Copying the max over the gauge, which is what the booster's invincible refill
+		// does. The max is per character and per mode, so a constant would be wrong.
+		unit[Unit::Overdrive] = max;
+		return true;
+	}
+
+	int FillAllyOverdrives()
+	{
+		if (!BattleRunning())
+			return 0;
+
+		int filled = 0;
+		// The ally array is 0..30 with the eight enemies at 20..27 inside it, so the
+		// enemy band is skipped rather than relying on Present alone.
+		for (int i = 0; i <= kBattleMaxUnitIndex; ++i)
+		{
+			if (i >= 20 && i <= 27)
+				continue;
+			if (!UnitPresent(i))
+				continue;
+			if (FillUnitOverdrive(i))
+				++filled;
+		}
+		return filled;
+	}
+
 	int UnitActionState(int unitIndex)
 	{
 		BYTE value = 0;

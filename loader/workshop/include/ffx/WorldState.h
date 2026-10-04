@@ -190,6 +190,24 @@ namespace ffx
 	bool CanWarpTo();
 	bool WarpTo(int mapId, int entryPoint);
 
+	// Opens the gate WarpTo needs, which turns out to be three instructions rather than
+	// something to work around. FFX_Map_ArmWarpGate is one of only two setters of that
+	// bit in the whole binary, and the engine's own warp path calls it immediately
+	// before warping. So "the gate is shut" is a precondition, not a wall.
+	bool ArmWarpGate();
+
+	// The warp the GAME uses for a door, a save point or an airship destination. Its
+	// only callers are four ATEL script opcodes, which is every place in FFX that
+	// moves the player somewhere, so this is the one to prefer over WarpTo.
+	//
+	// Arms the gate first, so unlike WarpTo it does not have to be refused.
+	//
+	// REFUSES AN EVENT ID THAT CANNOT BE LOADED, and that refusal is the point of it.
+	// FFX_Ev_LoadEventPackage checks the package magic and then spins in while(1) with
+	// no break and no return, so a bad id hard locks the simulation thread. See
+	// ffx::EventIdLoadable in ffx/GameLists.h.
+	bool WarpWithSavedFade(int eventId, int entryPoint);
+
 	// Whether the game's own debug mode is on. Read only. Turning it on has effects well
 	// beyond letting a warp through, so the kit does not offer a setter.
 	bool IsDebugMode();

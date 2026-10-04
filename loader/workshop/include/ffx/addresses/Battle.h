@@ -588,6 +588,378 @@ namespace ffx
 		const DWORD BtlInternalError = 0x0039F210;
 
 		// ---------------------------------------------------------------------------
+		// THE DAMAGE AND COST PATHS. Derivation in ..\..\..\..\reversing\CHEAT_BATTLE.md.
+		//
+		// The path is two phased, which is why there are two obvious hook points rather
+		// than one. The numbers are computed and PARKED in the target's own record, and a
+		// later step applies them:
+		//
+		//   BtlApplyActionToTargets (GameState.h)   picks the targets
+		//     BtlStageEffectsForTarget              snapshots HP/MP/CTB, loops the entries
+		//       BtlComputeEffectForTarget           THE FORMULA AND THE CAP
+		//   ... animations play ...
+		//   BtlEffectCompleteStep                   the completion path
+		//     BtlApplyPendingEffects                walks the parked entries
+		//       BtlApplyHpDamage / MpDamage / CtbDelay
+		//     BtlOnUnitDefeated (GameState.h)       HP <= 0 or the death bit becomes a KO
+		//
+		// BtlComputeEffectForTarget is the single best hook for both "take zero damage"
+		// and "deal the maximum", because it is the one place the three damage dwords
+		// exist as plain integers with the attacker and the target both in the argument
+		// list. Detour it and fix up entry+0x20/+0x24/+0x28 after the original returns,
+		// then RETURN entry+0x20 rather than the original's value, because
+		// BtlStageEffectsForTarget sums the return into the predicted-death byte.
+		// ---------------------------------------------------------------------------
+
+		// int __cdecl (int atkIdx, int atkActor, int tgtIdx, int tgtActor,
+		//              int abilityRow, int a6, u8 *entry44, int, int, int, int *out)
+		//
+		// Returns the final entry+0x20, the HP delta. Prologue is push ebp / mov ebp,esp /
+		// sub esp,0xB8 with no rel32 in the first five bytes, so a plain detour is clean.
+		const DWORD BtlComputeEffectForTarget = 0x0038E630;
+
+		// int __cdecl (int atkIdx, int atkActor, int tgtIdx, int tgtActor,
+		//              int abilityRow, int a6, u8 *block, int, int, int, int)
+		const DWORD BtlStageEffectsForTarget = 0x00389740;
+
+		const DWORD BtlApplyPendingEffects = 0x0038F060;
+		const DWORD BtlEffectCompleteStep = 0x0038D980;
+
+		// int __cdecl (int tgtIdx, int tgtActor, int amount, int other, int a5, int a6,
+		//              int a7). Positive amount is damage, negative is healing.
+		const DWORD BtlApplyHpDamage = 0x0038E230;
+		const DWORD BtlApplyMpDamage = 0x0038E3B0;
+		const DWORD BtlApplyCtbDelay = 0x0038E1E0; // NOT gated by BtlIsUnitDamageable
+
+		// BOOL __cdecl (int unitIdx). The engine's OWN invincibility gate, and one line:
+		//   !(IsEnemySlot(i) && MonInvincible) && !(!IsEnemySlot(i) && PlyInvincible)
+		// Three callers: StageEffectsForTarget, ApplyHpDamage, ApplyMpDamage. So setting
+		// BtlDbgPlyInvincible covers every HP and MP write with no detour. It does NOT
+		// gate statuses or CTB delay.
+		const DWORD BtlIsUnitDamageable = 0x0038D3A0;
+
+		const DWORD BtlDamageFormula = 0x00389BF0;
+		const DWORD BtlShowFloatingNumber = 0x0039FA00; // kind 0 HP 1 MP 2 CTB 4 miss 5 overkill
+		const DWORD ClampInt = 0x0039A0C0;              // int (int v, int lo, int hi)
+
+		// THE DAMAGE CAP. 9999, or 99999 when the ATTACKER's auto-ability word at
+		// BtlActorAutoAbil2Off has bit 0x800 (Break Damage Limit). The ability row's flag
+		// word at +0x20 overrides: bit 0x80 forces 99999, bit 0x40 forces 9999. The clamp
+		// is symmetric, so healing is capped the same way, and it covers all three slots.
+		//
+		// A plugin should write above the cap and let it clamp, which is exactly what
+		// BtlDbgDmgIs100000 does. Do not disable it: the number renderer, the overkill
+		// test and the dealt-99999 tracker all assume five digits.
+		const DWORD BtlDmgCapSelectSite = 0x0038ECCA;    // mov eax, 800h
+		const DWORD BtlDmgCapBdlConstSite = 0x0038ECE3;  // imm32 90000
+		const DWORD BtlDmgCapBaseConstSite = 0x0038ECE9; // imm32 9999
+		const DWORD BtlDmgClampLoopSite = 0x0038ED78;    // the three-slot clamp loop head
+		const int BtlDamageCap = 9999;
+		const int BtlDamageCapBreak = 99999;
+		const int BtlBreakDamageLimitBit = 0x0800; // in BtlActorAutoAbil2Off
+
+		// The MP cost side. BtlGetCommandMpCost is declared further up. It already does
+		//   if (IsEnemySlot(actor) || BtlDbgMagFree) { cost = 0; extra = 0; }
+		// so enemies pay nothing already and BtlDbgMagFree only changes the player side.
+		// BtlSpendCommandCost is the ONLY cost-side MP subtraction in the binary, checked
+		// by scanning every instruction with displacement 0x5D4, and it spends the values
+		// BtlCheckCommandCost cached from BtlGetCommandMpCost. So the flag is sufficient
+		// and neither PatchCallSite nor a detour is needed.
+		const DWORD BtlGetRawMpCost = 0x0038CF70;      // int (u8 actorIdx, int abilityRow)
+		const DWORD BtlSpendCommandCost = 0x0038E5A0;  // int (int actorIdx)
+		const DWORD BtlGetUsableCommandKinds = 0x0038F700; // bit 1 normal, bit 2 overdrive
+
+		// ---------------------------------------------------------------------------
+		// THE BATTLE UNIT RECORD, the fields the damage and overdrive paths touch.
+		// All relative to Rva::BattleGetActor(index) from GameState.h. Each one has two
+		// independent proofs, the load from the character record and the use on the
+		// damage path. See CHEAT_BATTLE.md section 1.2 for the per-field evidence.
+		// ---------------------------------------------------------------------------
+		const int BtlActorMaxHpOff = 0x0594;      // dword
+		const int BtlActorMaxMpOff = 0x0598;      // dword
+		const int BtlActorOverkillMaxHpOff = 0x05A4; // dword, the entry bit 0x80 test
+		const int BtlActorOdModeOff = 0x05BB;     // byte, 0..19
+		const int BtlActorOdGaugeOff = 0x05BC;    // byte
+		const int BtlActorOdGaugeMaxOff = 0x05BD; // byte, the "full" threshold
+		const int BtlActorCurHpOff = 0x05D0;      // dword
+		const int BtlActorCurMpOff = 0x05D4;      // dword
+		const int BtlActorStatus1Off = 0x0606;    // word, bit 1 = KO, bit 4 = removed
+		const int BtlActorStatus2Off = 0x0616;    // word, bit 0x100 = non-HP death cause
+		const int BtlActorDerivedStatusOff = 0x0640; // byte, bit 8 = Zombie
+		const int BtlActorCtbCounterOff = 0x065C;    // byte
+		const int BtlActorAutoAbil1Off = 0x06BC;  // word, 0x4000 Half MP, 0x8000 One MP
+		const int BtlActorAutoAbil2Off = 0x06BE;  // word, 0x800 Break Damage Limit
+		const int BtlActorAutoAbil3Off = 0x06C0;  // word
+		const int BtlActorCachedMpCostOff = 0x06CC; // byte, spent by SpendCommandCost
+		const int BtlActorCachedOdCostOff = 0x06CD; // byte
+		const int BtlActorWorkHpOff = 0x06E4;     // dword, seeded from CurHp
+		const int BtlActorWorkMpOff = 0x06E8;     // dword
+		const int BtlActorWorkCtbOff = 0x06EC;    // dword
+		const int BtlActorOdModeCountedOff = 0x06F0; // dword, per-battle mask
+		const int BtlActorKoFlagOff = 0x0DCC;     // byte, non-zero means already dead
+		const int BtlActorWillDieOff = 0x0DEC;    // byte, predicted
+		const int BtlActorOverkillAccumOff = 0x0F60; // dword
+
+		// The pending effect blocks, which is where a damage number lives between being
+		// computed and being applied. Two blocks, 728 bytes each, 24 byte header then 16
+		// entries of 44, and (728 - 24) / 44 is 16 exactly.
+		const int BtlActorPendingEffectsOff = 0x0774;
+		const int BtlActorPendingEffects2Off = 0x0A4C;
+		const int BtlEffectBlockBytes = 728;
+		const int BtlEffectBlockHeaderBytes = 24;
+		const int BtlEffectEntryBytes = 44;
+		const int BtlEffectEntryCount = 16;
+
+		// Entry fields, relative to the entry.
+		const int BtlEffectEntryCountersOff = 0x07; // 13 status turn counters
+		const int BtlEffectEntryStatus1Off = 0x14;  // word, copied over actor+0x606
+		const int BtlEffectEntryStatus2Off = 0x16;  // word, copied over actor+0x616
+		const int BtlEffectEntryMaskOff = 0x18;     // word, 1 HP 2 MP 4 CTB 0x80 overkill
+		const int BtlEffectEntryHpOff = 0x20;       // dword
+		const int BtlEffectEntryMpOff = 0x24;       // dword
+		const int BtlEffectEntryCtbOff = 0x28;      // dword
+
+		// ---------------------------------------------------------------------------
+		// THE OVERDRIVE GAUGE AND MODE, both halves.
+		//
+		// Three fields, all in the 148 byte character record at Rva::CharRecords from
+		// addresses/GameState.h, and all three were in that file's "no reader found" gap:
+		//
+		//   record+0x38  byte      the SELECTED mode id, 0..19
+		//   record+0x60  20 words  the per-mode use counter. 0xFFFF = not available to
+		//                          this character, 0 = earned, else uses remaining
+		//   record+0x88  dword     the UNLOCKED mode bitmask, bit n = mode id n
+		//
+		// BtlLoadUnitParams copies record+0x38/0x39/0x3A into actor+0x5BB/0x5BC/0x5BD at
+		// battle start and BtlCommitActorsToSave copies them back at the end. So write the
+		// RECORD out of battle and the ACTOR in battle. Writing the record mid-battle is
+		// silently undone by the writeback.
+		//
+		// The gauge is 0..actor+0x5BD and "full" means gauge == max, not a fixed number.
+		// The max is seeded from the ply_save kernel blob, so READ IT, do not assume. The
+		// shipped idiom is BoosterInvincibleRefillUnit's actor+0x5BC = actor+0x5BD.
+		// ---------------------------------------------------------------------------
+		const DWORD BtlAddOverdrive = 0x003B1590; // int (charIdx, actor, amount)
+		const DWORD BtlGetOverdriveGauge = 0x00395550; // int (u8 unitIdx), 0 for an enemy
+		const DWORD BtlGetOverdriveMax = 0x00395590;   // int (u8 unitIdx)
+		const DWORD BtlGetOverdriveMode = 0x003955F0;  // int (u8 unitIdx)
+
+		// int __cdecl (unsigned charIdx, unsigned modeId, int force). Decrements the word
+		// at record+0x60+2*modeId. Caps modeId at 0x10, while the grant loop walks to 19.
+		const DWORD BtlBumpOverdriveModeCounter = 0x003B10C0;
+
+		// void __cdecl (void), from BtlMainStep. For each of the 7 party-order slots walks
+		// modeId 0..19 and sets the record+0x88 bit for any mode whose counter hit 0. It
+		// only fires for a mode whose bit is still CLEAR, so setting all 20 bits at once
+		// unlocks everything AND suppresses the popups rather than triggering 140 of them.
+		const DWORD BtlGrantUnlockedOverdriveModes = 0x003B1180;
+
+		const DWORD BtlLoadUnitParams = 0x0039B4F0;         // record -> actor, per unit
+		const DWORD BtlLoadCharRecordIntoActor = 0x0039C5F0; // builds actor+0x6BC/6BE/6C0
+		const DWORD BtlCommitActorsToSave = 0x00385FC0;      // actor -> record, battle end
+
+		const int CharRecordBytes = 148;
+		const int CharRecCurHpOff = 0x1C;
+		const int CharRecCurMpOff = 0x20;
+		const int CharRecMaxHpOff = 0x24;
+		const int CharRecMaxMpOff = 0x28;
+		const int CharRecAbilityFlagsOff = 0x3E;      // 6 words, ability ids 0x3000..0x305F
+		const int CharRecOdModeOff = 0x38;            // byte
+		const int CharRecOdGaugeOff = 0x39;           // byte
+		const int CharRecOdGaugeMaxOff = 0x3A;        // byte
+		const int CharRecOdModeCountersOff = 0x60;    // 20 words
+		const int CharRecOdModeUnlockMaskOff = 0x88;  // dword
+		const DWORD CharRecOdModeUnlockMaskAll = 0x000FFFFF; // bits 0..19
+
+		// ---------------------------------------------------------------------------
+		// THE OVERDRIVE MODE LIST, for a data driven picker.
+		//
+		// BtlOdModeDisplayOrder is the ids in SCREEN order, and its only cross reference
+		// in the binary is the eleven line loop in MenuBuildListRows case 1:
+		//
+		//   mask = MenuGetCharOverdriveModeMask(cursorChar);     // record+0x88
+		//   for (j = 0; j < 20; ++j) {
+		//       id = BtlOdModeDisplayOrder[j];
+		//       if ((1 << id) & mask) addRow(id, kind 3);
+		//   }
+		//
+		// The display NAME is KernelStringGet(1, 4147 + modeId, lang) and the description
+		// is KernelStringGetDesc(1, 4147 + modeId, lang), both declared in
+		// addresses/MenuSystem.h. lang comes from SaveDataGetStringLang. The bytes are in
+		// the FFX glyph encoding, not ASCII. An out of range id is SAFE, KernelTableGetRow
+		// falls back to the first range descriptor rather than computing a wild pointer.
+		//
+		// The names are not in the executable, they come out of the kernel string blob, so
+		// the picker has to be populated by calling the getter at runtime.
+		//
+		// The count 20 is confirmed four separate times: this loop, the grant loop, the
+		// debug helper's loop, and the 20 word counter array ending exactly where the
+		// unlock mask begins.
+		// ---------------------------------------------------------------------------
+		const DWORD BtlOdModeDisplayOrder = 0x0088765C; // u8[20], 2 0 1 3 4 .. 19
+		const int BtlOdModeCount = 20;
+		const int BtlOdModeStringGroup = 1;
+		const int BtlOdModeStringBaseId = 4147; // 0x1033, add the mode id
+
+		const DWORD SaveDataGetStringLang = 0x003851F0; // int (void), the lang bit
+
+		// Menu-area helpers the cheat UI calls. Named for what they do rather than for the
+		// module, and kept here because the cheat path needs them. If addresses/MenuSystem.h
+		// ever adopts any of these, delete the copy here rather than keeping both.
+		const DWORD MenuGetCharOverdriveMode = 0x004C1BD0;     // int (u8), record+0x38
+		const DWORD MenuGetCharOverdriveModeMask = 0x004C1BF0; // int (u8), record+0x88
+		const DWORD MenuBuildListRows = 0x004C2390;            // case 1 is the mode list
+		const DWORD MenuGetAbilityName = 0x004C1A20; // const char * (short abilityId)
+		const DWORD MenuGetAbilityHelp = 0x004C19E0; // const char * (short abilityId)
+		const DWORD MenuCountTableEntries = 0x004D2D80; // (base, 5, charIdx, group)
+		const DWORD MenuFindTableEntry = 0x004D2DC0;    // same args, first index
+
+		// MenuSetCharRecordByte38 0x004C2C90 writes record+0x38 and is declared in
+		// addresses/MenuSystem.h. MenuExecModule21Overdrive 0x004D0460 is there too.
+
+		// ---------------------------------------------------------------------------
+		// PER-CHARACTER OVERDRIVE ABILITIES.
+		//
+		// BtlSetAbilityFlag is the ONE call to make. It refuses anything whose high
+		// nibbles are not 0x3000, then splits: ids below 0x3060 go in the per-character
+		// bitmap at record+0x3E, ids 0x3060 and above go in the SHARED bitmap at
+		// SaveAbilityFlagsShared with charIdx ignored. Every overdrive ability id is
+		// 0x3060 or above, so learned overdrives are global to the save rather than per
+		// character, which is consistent because each id belongs to one character anyway.
+		//
+		// It then calls BattleIsActive and re-syncs the live actor's usable-ability state,
+		// which is why you call it instead of setting the bit yourself.
+		//
+		// This is NOT Rva::SaveDataSetCharAbility 0x00385E00 from addresses/GameState.h.
+		// That one writes the wider bitmap at saveData+0x6034. The overdrive path uses
+		// this one, see GAME_STATE.md on which of the two means what.
+		//
+		// The id ranges per character are in reversing/OVERDRIVES.md section 11, derived
+		// from the shipped command.bin kind bytes: Tidus 0x3060..0x3063, Auron
+		// 0x3064..0x3067, Kimahri 0x3068..0x3073, Wakka 0x3074..0x3077, Lulu
+		// 0x3078..0x308A, Rikku 0x308B..0x30CA, parent commands 0x3118..0x311E.
+		// ---------------------------------------------------------------------------
+		const DWORD BtlSetAbilityFlag = 0x00385C50;  // int (charIdx, abilityId, on)
+		const DWORD BtlTestAbilityFlag = 0x00385020; // BOOL (charIdx, abilityId)
+		const DWORD BtlTestInnateAbilityFlag = 0x003850B0; // BOOL (abilityId)
+		const DWORD SaveAbilityFlagsShared = 0x00D307FC;   // u16[], ids 0x3060 and up
+		const int BtlSharedAbilityIdBase = 0x3060;
+
+		// The per-character menu ability table, for enumerating without hardcoding ranges.
+		// BtlGetMenuAbilityTableRow(0, &stringBase) gives the base. Entries are 4 bytes,
+		// { u8 charIdx, u8 group, u16 abilityId }, terminated when charIdx == 0xFF. Group
+		// 72 selects a character's overdrive PARENT command, which is how the Overdrive
+		// screen's header gets Swordplay, Bushido, Slots, Fury, Ronso Rage and Mix.
+		const DWORD BtlGetMenuAbilityTableRow = 0x00390200;
+		const DWORD BtlMenuAbilityTable = 0x00D2A958;   // short *, the table pointer
+		const DWORD BtlAbilityEffectTable = 0x00D2A944; // short *, equipment auto-abilities
+		const DWORD BtlPlayerAbilityTable = 0x00D2A92C; // short *, BtlGetPlayerAbilityRow
+		const int BtlMenuAbilityEntryBytes = 4;
+		const int BtlMenuAbilityGroupOverdriveParent = 72;
+
+		// ---------------------------------------------------------------------------
+		// THE SHIPPED BATTLE DEBUG FLAG BLOCK, 0x00D2A8F8..0x00D2A927.
+		//
+		// All zero at startup, all plain .data, and NONE of them gated on
+		// g_ffxDebugMode. The only writers in the retail binary are the debug window
+		// 0x003C6E20, the two ATEL set/get syscalls 0x003A81F0 and 0x003A27E0, and a bulk
+		// reset at 0x003CE450. So a plugin can just write them, and three of them ARE the
+		// cheat feature set:
+		//
+		//   BtlDbgPlyInvincible   party takes no HP or MP damage
+		//   BtlDbgMagFree         casting costs nothing, player side only
+		//   BtlDbgLimitBreakOn    overdrive usable at any gauge
+		//   BtlDbgMonHp1          every enemy enters battle at 1 HP, the instant kill
+		//
+		// PlyInvincible, MonInvincible, CtbPause, AutoExecute, MonInput, PrintInfo and
+		// SkipCommand are already declared further up this file.
+		//
+		// Two gaps worth stating. PlyInvincible does NOT block statuses, so a Death cast
+		// still removes an "invincible" party member, and the floating damage number still
+		// appears because BtlShowFloatingNumber runs before the gate. BtlDbgDmgStatusOff
+		// blocks statuses but on BOTH sides, so it cannot be part of a party-only god
+		// mode. Closing that gap needs the BtlComputeEffectForTarget detour.
+		// ---------------------------------------------------------------------------
+		const DWORD BtlDbgCtbSameOrder = 0x00D2A8FB;
+		const DWORD BtlDbgMagNotEff = 0x00D2A900;
+		const DWORD BtlDbgMagFree = 0x00D2A901; // FREE MP
+		const DWORD BtlDbgMagNum0 = 0x00D2A902;
+		const DWORD BtlDbgSumNotEff = 0x00D2A904;
+		const DWORD BtlDbgFullSet = 0x00D2A905;
+		const DWORD BtlDbgDmgStatusOff = 0x00D2A906; // both sides, see above
+		const DWORD BtlDbgExchgWillDie = 0x00D2A907;
+		const DWORD BtlDbgDmgRandomOff = 0x00D2A908;
+		const DWORD BtlDbgDmgCritOff = 0x00D2A909;
+		const DWORD BtlDbgDmgProbOff = 0x00D2A90A;
+		const DWORD BtlDbgLimitBreakOn = 0x00D2A90C;  // overdrive at any gauge
+		const DWORD BtlDbgDmgCritOn = 0x00D2A90D;
+		const DWORD BtlDbgDmgIs1 = 0x00D2A90E;
+		const DWORD BtlDbgDmgIs10000 = 0x00D2A90F;
+		const DWORD BtlDbgDmgIs100000 = 0x00D2A910; // MAX DAMAGE, not side selective
+		const DWORD BtlDbgOverKillOff = 0x00D2A914;
+		const DWORD BtlDbgLimitBreakOff = 0x00D2A916; // stops the gauge filling at all
+		const DWORD BtlDbgPlyHp1 = 0x00D2A91D;        // party loads at 1 HP
+		const DWORD BtlDbgMonHp1 = 0x00D2A91E;        // INSTANT KILL
+		const DWORD BtlDbgDmgHitMiss = 0x00D2A91F;
+		const DWORD BtlDbgWeapon = 0x00D2A920;
+		const DWORD BtlDbgMagicItem = 0x00D2A921;
+
+		// Three more that live outside that block.
+		const DWORD BtlDbgKillAllHp = 0x00D3338C;            // dword, -99999 per HP event
+		const DWORD BtlDbgSetKillAllHp = 0x0038E620;         // its only writer
+		const DWORD BtlDbgOverdriveAlwaysFull = 0x00D333E8;  // dword, fills the gauge
+		const DWORD BtlDbgSetOverdriveAlwaysFull = 0x00390420; // its only writer
+		const DWORD BtlDealt9999Flag = 0x00D33390;   // dword, latched at the cap
+		const DWORD BtlDealt99999Flag = 0x00D33394;
+
+		// Shipped debug helpers worth binding to buttons. All check BattleIsActive
+		// themselves, so they are safe to call from a UI callback.
+		// DebugMaxHpMpAndStats 0x00384B00 is declared in addresses/Debug.h.
+		const DWORD BtlDebugAllUnitsHp1 = 0x00384B80;    // void (void), all 31 units
+		const DWORD BtlDebugSetAllMonsterHp = 0x00384BC0; // void (int toOne), units 20..27
+		const DWORD BtlDebugSetAllPartyHp = 0x00384C80;   // void (int toOne), units 0..17
+		const DWORD BtlDebugOdModesOneUseAway = 0x00384C40; // void (void)
+
+		// The Invincible booster's per-turn top-up, which is the closest shipped thing to
+		// god mode and the reference for a legitimate full-gauge write. It is a between
+		// turns restore, so a unit can still be killed inside one turn.
+		//
+		// Its toggle is Rva::BoosterInvincible 0x00EFB7CC in addresses/EscMenu.h, and that
+		// file's DamagePathReader 0x00392A90 is the SAME function as BtlSendMenu above.
+		// That is not a clash, it is a cross-check: the booster fires from the turn-claim
+		// path right before a party member's menu opens.
+		const DWORD BtlBoosterInvincibleRefillUnit = 0x003847C0; // void (int unitIdx)
+
+		// ---------------------------------------------------------------------------
+		// The in-battle party, which is a different thing from the field party. The
+		// field array in addresses/GameState.h is the save block, this is battle work
+		// RAM, and at battle end BtlCommitActorsToSave copies this back over the field
+		// party. So a field party edit made during a battle is silently thrown away.
+		// ---------------------------------------------------------------------------
+
+		// BYTE[17], the battle BENCH, an exact complement of BattlePartyOrder[0..2].
+		// The IDB called this g_ffxBattleAeonOrder, which is wrong, it holds whoever is
+		// not in an active slot.
+		const DWORD BattleBenchOrder = 0x00D2C8A3;
+
+		// int (unsigned char outIdx, unsigned char inIdx, int mode, char). THE way to
+		// change the party mid battle. Mode 0 is a plain Switch, above 0 is the Summon
+		// path. Writing BattlePartyOrder by hand is not enough: this also fixes
+		// actor+16, actor+3528 and actor+1278, pulls and re-inserts the CTB turn queue
+		// entries, and keeps the bench complementary.
+		const DWORD BtlSwapUnitIntoPartySlot = 0x003ADAE0;
+
+		// void (void). Pushes and pops the whole arrangement, for the Summon return.
+		const DWORD BtlSwapPartyArrangement = 0x003ADE10;
+
+		// int (BattleActor *). The only reader of CharIndexToChrId, and the place
+		// Rikku's alternate outfit turns c007 into c041.
+		const DWORD BtlResolveUnitChrId = 0x0039A440;
+
+		// BtlCommitActorsToSave is declared above. It runs at battle end and calls
+		// BtlCommitPartyToField, which is what overwrites a mid battle field party edit.
+
+		// ---------------------------------------------------------------------------
 		// Every address above, for the startup build check.
 		// ---------------------------------------------------------------------------
 		inline const DWORD* BattleRvaList(int* count)
@@ -827,6 +1199,88 @@ namespace ffx
 				BtlDbgSkipCommand,
 				BtlDbgPrintInfo,
 				BtlInternalError,
+				BtlComputeEffectForTarget,
+				BtlStageEffectsForTarget,
+				BtlApplyPendingEffects,
+				BtlEffectCompleteStep,
+				BtlApplyHpDamage,
+				BtlApplyMpDamage,
+				BtlApplyCtbDelay,
+				BtlIsUnitDamageable,
+				BtlDamageFormula,
+				BtlShowFloatingNumber,
+				ClampInt,
+				BtlDmgCapSelectSite,
+				BtlDmgCapBdlConstSite,
+				BtlDmgCapBaseConstSite,
+				BtlDmgClampLoopSite,
+				BtlGetRawMpCost,
+				BtlSpendCommandCost,
+				BtlGetUsableCommandKinds,
+				BtlAddOverdrive,
+				BtlGetOverdriveGauge,
+				BtlGetOverdriveMax,
+				BtlGetOverdriveMode,
+				BtlBumpOverdriveModeCounter,
+				BtlGrantUnlockedOverdriveModes,
+				BtlLoadUnitParams,
+				BtlLoadCharRecordIntoActor,
+				BtlCommitActorsToSave,
+				BtlOdModeDisplayOrder,
+				SaveDataGetStringLang,
+				MenuGetCharOverdriveMode,
+				MenuGetCharOverdriveModeMask,
+				MenuBuildListRows,
+				MenuGetAbilityName,
+				MenuGetAbilityHelp,
+				MenuCountTableEntries,
+				MenuFindTableEntry,
+				BtlSetAbilityFlag,
+				BtlTestAbilityFlag,
+				BtlTestInnateAbilityFlag,
+				SaveAbilityFlagsShared,
+				BtlGetMenuAbilityTableRow,
+				BtlMenuAbilityTable,
+				BtlAbilityEffectTable,
+				BtlPlayerAbilityTable,
+				BtlDbgCtbSameOrder,
+				BtlDbgMagNotEff,
+				BtlDbgMagFree,
+				BtlDbgMagNum0,
+				BtlDbgSumNotEff,
+				BtlDbgFullSet,
+				BtlDbgDmgStatusOff,
+				BtlDbgExchgWillDie,
+				BtlDbgDmgRandomOff,
+				BtlDbgDmgCritOff,
+				BtlDbgDmgProbOff,
+				BtlDbgLimitBreakOn,
+				BtlDbgDmgCritOn,
+				BtlDbgDmgIs1,
+				BtlDbgDmgIs10000,
+				BtlDbgDmgIs100000,
+				BtlDbgOverKillOff,
+				BtlDbgLimitBreakOff,
+				BtlDbgPlyHp1,
+				BtlDbgMonHp1,
+				BtlDbgDmgHitMiss,
+				BtlDbgWeapon,
+				BtlDbgMagicItem,
+				BtlDbgKillAllHp,
+				BtlDbgSetKillAllHp,
+				BtlDbgOverdriveAlwaysFull,
+				BtlDbgSetOverdriveAlwaysFull,
+				BtlDealt9999Flag,
+				BtlDealt99999Flag,
+				BtlDebugAllUnitsHp1,
+				BtlDebugSetAllMonsterHp,
+				BtlDebugSetAllPartyHp,
+				BtlDebugOdModesOneUseAway,
+				BtlBoosterInvincibleRefillUnit,
+				BattleBenchOrder,
+				BtlSwapUnitIntoPartySlot,
+				BtlSwapPartyArrangement,
+				BtlResolveUnitChrId,
 			};
 			if (count)
 				*count = (int)(sizeof(list) / sizeof(list[0]));

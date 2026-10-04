@@ -224,6 +224,22 @@ namespace ffx
 	// 4 and 5 waiting.
 	int UnitActionState(int unitIndex);
 
+	// The live gauge on the battle actor, which is the one THIS battle reads.
+	// BtlLoadUnitParams copies the save record's gauge into the actor at battle start
+	// and nothing copies back until the battle ends, so mid battle the save record is
+	// the stale one and ffx::SetOverdriveGauge in ffx/BattleDebug.h will appear to do
+	// nothing. Write this instead.
+	//
+	// "FULL" IS AN EQUALITY against unit+0x5BD, not a fixed number, and the max is per
+	// character and per mode, so Fill copies the max rather than writing a constant.
+	// That is the engine's own idiom. SetUnitOverdrive clamps to 0..max for the same
+	// reason.
+	bool SetUnitOverdrive(int unitIndex, int value);
+	bool FillUnitOverdrive(int unitIndex);
+
+	// Every present ally slot. Returns how many took, 0 with no battle running.
+	int FillAllyOverdrives();
+
 	// ---------------------------------------------------------------------------
 	// The command queue
 	//

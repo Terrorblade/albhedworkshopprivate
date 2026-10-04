@@ -87,6 +87,50 @@ namespace ffx
 		// slots 0..2 from the field party lives here.
 		const DWORD BtlSetupUnitRoster = 0x0039C110;
 
+		// SaveData+0x3D58 is ONE 20-byte array of character record indices, 0xFF empty.
+		// [0..2] are the three active field slots and [3..19] the 17 bench slots, which
+		// is why SetCharInParty scans 20 and the party menu passes 3+bench as a slot.
+		// Three active members is the array's own limit, not a soft rule.
+		const DWORD FieldPartyActive = 0x00D307E8; // BYTE[3]
+		const DWORD FieldPartyBench = 0x00D307EB;  // BYTE[17], contiguous with the above
+
+		// int (int charIndex, int slot). THE party setter. Returns -1 applied and 0
+		// REFUSED, and a refusal is otherwise silent. It refuses when either the
+		// incoming character or the current occupant has the locked bit set, and it
+		// refuses a character who is neither already in the order array nor in party.
+		//
+		// NO UPPER BOUND ON slot, only slot >= 0. A slot of 20 or more writes past the
+		// array into the rest of the save block. Clamp to 0..19 yourself.
+		const DWORD SaveDataSetPartyOrderSlot = 0x00384D00;
+
+		// int (int s0, int s1, int s2). The engine's own three-at-once setter, which is
+		// exactly SetPartyOrderSlot(s0,0), (s1,1), (s2,2). Prefer it over writing the
+		// three bytes, because it keeps the bench a consistent partition.
+		const DWORD SaveDataSetFieldParty3 = 0x00386950;
+
+		// BYTE *(int *outCount). Returns FieldPartyBench and writes 17.
+		const DWORD SaveDataGetPartyBenchArray = 0x003852D0;
+
+		// The character record flags byte, record stride 148. Bit 0 in party, bit 1
+		// permanent, bit 2 LOCKED INTO ITS SLOT, bit 4 selectable. Bit 2 is what makes a
+		// party write silently do nothing, so a cheat that wants to move a story-locked
+		// member has to clear it, and there is no setter for it.
+		const DWORD CharRecordFlags = 0x00D32088; // BYTE, + 148 * charIndex
+		const DWORD SaveDataGetCharFlagBit2 = 0x00385360;  // BOOL (unsigned char)
+		const DWORD SaveDataIsCharPermanent = 0x003853C0;  // BOOL (unsigned char), bit 1
+		const DWORD SaveDataIsCharSelectable = 0x003853A0; // BOOL (unsigned char), bit 4
+
+		// char *(int unitIndex). The localised name, and the right label for a picker
+		// because it covers all 18 including the aeons where DebugCharNames covers 8.
+		//
+		// ITS GUARD IS index <= 30, NOT 17. GetCharName(18) hands back the save block's
+		// CRC field read as a string. Bound to 0..17 in the caller.
+		const DWORD GetUnitDisplayName = 0x004AC850;
+
+		// int (void). SaveData+0xD1. Non-zero means Rikku wears the alternate outfit,
+		// which is why BtlResolveUnitChrId hands out c041 instead of c007 for her.
+		const DWORD SaveDataGetRikkuAltOutfit = 0x0046A7E0;
+
 		// ---------------------------------------------------------------------------
 		// Which character is which. DWORD[18] mapping a character record index to the
 		// chr id FFX_Ch_Allocate wants:
@@ -157,6 +201,22 @@ namespace ffx
 		const DWORD SaveDataTestCharAbility = 0x00385140;
 		const DWORD SaveDataSetCharAbility = 0x00385E00; // (charIndex, abilityId, on)
 
+		// int (unsigned char charIndex). THE authority on the record layout. Rebuilds
+		// the derived stats, max HP and max MP from the base fields plus EquipStatBonus.
+		const DWORD SaveDataRecomputeCharDerived = 0x003860F0;
+
+		// char *(int charIndex). The menu's wrapper: recompute, then re-clamp current
+		// HP and MP. SaveDataRecomputeAllCharDerived is declared in
+		// addresses/MenuSystem.h.
+		const DWORD MenuRecomputeCharAndClamp = 0x004C3070;
+
+		// int (void). Refills all 18 name records from ply_save.bin, which is the
+		// reset-name path. SaveDataReencodeCharNames is in addresses/WorldState.h.
+		const DWORD SaveDataReloadCharNames = 0x00387100;
+
+		// unsigned (int charIndex). AP needed for the next sphere level.
+		const DWORD SaveDataApNeededForNextLevel = 0x00384E90;
+
 		// ---------------------------------------------------------------------------
 		// Inventory and gil.
 		// ---------------------------------------------------------------------------
@@ -188,6 +248,10 @@ namespace ffx
 		// __int16 *(int *outCount) / char *(int *outCount). Both write 112.
 		const DWORD SaveDataGetItemIdArray = 0x00390530;
 		const DWORD SaveDataGetItemCountArray = 0x00390510;
+
+		// int (void). Rebuilds the two menu display lists. Needed after a direct write
+		// to the id or count arrays instead of SaveDataAddItem.
+		const DWORD SaveDataRebuildItemLists = 0x003906A0;
 
 		// WORD[256] of 0x2000-based item ids (255 = empty slot) and the parallel
 		// BYTE[256] of counts 0..99. Physically 256 entries each, but every gameplay
@@ -253,6 +317,35 @@ namespace ffx
 		const DWORD SaveDataGetEquipStatBonus = 0x003987F0;
 		const DWORD EquipStatBonus = 0x00D35E00;
 
+		// short (unsigned charIndex, int abilityId). ORs a bit into the ability bitmap
+		// at EquipStatBonus + 28*index + 0x10. Ignores any id that is not 0x3000-based.
+		// SaveDataClearEquipStatBonus is declared in addresses/WorldState.h.
+		const DWORD SaveDataSetEquipStatBonusAbility = 0x00398840;
+
+		// int (EquipEntry *entry). An equipment name is a FUNCTION of its ability set:
+		// 0x5000 to 0x5046 for a weapon, 0x504A to 0x509E for an armour.
+		const DWORD EquipComputeNameId = 0x003A0CF0;
+
+		// int (short nameId, int charIndex, int variant, WORD *outIcon) and
+		// int (int slotId). Both return a char * out of w_name.bin. The second takes
+		// an owned slot id, which is what a list UI has.
+		const DWORD EquipGetNameString = 0x003A0C50;
+		const DWORD SaveDataGetEquipNameString = 0x003ABDF0;
+
+		// BOOL (EquipEntry *entry) and int (EquipEntry *entry, int force). The game's
+		// own "has a free ability slot" and "can be customised" tests.
+		const DWORD EquipHasFreeAbilitySlot = 0x004BF720;
+		const DWORD MenuCustomizeIsEntryEligible = 0x004D5750;
+
+		// char *(int *outCount). Row 0 of kaizou.bin and its count. Rows are 8 bytes:
+		// WORD kind (1 weapon, 2 armour), WORD abilityId, WORD itemId, BYTE quantity.
+		// THE enumerable auto-ability list, because nothing else says weapon or armour.
+		const DWORD EquipGetCustomizeTable = 0x00390A10;
+		const DWORD EquipCustomizeTable = 0x00D2A964; // short *, 125 x 8
+
+		// EquipAddAbilityToEntry and EquipRefreshEntryNameId are declared in
+		// addresses/MenuSystem.h. Call them in that order or the name goes stale.
+
 		// ---------------------------------------------------------------------------
 		// Treasure, the chest side of the inventory.
 		//
@@ -281,6 +374,17 @@ namespace ffx
 		const DWORD AtelGiveTreasureWithMessage = 0x0045A8A0;
 		const DWORD AtelGiveTreasureSilent = 0x00457B70;
 
+		// The two tables behind a chest, both loaded from asset class 13 by
+		// LoadTreasureTables. The equipment one holds 22-byte rows in the same shape as
+		// an EquipEntry, and TreasureGiveReward case 5 is the recipe for turning one
+		// into a new entry.
+		const DWORD LoadTreasureTables = 0x00399020;     // int (void)
+		const DWORD TreasureGiveReward = 0x00399420;     // void (int kind, int arg)
+		const DWORD TreasureTable = 0x00D35FF4;          // BYTE *, 4-byte rows
+		const DWORD TreasureTableSize = 0x00D35FF0;      // DWORD, byte count
+		const DWORD EquipTemplateTable = 0x00D35FFC;     // BYTE *, 22-byte rows
+		const DWORD EquipTemplateTableSize = 0x00D35FF8; // DWORD, byte count
+
 		// ---------------------------------------------------------------------------
 		// Monster Arena and the bestiary. The three blocks between the item masks and
 		// the key item flags.
@@ -300,6 +404,52 @@ namespace ffx
 		// ---------------------------------------------------------------------------
 		// Progression and the shared kernel-table primitive.
 		// ---------------------------------------------------------------------------
+		// The sphere grid. 4896 bytes at SaveData+0x21EC:
+		//   +0x0000 1280 node slots of 2 bytes, [0] the panel kind (0xFF = empty),
+		//           [1] a bitmask of which of characters 0..6 have activated it
+		//   +0x0A00 1280 link bytes, a per-character trail mask, cosmetic only
+		//   +0x0F00 7 WORDs, each character's current node index
+		//   +0x0F18 BYTE grid id, +0x0F19 BYTE zoom level
+		//
+		// Setting an activation bit is the whole of "activated". Everything a node
+		// gives is recomputed from those bits by SphereGridRecomputeDerived, declared
+		// in addresses/WorldState.h, and that is the one call an edit must be followed
+		// by. Note it only scans node slots 0..1023 of the 1280.
+		// ---------------------------------------------------------------------------
+		const DWORD SphereGridNodes = 0x00D2EC7C;            // SaveData+0x21EC
+		const DWORD SaveDataGetSphereGridNodes = 0x00384F40; // char *(void)
+
+		// char (short *nodes). New game only. Memsets 4896 bytes, then fills the kinds
+		// and the start positions from the layout assets.
+		const DWORD SphereGridInitNodes = 0x00653DE0;
+
+		// int (void). Allocates and fills KernelTablePanel and KernelTableSphere, both
+		// of which are null until the grid screen has run. Calling it twice leaks.
+		const DWORD SphereGridLoadPanelTables = 0x00654810;
+
+		// int (void). Parses the grid layout asset into MenuWork: 40-byte node records
+		// at +0x808, 20-byte link records at +0xA808, counts at +2 and +4.
+		const DWORD SphereGridLoadLayout = 0x00645570;
+
+		// int (void) each. The save blob into the menu's working copy and back again.
+		// The menu copy wins on the way out, so do not edit the blob with the grid up.
+		const DWORD SphereGridSaveToMenu = 0x00649590;
+		const DWORD SphereGridMenuToSave = 0x0065BB70;
+
+		// DWORD at SaveData+0x3D0C. Bits 14..15 pick which grid the save uses, 0 being
+		// Standard. Bit 3 picks the alternate name strings in the kernel tables.
+		const DWORD SaveDataOptionFlags = 0x00D3079C;
+
+		// WORD[7] start node per character, and WORD *[7] of 0xFFFF-terminated
+		// pre-activated node lists, for the Standard grid. The other two grids are at
+		// +0x10 and +0x20, and at +0x48 and +0x90.
+		const DWORD SphereGridStartNodes = 0x00886C00;
+		const DWORD SphereGridStartActivated = 0x00886C5C;
+
+		// char *[70], the eiichi_abmap_data file names. 69 art, one data file.
+		const DWORD SphereGridAssetNames = 0x00885EF0;
+
+		// ---------------------------------------------------------------------------
 		const DWORD CharRecords = 0x00D3205C; // SaveData+0x55CC, 18 x 148
 		const DWORD CharAbility = 0x00D32AC4; // SaveData+0x6034, 18 x 44
 		const DWORD CharNames = 0x00D32DDC;   // SaveData+0x634C, 18 x 20
@@ -309,6 +459,39 @@ namespace ffx
 		// at +0 then that many 12-byte descriptors from +8, each
 		// { WORD lo, WORD hi, WORD stride, WORD stringOffset, DWORD dataOffset }.
 		const DWORD KernelTableGetRow = 0x003AB870;
+
+		// int (int table, int rangeIndex). hi - lo + 1 of that descriptor. Pass 0. Use
+		// it instead of a hardcoded row count.
+		const DWORD KernelTableRowCount = 0x003AB8F0;
+
+		// unsigned (const char *name, void *dest) and int (int which). The file reader
+		// and the six-case loader that makes the pointers below resident.
+		const DWORD BtlReadKernelBin = 0x00382DF0;
+		const DWORD BtlLoadKernelTables = 0x00381D40;
+
+		// ---------------------------------------------------------------------------
+		// THE resident table pointers, all short * for KernelTableGetRow. Every
+		// shipped table has one range starting at 0, so row i is at *ptr + 20 + i*
+		// stride and a name is stringBase + *(WORD *)(row + 0).
+		//
+		// command.bin (0x3xxx) is BtlPlayerAbilityTable and a_ability.bin (0x8xxx) is
+		// BtlAbilityEffectTable, both declared in addresses/Battle.h.
+		// ---------------------------------------------------------------------------
+		const DWORD KernelTableItem = 0x00D2A940;      // item.bin, 112 x 96, 0x2xxx
+		const DWORD KernelTableWName = 0x00D363B4;     // w_name.bin, 170 x 72, 0x5xxx
+		const DWORD KernelTableImportant = 0x00D334C0; // important.bin, 64 x 20, 0xAxxx
+		const DWORD KernelTablePlyRom = 0x00D2A938;    // ply_rom.bin, 20 x 44
+		const DWORD KernelTableMonMagic1 = 0x00D2A930; // 300 x 92, 0x4xxx
+		const DWORD KernelTableMonMagic2 = 0x00D2A934; // 247 x 92, 0x6xxx
+		const DWORD KernelTablePanel = 0x016860E0;     // panel.bin, 127 x 24
+		const DWORD KernelTableSphere = 0x016860E4;    // sphere.bin, 50 x 16
+
+		// int (int id), returning a char *. THE one name function: it handles a 0x2xxx
+		// item, a 0x3xxx command, a 0x4xxx or 0x6xxx monster ability and an 0x8xxx
+		// auto-ability. The second is int (short id) for 0xAxxx key items.
+		// MenuGetAbilityName and MenuGetAbilityHelp are in addresses/Battle.h.
+		const DWORD BtlGetAbilityNameString = 0x004B8D70;
+		const DWORD KeyItemGetNameString = 0x00390860;
 
 		// int (void). Non-zero while a battle is running. One flag for the whole
 		// process, which is what makes SaveDataGetCharCurrentStats ambiguous in co-op.
@@ -339,6 +522,17 @@ namespace ffx
 				SaveDataSetCharInParty,
 				BattlePartyOrder,
 				BtlCommitPartyToField,
+				FieldPartyActive,
+				FieldPartyBench,
+				SaveDataSetPartyOrderSlot,
+				SaveDataSetFieldParty3,
+				SaveDataGetPartyBenchArray,
+				CharRecordFlags,
+				SaveDataGetCharFlagBit2,
+				SaveDataIsCharPermanent,
+				SaveDataIsCharSelectable,
+				GetUnitDisplayName,
+				SaveDataGetRikkuAltOutfit,
 				BtlSetupUnitRoster,
 				CharIndexToChrId,
 				CharNamesJp,
@@ -393,6 +587,49 @@ namespace ffx
 				KernelTableGetRow,
 				BattleIsActive,
 				BattleGetActor,
+				SaveDataRecomputeCharDerived,
+				MenuRecomputeCharAndClamp,
+				SaveDataReloadCharNames,
+				SaveDataApNeededForNextLevel,
+				SaveDataRebuildItemLists,
+				SaveDataSetEquipStatBonusAbility,
+				EquipComputeNameId,
+				EquipGetNameString,
+				SaveDataGetEquipNameString,
+				EquipHasFreeAbilitySlot,
+				MenuCustomizeIsEntryEligible,
+				EquipGetCustomizeTable,
+				EquipCustomizeTable,
+				LoadTreasureTables,
+				TreasureGiveReward,
+				TreasureTable,
+				TreasureTableSize,
+				EquipTemplateTable,
+				EquipTemplateTableSize,
+				SphereGridNodes,
+				SaveDataGetSphereGridNodes,
+				SphereGridInitNodes,
+				SphereGridLoadPanelTables,
+				SphereGridLoadLayout,
+				SphereGridSaveToMenu,
+				SphereGridMenuToSave,
+				SaveDataOptionFlags,
+				SphereGridStartNodes,
+				SphereGridStartActivated,
+				SphereGridAssetNames,
+				KernelTableRowCount,
+				BtlReadKernelBin,
+				BtlLoadKernelTables,
+				KernelTableItem,
+				KernelTableWName,
+				KernelTableImportant,
+				KernelTablePlyRom,
+				KernelTableMonMagic1,
+				KernelTableMonMagic2,
+				KernelTablePanel,
+				KernelTableSphere,
+				BtlGetAbilityNameString,
+				KeyItemGetNameString,
 			};
 			if (count)
 				*count = (int)(sizeof(list) / sizeof(list[0]));

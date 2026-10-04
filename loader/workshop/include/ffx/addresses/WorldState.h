@@ -97,19 +97,46 @@ namespace ffx
 		// Sets both delay counters, which is "wait n simulation steps before loading".
 		const DWORD MapSetTransitionFrames = 0x0048EB50;
 
-		// The full warp: unbind the player CHR, request the change, set the fade, set the
-		// transition frames.
+		// The full warp: unbind the player CHR, request the change, cancel a pending battle,
+		// set the fade, set the transition frames.
 		//
-		// DO NOT CALL THIS. It opens with
+		// GATED, but the gate is one call. It opens with
 		//     if (*(char *)g_ffxAtelCtx >= 0 && !FFX_IsDebugMode()) return;
-		// and then CLEARS that same bit, so it needs bit 0x80 of the ATEL context's byte 0
-		// set and it consumes it. A second call in the same context is silently refused.
-		// Use MapRequestChange and set the fade separately.
+		// and then CLEARS that bit, so it needs bit 0x80 of the ATEL context's byte 0 set
+		// and it consumes it. Call MapArmWarpGate first, which is what the engine's own
+		// warp path does. An earlier note here said DO NOT CALL, which was too strong.
 		const DWORD MapWarpTo = 0x0046FEC0;
 
-		// The AutoTestManager stdin command "JumpMap <mapname>". Reachable in retail today
-		// with stdin attached and no patching, which makes it the cheapest way to test map
-		// warping at all. Goes through MapWarpTo, so it carries that gate.
+		// Sets the gate bit and ctx+0x210 bit 2. Three instructions, no gate, no side
+		// effects. One of only two setters of that bit in the binary.
+		const DWORD MapArmWarpGate = 0x004729C0;
+
+		// int (int mapId, char entryPoint, int useSavedFade). PREFER THIS. Same body as
+		// MapWarpTo, and it is what every door, save point and airship destination reaches
+		// through ATEL Core 17, 171, 267 and 268. Same gate.
+		const DWORD MapWarpToWithSavedFade = 0x0046FF40;
+
+		// void (float). One float store into MapScreenFadeRate. MapWarpTo passes -1/15.
+		const DWORD MapSetScreenFadeRate = 0x00477450;
+		const DWORD MapScreenFadeRate = 0x00F28310;
+
+		// void (void). 20 teardown calls then MapWarpTo(23, 0). The other setter of the
+		// gate bit, and it sets it on context 0 specifically.
+		const DWORD MapReturnToTitle = 0x0046DA10;
+
+		// What AtelStepOnce calls once the deferred request matures. Unloads the old map,
+		// re-inits the camera, aborts an FMV, loads the package, snapshots the location
+		// history. NOT a call a mod makes, listed so nobody mistakes EvLoadEventPackage
+		// (addresses/Minigames.h) for the whole job.
+		const DWORD SceneInit = 0x0048E070;
+
+		// Raised when mapId == QuitPseudoMapId. FFX_MainStep consumes it.
+		const DWORD MapLeaveFieldRequest = 0x00F27108;
+
+		// The AutoTestManager stdin command "JumpMap <mapname>". DOES NOT WORK IN RETAIL,
+		// twice over: the name table it searches is empty unless LoadEventIdTable has run,
+		// and the stdin command queue is never drained because AutoTestDrainQueue has zero
+		// callers. See reversing\CHEAT_WARP.md section 8. Goes through MapWarpTo.
 		const DWORD AutoTestJumpMap = 0x00508100;
 
 		// The deferred request state. MapChangePending is the flag FFX_Atel_StepOnce polls.
@@ -127,6 +154,98 @@ namespace ffx
 		const DWORD DebugMode = 0x00F3C910;
 
 		// ---------------------------------------------------------------------------
+		// WHICH map, and WHERE IN IT. Derived in reversing\CHEAT_WARP.md.
+		//
+		// There is ONE id space, 0..401, and it is both the map list and the event list.
+		// A warp picks (packageId, entryPoint) and nothing else. The background map
+		// number is DERIVED from the package, not chosen.
+		// ---------------------------------------------------------------------------
+
+		// int (void). Save word +0x00. The EVENT/PACKAGE id, i.e. what MapRequestChange
+		// takes. This is the kit's mapId.
+		const DWORD SaveDataGetMapId = 0x0048D660;
+
+		// int (void). Save byte +0x0C. The doorway index, i.e. the second warp argument.
+		const DWORD SaveDataGetEntryPoint = 0x0048D670;
+
+		// int (void). Save word +0x04. The BACKGROUND MAP number, written by the load path
+		// from the package's own entry record. Not a warp argument.
+		const DWORD SaveDataGetSceneId = 0x0048D690;
+
+		// ---------------------------------------------------------------------------
+		// THE MAP/EVENT LIST. Asset kind 12 of the game's own path table, which is always
+		// populated, unlike the name table below.
+		//
+		//   loader = GetAssetLoader();  loader[4](12);
+		//   path   = loader[22](AssetEventStride * id);   // nullptr for an unused id
+		//
+		// A path of nullptr means the id has no package. LOADING ONE OF THOSE SPINS THE
+		// GAME IN while(1) INSIDE EvLoadEventPackage. 330 of the 402 ids are usable.
+		// ---------------------------------------------------------------------------
+		const DWORD GetAssetLoader = 0x0036D0D0;   // void **(void), returns AssetLoaderTable
+		const DWORD AssetLoaderTable = 0x01F10C40; // void *[37]. 4 select kind, 5 size, 22 path, 0 read
+
+		const int AssetKindEventObj = 12;  // the event/obj asset class
+		const int AssetEventStride = 18;   // path-table entries per event, sub-index 0 is the .ebp
+		const int EventIdCount = 402; // the whole id space
+
+		// TWO DIFFERENT COUNTS, and they answer different questions. 330 is what this
+		// header's own filter yields: an id needs a live kind-12 path table entry AND to
+		// be absent from the baked missing-file list, and only 348 ids have a path entry
+		// at all. 376 is the wider measurement taken straight off the archive, which is
+		// every named id whose .ebp basename ships whether or not the path table knows
+		// about it. The stricter number is the one a picker wants, because an id with no
+		// path entry cannot be resolved to a file in process anyway.
+		const int EventIdUsableCount = 330;    // path entry present AND the file ships
+		const int EventIdShippedCount = 376;   // named ids whose .ebp exists in the archive
+
+		// Slot 22 returns Rva::AssetResolvedPathBuf, declared in addresses/Minigames.h.
+		// It is ONE shared 255-byte static, so copy the string out before the next call.
+
+		// The two table slots as DIRECT functions, which is how a mod should call them. On PC
+		// FFX_Asset_InstallPcLoaderSlots puts FFX_Asset_GetPathForIndex in slot 22, and slot 4
+		// is the same libmscd selector on both platforms, so neither needs the table and
+		// neither is a vtable call. Both are plain cdecl taking one int.
+		//
+		//   if (AssetSelectKind(AssetKindEventObj) < 0) give up;
+		//   const char* path = AssetGetPathForIndex(AssetEventStride * eventId);
+		//
+		// SELECTING A KIND IS A WRITE TO SHARED STATE. The selector stores the kind base in
+		// slot 8 and the kind in slot 9, and the engine's own loads read them, so save both
+		// and put them back when you are done enumerating.
+		const DWORD AssetSelectKind = 0x0036C510;       // int (int kind), the base or -1
+		const DWORD AssetGetPathForIndex = 0x00642830; // char *(int index), shared buffer
+		const DWORD AssetCurrentKindBase = 0x01F10C60; // slot 8, what the selector sets
+		const DWORD AssetCurrentKind = 0x01F10C64;     // slot 9
+
+		// void (int tag). Reads /ffx/proj/event/header/eventid.bin and fills the name
+		// table below. Safe to call from a mod: the read resolves into the archive. Only
+		// reached in retail from debug-mode boot and the AutoTest EnableAutoTest command,
+		// so the table is EMPTY unless a mod calls this. The tag argument is only an
+		// allocation label.
+		const DWORD LoadEventIdTable = 0x00507F50;
+
+		// The filled table. Row stride 16: char name[12] then DWORD id == the row index.
+		// CAP THE NAME AT 12 BYTES, one row (251) has no terminator. Rows 101 and 111 are
+		// dead. Count reads -1 until loaded, which is the "not loaded" test.
+		const DWORD EventIdNameTable = 0x021D5888;  // row *
+		const DWORD EventIdNameCount = 0x01534EC8;  // int
+		const DWORD EventIdTableLoaded = 0x01534ECC; // int, the once-only guard
+		const int EventIdNameRowStride = 16;
+		const int EventIdNameMaxChars = 12;
+
+		// int (char *out). Reverse lookup: finds the row whose id equals EvCurrentEventId
+		// (addresses/Minigames.h) and sprintf's its name. Id 0 short circuits to "grid00".
+		const DWORD MapGetCurrentMapName = 0x00507E70;
+
+		// The AutoTest console, for the record rather than to be used. ExecCommand works
+		// when called directly on the singleton, DrainQueue has ZERO CALLERS so the stdin
+		// queue is dead, and the singleton itself is built by FFX_GraphicInitialize.
+		const DWORD AutoTestExecCommand = 0x002BCE00; // char __thiscall (mgr, char *cmd)
+		const DWORD AutoTestDrainQueue = 0x002BCFF0;  // void __thiscall (mgr), orphaned
+		const DWORD AutoTestManagerSingleton = 0x008CCB00; // void *
+
+		// ---------------------------------------------------------------------------
 		// Every constant above, for the layout check.
 		// ---------------------------------------------------------------------------
 		inline const DWORD* WorldStateRvaList(int* count)
@@ -135,8 +254,15 @@ namespace ffx
 			    SaveFileInstallBlock, SaveDataReencodeCharNames, SphereGridRecomputeDerived,
 			    SaveDataClearEquipStatBonus, AtelSysSave087, SaveDataSetSceneAndSub,
 			    MapRequestChange, MapRequestResumeFromCheckpoint, MapSetTransitionFrames,
-			    MapWarpTo, AutoTestJumpMap, MapChangePending, MapChangeDelayFrames,
+			    MapWarpTo, MapArmWarpGate, MapWarpToWithSavedFade, MapSetScreenFadeRate,
+			    MapScreenFadeRate, MapReturnToTitle, SceneInit, MapLeaveFieldRequest,
+			    AutoTestJumpMap, MapChangePending, MapChangeDelayFrames,
 			    MapChangeDelayFlag, SceneLoaded, QuitPseudoMapId, DebugMode,
+			    SaveDataGetMapId, SaveDataGetEntryPoint, SaveDataGetSceneId,
+			    GetAssetLoader, AssetLoaderTable, AssetSelectKind, AssetGetPathForIndex,
+			    AssetCurrentKindBase, AssetCurrentKind, LoadEventIdTable, EventIdNameTable,
+			    EventIdNameCount, EventIdTableLoaded, MapGetCurrentMapName,
+			    AutoTestExecCommand, AutoTestDrainQueue, AutoTestManagerSingleton,
 			};
 
 			if (count)

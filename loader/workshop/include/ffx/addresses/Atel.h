@@ -210,10 +210,81 @@ namespace ffx
 		// returns 0 when it is empty, so the concurrency ceiling is per actor rather
 		// than global and a failure is never a fault.
 		// ---------------------------------------------------------------------------
+		// int __cdecl (int callerActorId, int targetActorId, int kind, int channel,
+		//              int scriptEntryIndex)
+		//
+		// THE GENERIC "run this script" CALL, and so the event launcher for a package that
+		// is already loaded. Caller 0xFFFF means nobody, kind 0 is normal, channel is 0..8.
+		// The entry index indexes the target actor's own entry table at actorDef+0x20,
+		// whose length is actorDef+0x08. NEITHER is bounds checked, and AtelGetActor
+		// clamps, so validate both yourself.
+		//
+		// Worked example: AtelStartEntryArrivalScript builds
+		// {0xFFFF, mapSystemActorId, 0, 1, entryRecord[+6]}.
 		const DWORD AtelStartThreadByChannel = 0x0046EBA0;
 		const DWORD AtelStartThreadIfChannelFree = 0x0046EBE0;
 		const DWORD AtelStartThreadDeferred = 0x0046EC40;
 		const DWORD AtelCreateThread = 0x0046EA00;
+
+		// TWO MORE OF THIS FAMILY LIVE IN addresses/Minigames.h, which owns them because
+		// firing an actor's script entry cold is how a field minigame starts:
+		//   Rva::AtelStartThread 0x0046E990            the same five arguments as
+		//                                              ByChannel above, with NO dedupe
+		//   Rva::AtelFireActorEventWithEntry 0x004766D0 FireActorEvent that lets the
+		//                                              caller name the entry, keeping the
+		//                                              channel and actor+171 mask checks
+
+		// int __cdecl (int unused, int *stack). Pops the top of a script operand stack as
+		// an int. The stack block is 'int sp; int value[19]; char tag[20]' (tag 1 int,
+		// 2 float), which is the shape at actor+0xC4. Exposed because it is what lets a
+		// mod drive ANY ATEL syscall handler with a stack built on the C stack, the
+		// handlers' own first two arguments being unused. See reversing\CHEAT_WARP.md 6.3.
+		const DWORD AtelPopInt = 0x0046DF00;
+
+		// ---------------------------------------------------------------------------
+		// ENTRY RECORDS, which is where a warp's spawn position comes from.
+		//
+		// A warp carries (packageId, entryPoint) and nothing else. The entry point indexes
+		// a 32-byte record array inside the loaded package:
+		//
+		//   atel  = Rva::EvPackageBase + 0x40        (EvPackageBase is in Minigames.h)
+		//   base  = *(u32 *)(atel + 4)
+		//   end   = *(u32 *)(atel + 8)               count = (end - base) / 32, 1..9
+		//   rec   = atel + base + 32 * entryPoint    out of range CLAMPS to record 0
+		//
+		// NOTHING IN C++ APPLIES THE RECORD XYZ. The arrival script does, through the Core
+		// position syscalls. So to place a character somewhere else, let the map boot and
+		// then call AtelSetActorPos. Do not rewrite the record.
+		// ---------------------------------------------------------------------------
+		const DWORD AtelGetEntryRecord = 0x0046BFE0;        // void *(int atelHolder)
+		const DWORD AtelGetEntryRecordByIndex = 0x0046C020; // void *(int atelHolder, int index), <0 means current
+		const DWORD AtelGetEntryMapNo = 0x0046BD90;         // int (int atel, int index), the background map
+		const DWORD AtelStartEntryArrivalScript = 0x0046ED80; // int (int atel), end of map boot
+
+		const int AtelEntryRecordStride = 32;
+		const int AtelEntryRecordMapNoOff = 0x00;  // s16, the background map number
+		const int AtelEntryRecordScriptOff = 0x06; // s16, the arrival script entry id
+		const int AtelEntryRecordYawOff = 0x08;    // float, facing, radians
+		const int AtelEntryRecordXOff = 0x0C;      // float
+		const int AtelEntryRecordYOff = 0x10;      // float, +Y is DOWN
+		const int AtelEntryRecordZOff = 0x14;      // float
+
+		// u16 at atel+0x18: the map/system actor id, the actor that owns the map-level
+		// scripts. 0xFFFF means none, which is the case in 3 of the 330 shipped packages.
+		const int AtelMapSystemActorOff = 0x18;
+
+		const DWORD AtelCalcActorPoolSize = 0x0046A290; // int (void *atel)
+		const DWORD AtelGetResFlags = 0x0046ADC0;       // int (int atel), bit 0 picks the scene setter
+		const DWORD AtelMapSetupChars = 0x00475510;     // builds the pool, then the arrival script
+
+		// The four script-visible warps. Each pops the entry point then the map id and
+		// calls Rva::MapWarpToWithSavedFade (addresses/WorldState.h). 17 and 171 pass 1 for
+		// the saved fade, 267 and 268 pass 0. These are the ONLY callers of it, which is
+		// what makes it the game's own "go to this place".
+		const DWORD AtelSysCore017Warp = 0x004581C0;
+		const DWORD AtelSysCore171Warp = 0x00458330;
+		const DWORD AtelSysCore267Warp = 0x00458460;
+		const DWORD AtelSysCore268Warp = 0x00458610;
 
 		// ---------------------------------------------------------------------------
 		// The examine press, which is the cheap half of the problem.
@@ -280,6 +351,31 @@ namespace ffx
 		// Keep it in step with the constants. If you add an address and forget this
 		// list, nothing breaks today and something breaks confusingly in a year.
 		// ---------------------------------------------------------------------------
+		// ---------------------------------------------------------------------------
+		// Party visibility. Which CHRs EXIST on a map is map data, the CHRREG boot task
+		// spawns one per ATEL actor from the chr id at actor+168. Which of them are
+		// VISIBLE is the party, and this is the whole of that mechanism.
+		// ---------------------------------------------------------------------------
+
+		// int (void). Turns the three active field party slots into the bitmask below.
+		// The only writer. CALL IT AFTER ANY FIELD PARTY CHANGE or the new member stays
+		// invisible on the map that is already loaded.
+		const DWORD AtelBuildPartyVisibleMask = 0x004623B0;
+
+		// dword bitmask of which of characters 0..7 are visible.
+		const DWORD AtelPartyVisibleMask = 0x00F26B7C;
+
+		// void (actor, int, int). Applies the mask per actor through ChSetHideBit1, and
+		// only for actor+0x40 < 8.
+		const DWORD AtelRestoreActorChrState = 0x0046E5B0;
+
+		// void (void). Drops every actor's CHR. The first half of a full field rebuild.
+		const DWORD AtelReleaseAllActorChrs = 0x00465DC0;
+
+		// int (int slot). The actor for an active party slot, -1 when absent.
+		// AtelFindActorByPartyChar, the scan the other way, is declared above.
+		const DWORD AtelGetPartyMemberActor = 0x0046A5E0;
+
 		inline const DWORD* AtelRvaList(int* count)
 		{
 			static const DWORD list[] = {
@@ -337,6 +433,18 @@ namespace ffx
 				AtelStartThreadIfChannelFree,
 				AtelStartThreadDeferred,
 				AtelCreateThread,
+				AtelPopInt,
+				AtelGetEntryRecord,
+				AtelGetEntryRecordByIndex,
+				AtelGetEntryMapNo,
+				AtelStartEntryArrivalScript,
+				AtelCalcActorPoolSize,
+				AtelGetResFlags,
+				AtelMapSetupChars,
+				AtelSysCore017Warp,
+				AtelSysCore171Warp,
+				AtelSysCore267Warp,
+				AtelSysCore268Warp,
 				AtelSamplePadsBothPorts,
 				AtelPadPressed,
 				AtelPadReleased,
@@ -350,6 +458,11 @@ namespace ffx
 				AtelSysGiveTreasureSilent,
 				AtelTreasureStaging,
 				AtelSysFuncLibs,
+				AtelBuildPartyVisibleMask,
+				AtelPartyVisibleMask,
+				AtelRestoreActorChrState,
+				AtelReleaseAllActorChrs,
+				AtelGetPartyMemberActor,
 			};
 			if (count)
 				*count = (int)(sizeof(list) / sizeof(list[0]));

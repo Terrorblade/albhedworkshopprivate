@@ -47,6 +47,178 @@ namespace ffx
 		const DWORD ChLoadMotionSetSync = 0x00436870;  // void (int chrId, int set)
 
 		// ---------------------------------------------------------------------------
+		// THE MODEL LIST, and the chrId encoding.
+		//
+		//     chrId = ((category & 0xF) << 12) | (number & 0xFFF)
+		//
+		// Category is bits 12..15: 0 c pc, 1 m mon, 2 n npc, 3 s sum, 4 w wep, 5 f obj,
+		// 6 k skl. 7..14 do not exist, and 15 is the prototype asset viewer, which does
+		// not go through the ROM index and is empty in retail.
+		//
+		// ChrRomIndexTables is THE model list and needs no baked data. It is a void*[7]
+		// indexed by category, each entry pointing at { s16 count; s16 number[count]; }.
+		// Loaded by ChLoadRomIndexTables from FFX_Ch_Init with NO debug gate, and every
+		// model load passes ChFindRomEntry, which scans it and returns -1 on a miss. So
+		// it states what the engine can load, not just what shipped. 892 entries: 35 pc,
+		// 348 mon, 239 npc, 31 sum, 80 wep, 117 obj, 42 skl.
+		//
+		// Two mismatches against the archive, both real. c046 is listed but ships no
+		// asset, which is harmless because FFX_Ch_Allocate falls back to c001 and sets
+		// CHRDATA.m_isFallback. c307 ships a full model but is NOT listed, so it cannot
+		// be loaded at all. See reversing/CHEAT_MODELS.md.
+		// ---------------------------------------------------------------------------
+		const DWORD ChrRomIndexTables = 0x00EFFAB8;    // void *[7], by category
+		const DWORD ChLoadRomIndexTables = 0x0042A5F0; // int (void), from FFX_Ch_Init
+		const DWORD ChFindRomEntry = 0x0042A640;       // int (int chrId), -1 = cannot load
+		const int ModelCategoryCount = 7;
+
+		// const char *(int chrId) and (int chrId). IdToModelName sprintf's "%c%03d" into
+		// ONE static buffer at ChIdToModelNameBuf and returns it, so every call clobbers
+		// the last answer. Build 892 labels with it and you get 892 pointers to the same
+		// string. Format the four characters yourself instead.
+		const DWORD ChIdToModelName = 0x00438100;
+		const DWORD ChIdToModelNameBuf = 0x00F00A00; // char[16], shared
+		const DWORD ChIdToCategoryDir = 0x00438150;  // const char *(int chrId)
+
+		// The category maps, for building labels. char/const char *(int category), and
+		// int (int letter) for the inverse.
+		const DWORD ChCategoryToDirName = 0x00429C90; // 0 -> "pc", 1 -> "mon", ...
+		const DWORD ChCategoryToLetter = 0x00429E10;  // 0 -> 'c', else '-'
+		const DWORD ChLetterToCategory = 0x00429D80;  // 'c' -> 0, else -1
+
+		// CHRDATA* (int chrId). Opens with FindChrData and returns the cached record, so
+		// the cache is keyed on chrId: two CHRs of the same model SHARE one read-only
+		// CHRDATA, and two different models cannot interfere. That is why a model swap is
+		// unaffected by it.
+		const DWORD ChLoadChrData = 0x00425A40;
+		const DWORD ChFindChrData = 0x00425EA0; // CHRDATA* (int chrId), null on a miss
+
+		// ---------------------------------------------------------------------------
+		// MAKING AN ARBITRARY MODEL RESIDENT. ChLoadChrData is self sufficient: it
+		// creates the cache entry, starts the read and blocks on ChRomPump(0) until the
+		// read and its completion callback are done, all in the calling frame. So
+		// ChAllocate alone pages in any ROM-indexed model, which is exactly what the
+		// shipped ChDebugSpawnByName relies on, it does nothing about residency at all.
+		//
+		// That makes the RomRead then poll DataReadSync shape unnecessary. It is not
+		// wrong, just a frame slower for no reason. See reversing/CHR_RESIDENCY.md.
+		//
+		// GAME THREAD ONLY. ChRomPump(0) mutates the read queue with no lock and races
+		// FFX_MainStep's own completion dispatch, and ChBlkAllocate walks the CHRDATA
+		// table unguarded.
+		// ---------------------------------------------------------------------------
+
+		// int (int mode). HEX-RAYS GETS THIS WRONG and types it as (void), because the
+		// body is push ebp / mov ebp, esp / pop ebp / jmp g_ffxRomDevPump, a tail jump
+		// that hides the argument. Mode 0 blocks until every pending read has landed,
+		// mode 1 polls. Every call site pushes its argument, which is the proof.
+		const DWORD ChRomPump = 0x0042A5E0;
+
+		// void (void). One instruction, sets g_ffxChrNoFallbackOnce. Makes the NEXT
+		// ChAllocate return null when the load fails instead of silently substituting
+		// c001 with CHRDATA.m_isFallback set. Allocate clears it either way, so it is
+		// strictly one shot. THE clean way for a UI to tell "model missing" from "model
+		// loaded", better than checking the fallback byte afterwards.
+		const DWORD ChSetNoFallbackOnce = 0x004285D0;
+		const DWORD ChrNoFallbackOnce = 0x00EFBD98; // byte
+
+		// THE CHRDATA TABLE, and a crash if it is full. 40 records of 300 bytes, and a
+		// record is free when its first dword, m_id, is -1. ChBlkAllocate walks for a
+		// free one and, when it falls off the end, leaves its result pointer NULL and
+		// then memsets 300 bytes through it. So a UI that can ask for an arbitrary model
+		// MUST count free records first. Verified in the disassembly, the slot search
+		// falls out of its loop unassigned exactly the way the CHR pool search does.
+		//
+		// End minus base is 0x2EE0, which is 40 * 300, so the count is derivable rather
+		// than baked.
+		const DWORD ChrDataTable = 0x01FC8D00;
+		const DWORD ChrDataTableEnd = 0x01FCBBE0;
+		const int ChrDataRecordBytes = 300;
+		const int ChrDataIdOffForFreeTest = 0; // m_id, -1 when the record is free
+
+		const DWORD ChBlkAllocate = 0x00425760; // CHRDATA *(int chrId, void *blob)
+		const DWORD ChDataFree = 0x004258D0;    // int (CHRDATA *)
+		const DWORD ChDataDisposeAll = 0x004259C0;    // int (void), frees all 40
+		const DWORD ChEventjumpDispose = 0x0043B420;  // the per-map-transition teardown
+
+		// int (int romIndex) through a function pointer global, filled at runtime, so it
+		// reads 0xFFFFFFFF in the file image. Zero means the asset does not ship, which
+		// is how c046 is told apart from a model that loads. ChFindRomEntry HAS A SIDE
+		// EFFECT, it selects the asset kind, so this call has to follow it immediately
+		// with nothing in between.
+		const DWORD RomDevGetSize = 0x01F10C54;
+
+		// int (int type, int key). The definition of resident, a 100 slot linear scan.
+		// Type 1 is a model keyed on chrId, type 2 a motion set keyed on
+		// chrId | (mode << 16).
+		const DWORD ChCacheGetState = 0x0043FFE0;
+		const DWORD ChCacheSlots = 0x00F02F98; // 100 pointers
+		const int ChCacheSlotCount = 100;
+
+		// int (Character *, CHRDATA *). Copies m_id to CHR+0 and the name pointer to
+		// CHR+4, rebuilds the per-part mesh array, and writes TidusChr unconditionally
+		// when the name is "c001" or "c101". That unguarded one-slot write is the only
+		// state fixup a model swap needs.
+		const DWORD ChBindChrData = 0x00426070;
+
+		// CHRDATA field offsets the swap path reads.
+		const int ChrDataIdOff = 0x000;           // int, the chrId
+		const int ChrDataDefaultScaleOff = 0x034; // float, applied by Allocate
+		const int ChrDataNameOff = 0x071;         // char[32], "c001"
+		const int ChrDataIsFallbackOff = 0x0F8;   // byte, 1 = the model did not load
+		const int ChrDataSize = 0x12C;
+
+		// void (Character *). Builds the joint array from THIS model's skeleton header,
+		// so the joint count is per allocation and a cross-model clip mismatch cannot
+		// happen. FFX_Ch_Allocate already calls it.
+		const DWORD ChBuildSkeletonInstance = 0x004277F0;
+
+		// void (int *outSlot, ClassCharacter **, Character *, callback). Fills CHR+0x830
+		// only, either now or from a queued 16-byte record. It does NOT touch the id, the
+		// name, the part table, m_data, the joints or the motion slots, so it is the WRONG
+		// way to swap a model. Here to document that, not to be called.
+		const DWORD ChrAttachModelInstance = 0x0023D370;
+
+		// void (int ebx, char *name) such as "c001". The shipped spawn-and-possess debug
+		// path, and the reference for the per-category motion setup: category 1 mon and 3
+		// sum load motion MODE 1 and need SetLocomotionMode(1) plus
+		// MotSetByModeIndex(chr, 1, 16), category 2 npc uses /ffx/npcanm/<name>.anm
+		// instead of an .mgrp, and c/w/f/k use mode 0. Filtering models on a mode 0
+		// motion count therefore rejects almost every monster wrongly.
+		const DWORD ChDebugSpawnByName = 0x004295E0;
+
+		const DWORD ChSetLocomotionMode = 0x0042B3A0;    // void (Character *, int)
+		const DWORD MotSetByModeIndex = 0x00437D00;      // (Character *, int mode, int idx)
+		const DWORD MotSetPendingLoopCount = 0x00439960; // void (Character *, int)
+		const DWORD ChSetScaleUniform = 0x0042B590;      // void (Character *, float)
+
+		// void (Character *, int slot, int value). A value below 0x1000 is a LOGICAL
+		// index resolved through MotSetByModeIndex against the model's own .chr section,
+		// which is why a swapped model animates with its own clips for free. At or above
+		// 0x1000 it is a complete motion id.
+		const DWORD ChSetSlot = 0x0042AFE0;
+
+		// Character *(Character *) / void (Character *). SetPlayerChr moves the single
+		// player binding, which is what makes the camera, noclip and player-only walkmesh
+		// surfaces follow a swapped body. Dispose nulls BOTH the player binding and
+		// TidusChr when either points at the character being destroyed, so repoint
+		// TidusChr before disposing the old body.
+		const DWORD ChSetPlayerChr = 0x0042DAD0;
+		const DWORD ChDispose = 0x004266F0;
+
+		// Character *(int chrId), a linear scan of the pool for a live CHR with that id.
+		// ChDataDispose opens with it and no-ops while any instance is alive, which is
+		// what makes it safe to call with a clone up.
+		const DWORD ChFindById = 0x004261F0;
+		const DWORD ChDataDispose = 0x00424F00; // int (int chrId, int set)
+
+		// DebugMode is declared in addresses/WorldState.h. It gates the second, nicer
+		// per-category model table at 0x00EFBC64 with its count at 0x00EFBC84, stride
+		// 128, which carries a name string per model. That one is useless in retail:
+		// /ffx/proj2/chr/common/ does not exist in the archive, so both arrays stay 0
+		// even with debug mode on. Use ChrRomIndexTables.
+
+		// ---------------------------------------------------------------------------
 		// Per-character setters
 		// ---------------------------------------------------------------------------
 		const DWORD ChSetByte184 = 0x00435B50;    // int (Character *, char)
@@ -66,6 +238,10 @@ namespace ffx
 		const DWORD ChSetRotAndMoveDir = 0x0042B1B0;
 		const DWORD ChSetFlags1Bit400 = 0x0042AAE0; // bool (Character *, short on)
 		const DWORD ChSetGroundMode = 0x0042B240;   // void (Character *, int)
+
+		// void (Character *, int). The per-actor visibility lever the party visible mask
+		// drives, see AtelBuildPartyVisibleMask in addresses/Atel.h.
+		const DWORD ChSetHideBit1 = 0x0042B2C0;
 
 		// void __cdecl (Character *). FFX_Ch_SetFlags1Bit10 plus a vertex rebuild that
 		// recopies every part's skinned vertices from the source mesh and then marks the
@@ -262,6 +438,42 @@ namespace ffx
 				ChDisposeIfLive,
 				ChIsLive,
 				ChCountLive,
+				ChrRomIndexTables,
+				ChLoadRomIndexTables,
+				ChFindRomEntry,
+				ChRomPump,
+				ChSetNoFallbackOnce,
+				ChrNoFallbackOnce,
+				ChrDataTable,
+				ChrDataTableEnd,
+				ChBlkAllocate,
+				ChDataFree,
+				ChDataDisposeAll,
+				ChEventjumpDispose,
+				RomDevGetSize,
+				ChCacheGetState,
+				ChCacheSlots,
+				ChIdToModelName,
+				ChIdToModelNameBuf,
+				ChIdToCategoryDir,
+				ChCategoryToDirName,
+				ChCategoryToLetter,
+				ChLetterToCategory,
+				ChLoadChrData,
+				ChFindChrData,
+				ChBindChrData,
+				ChBuildSkeletonInstance,
+				ChrAttachModelInstance,
+				ChDebugSpawnByName,
+				ChSetLocomotionMode,
+				MotSetByModeIndex,
+				MotSetPendingLoopCount,
+				ChSetScaleUniform,
+				ChSetSlot,
+				ChSetPlayerChr,
+				ChDispose,
+				ChFindById,
+				ChDataDispose,
 				ChRomRead,
 				ChDataReadSync,
 				ChMotionSetReadStart,
@@ -278,6 +490,7 @@ namespace ffx
 				ChSetRotAndMoveDir,
 				ChSetFlags1Bit400,
 				ChSetGroundMode,
+				ChSetHideBit1,
 				ChMarkDirty,
 				SuppressNextSetPos,
 				ChGetPlayerChr,

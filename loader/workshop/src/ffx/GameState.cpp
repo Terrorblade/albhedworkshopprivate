@@ -4,6 +4,14 @@
 #include "workshop/Log.h"
 #include "ffx/addresses/GameState.h"
 
+// For EquipAddAbilityToEntry and EquipRefreshEntryNameId, which live with the
+// menu because the Customise screen is their only caller in the game.
+#include "ffx/addresses/MenuSystem.h"
+
+// For AtelBuildPartyVisibleMask, which is the only thing that makes a field party
+// change show up on the map that is already loaded.
+#include "ffx/addresses/Atel.h"
+
 #include <string.h>
 
 // Implementation notes worth reading before changing anything here.
@@ -43,6 +51,13 @@ namespace ffx
 		typedef int(__cdecl* SetCharEquipFn)(unsigned char charIndex, int armour, short slotId);
 		typedef int(__cdecl* AddEquipEntryFn)(const void* src);
 		typedef int(__cdecl* CountEquipFn)(int* outFree);
+		typedef char*(__cdecl* GetEquipNameStringFn)(int slotId);
+		typedef char(__cdecl* AddAbilityToEntryFn)(void* entry, short abilityId);
+		typedef int(__cdecl* RefreshEntryNameIdFn)(void* entry);
+		typedef int(__cdecl* HasAbilityFn)(const void* entry, short abilityId);
+		typedef int(__cdecl* HasFreeSlotFn)(const void* entry);
+		typedef int(__cdecl* IsEligibleFn)(const void* entry, int force);
+		typedef char*(__cdecl* GetCustomizeTableFn)(int* outCount);
 		typedef int(__cdecl* GetCaptureCountFn)(short monsterId);
 		typedef int(__cdecl* AddCaptureCountFn)(short monsterId, int delta);
 		typedef char*(__cdecl* GetCharBaseStatsFn)(unsigned int charIndex, int* out);
@@ -224,6 +239,149 @@ namespace ffx
 		Wr8(party + 1, slot1);
 		Wr8(party + 2, slot2);
 		return true;
+	}
+
+	namespace
+	{
+		typedef int(__cdecl* SetPartyOrderSlotFn)(int charIndex, int slot);
+		typedef int(__cdecl* SetFieldParty3Fn)(int s0, int s1, int s2);
+		typedef unsigned char*(__cdecl* GetBenchArrayFn)(int* outCount);
+		typedef int(__cdecl* SetCharInPartyFn)(unsigned char charIndex, int on);
+		typedef int(__cdecl* CharFlagTestFn)(unsigned char charIndex);
+		typedef char*(__cdecl* GetUnitNameFn)(int unitIndex);
+		typedef int(__cdecl* BuildVisibleMaskFn)(void);
+
+		BYTE* CharFlagsByte(BYTE charIndex)
+		{
+			if (charIndex >= kCharCount)
+				return nullptr;
+			CharRecordData* rec = CharacterRecord(charIndex);
+			if (!rec)
+				return nullptr;
+			return (BYTE*)rec + CharRecord::Flags;
+		}
+	}
+
+	bool SetPartyOrderSlot(BYTE charIndex, int slot)
+	{
+		// The engine checks slot >= 0 and nothing else, so a slot of 20 or more walks
+		// off the 20-byte order array into the rest of the save block.
+		if (slot < 0 || slot >= kPartyOrderSlots)
+			return false;
+		if (charIndex >= kCharCount && charIndex != (BYTE)kCharNone)
+			return false;
+		if (!Block())
+			return false;
+
+		// -1 applied, 0 refused.
+		return Resolve<SetPartyOrderSlotFn>(Rva::SaveDataSetPartyOrderSlot)(
+		           (int)charIndex, slot)
+		    != 0;
+	}
+
+	bool SetFieldParty(BYTE slot0, BYTE slot1, BYTE slot2, int* outRefused)
+	{
+		if (outRefused)
+			*outRefused = 0;
+		if (!Block())
+			return false;
+
+		// The three slots one at a time rather than through SaveDataSetFieldParty3,
+		// which is literally the same three calls, so that a refusal can be reported
+		// per slot instead of as one opaque failure.
+		const BYTE wanted[kActivePartySize] = { slot0, slot1, slot2 };
+		int refused = 0;
+		for (int i = 0; i < kActivePartySize; ++i)
+		{
+			if (!SetPartyOrderSlot(wanted[i], i))
+				refused |= 1 << i;
+		}
+
+		if (outRefused)
+			*outRefused = refused;
+		return refused == 0;
+	}
+
+	BYTE BenchPartyMember(int slot)
+	{
+		if (slot < 0 || slot >= kBenchPartySize)
+			return (BYTE)kCharNone;
+		BYTE* base = Block();
+		if (!base)
+			return (BYTE)kCharNone;
+		return Rd8(base + SaveBlock::PartyBench + (DWORD)slot);
+	}
+
+	bool SetCharacterInParty(BYTE charIndex, bool inParty)
+	{
+		// The engine's version is `and ebx, 0FFh` then `imul ecx, 94h` with no bound,
+		// so index 255 writes 37 KB past the records.
+		if (charIndex >= kCharCount)
+			return false;
+		if (!Block())
+			return false;
+
+		// EXACTLY 0 or 1. Any other non-zero value reaches the flags write, which sets
+		// bits 0 and 4 to on & 1, so SetCharInParty(i, 2) clears membership while
+		// skipping the permanent-member guard that the 0 path honours.
+		Resolve<SetCharInPartyFn>(Rva::SaveDataSetCharInParty)(charIndex, inParty ? 1 : 0);
+		return true;
+	}
+
+	bool CharacterPermanent(BYTE charIndex)
+	{
+		if (charIndex >= kCharCount || !Block())
+			return false;
+		return Resolve<CharFlagTestFn>(Rva::SaveDataIsCharPermanent)(charIndex) != 0;
+	}
+
+	bool CharacterSelectable(BYTE charIndex)
+	{
+		if (charIndex >= kCharCount || !Block())
+			return false;
+		return Resolve<CharFlagTestFn>(Rva::SaveDataIsCharSelectable)(charIndex) != 0;
+	}
+
+	bool CharacterLockedInSlot(BYTE charIndex)
+	{
+		if (charIndex >= kCharCount || !Block())
+			return false;
+		return Resolve<CharFlagTestFn>(Rva::SaveDataGetCharFlagBit2)(charIndex) != 0;
+	}
+
+	bool SetCharacterLockedInSlot(BYTE charIndex, bool locked)
+	{
+		BYTE* flags = CharFlagsByte(charIndex);
+		if (!flags)
+			return false;
+
+		if (locked)
+			*flags = (BYTE)(*flags | CharRecord::FlagSlotLocked);
+		else
+			*flags = (BYTE)(*flags & ~CharRecord::FlagSlotLocked);
+		return true;
+	}
+
+	bool RefreshPartyVisibility()
+	{
+		if (!Block())
+			return false;
+		Resolve<BuildVisibleMaskFn>(Rva::AtelBuildPartyVisibleMask)();
+		return true;
+	}
+
+	const char* UnitDisplayName(BYTE charIndex)
+	{
+		// The engine's guard is index <= 30, which is the ally test, not the record
+		// count. Index 18 lands on the save block's CRC field and returns it as a
+		// string, so the bound has to be here.
+		if (charIndex >= kCharCount)
+			return nullptr;
+		if (!Block())
+			return nullptr;
+
+		char* name = Resolve<GetUnitNameFn>(Rva::GetUnitDisplayName)((int)charIndex);
+		return Readable(name, 1) ? name : nullptr;
 	}
 
 	BYTE BattlePartyMember(int slot)
@@ -800,6 +958,130 @@ namespace ffx
 			return false; // array full
 		if (outSlotId)
 			*outSlotId = (WORD)slotId;
+		return true;
+	}
+
+	WORD EquipSlotId(int index)
+	{
+		return (WORD)(0x5000 + index);
+	}
+
+	const char* EquipName(WORD slotId)
+	{
+		if (!Block())
+			return NULL;
+		if (!EquipEntryFromSlotId(slotId))
+			return NULL;
+
+		char* name = Resolve<GetEquipNameStringFn>(Rva::SaveDataGetEquipNameString)((int)slotId);
+		if (!Readable(name, 1))
+			return NULL;
+		return name;
+	}
+
+	bool RefreshEquipEntryName(EquipEntryData* e)
+	{
+		if (!e || !Block())
+			return false;
+		Resolve<RefreshEntryNameIdFn>(Rva::EquipRefreshEntryNameId)(e);
+		return true;
+	}
+
+	bool SetEquipEntryAbility(EquipEntryData* e, int index, WORD abilityId)
+	{
+		if (!e || index < 0 || index >= kEquipAbilitySlots)
+			return false;
+		if (!Block())
+			return false;
+
+		// Clearing writes the marker the game's own empty test accepts first, which is
+		// 0, rather than 0xFFFF. Both read as empty but 0 is what a fresh entry holds.
+		BYTE* at = (BYTE*)e + EquipEntry::Abilities + 2 * (DWORD)index;
+		at[0] = (BYTE)(abilityId & 0xFF);
+		at[1] = (BYTE)(abilityId >> 8);
+
+		// Mandatory. The name is computed from the ability set, so an entry whose
+		// abilities changed and whose name did not is in a state the game never makes.
+		RefreshEquipEntryName(e);
+		return true;
+	}
+
+	bool AddEquipEntryAbility(EquipEntryData* e, WORD abilityId)
+	{
+		if (!e || !Block())
+			return false;
+		if (!Resolve<AddAbilityToEntryFn>(Rva::EquipAddAbilityToEntry)(e, (short)abilityId))
+			return false;
+		RefreshEquipEntryName(e);
+		return true;
+	}
+
+	bool EquipEntryHasAbility(const EquipEntryData* e, WORD abilityId)
+	{
+		if (!e || !Block())
+			return false;
+		return Resolve<HasAbilityFn>(Rva::EquipHasAbility)(e, (short)abilityId) != 0;
+	}
+
+	bool EquipEntryHasFreeSlot(const EquipEntryData* e)
+	{
+		if (!e || !Block())
+			return false;
+		return Resolve<HasFreeSlotFn>(Rva::EquipHasFreeAbilitySlot)(e) != 0;
+	}
+
+	bool EquipEntryCustomisable(const EquipEntryData* e, bool force)
+	{
+		if (!e || !Block())
+			return false;
+		return Resolve<IsEligibleFn>(Rva::MenuCustomizeIsEntryEligible)(e, force ? 1 : 0) != 0;
+	}
+
+	namespace
+	{
+		// Rows are 8 bytes: WORD kind, WORD abilityId, WORD itemId, BYTE quantity, pad.
+		const int kRecipeStride = 8;
+
+		const BYTE* RecipeTable(int* outCount)
+		{
+			if (outCount)
+				*outCount = 0;
+
+			int count = 0;
+			char* table = Resolve<GetCustomizeTableFn>(Rva::EquipGetCustomizeTable)(&count);
+			if (!table || count <= 0 || count > 4096)
+				return NULL;
+			if (!Readable(table, kRecipeStride * count))
+				return NULL;
+
+			if (outCount)
+				*outCount = count;
+			return (const BYTE*)table;
+		}
+	}
+
+	int EquipRecipeCount()
+	{
+		int count = 0;
+		RecipeTable(&count);
+		return count;
+	}
+
+	bool EquipRecipeAt(int index, EquipRecipe* out)
+	{
+		if (!out || index < 0)
+			return false;
+
+		int count = 0;
+		const BYTE* table = RecipeTable(&count);
+		if (!table || index >= count)
+			return false;
+
+		const BYTE* row = table + (size_t)index * kRecipeStride;
+		out->kind = (int)Rd16(row + 0);
+		out->abilityId = (int)Rd16(row + 2);
+		out->itemId = (int)Rd16(row + 4);
+		out->quantity = (int)Rd8(row + 6);
 		return true;
 	}
 

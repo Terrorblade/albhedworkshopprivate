@@ -41,6 +41,8 @@ namespace ffx
 			{ "battle", &Rva::BattleRvaList },
 			{ "minigames", &Rva::MinigamesRvaList },
 			{ "magic dll", &Rva::MagicDllRvaList },
+			{ "data file", &Rva::DataFileRvaList },
+			{ "debug", &Rva::DebugRvaList },
 			// Add new areas here, one line each, after adding the include to
 			// include/ffx/Addresses.h.
 		};

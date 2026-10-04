@@ -77,4 +77,33 @@ namespace workshop
 
 #define DETOUR_INSTALLED(Name) (Name##Detour.installed)
 
+	// ---------------------------------------------------------------------------
+	// PATCHING ONE CALL SITE, rather than detouring the function it calls.
+	//
+	// Use this instead of a detour when you want to intercept SOME callers of a
+	// function and not all of them, or when the target has no five position
+	// independent bytes at its entry for a detour to steal. Both come up in this
+	// binary more often than you would expect: several functions start with a rel32
+	// call, and relocating a stolen call leaves it pointing nowhere.
+	//
+	// It is also strictly more precise. One dword is written, nothing is relocated,
+	// and the target function is never modified, so it stays callable by address and
+	// its other callers are untouched.
+	//
+	// IT VERIFIES BEFORE IT WRITES. The byte at the site must be 0xE8 and the
+	// displacement must resolve to expectedTargetRva, or it refuses and logs. On a
+	// build that moved, that is a clean refusal with an explanation rather than a jump
+	// into the middle of something.
+	// ---------------------------------------------------------------------------
+	struct CallSitePatch
+	{
+		DWORD rva;
+		bool patched;
+	};
+
+	// what is used in the log lines, so make it a short phrase like "menu open" or
+	// "player driver". Returns false and writes nothing on any mismatch.
+	bool PatchCallSite(CallSitePatch& site, DWORD siteRva, DWORD expectedTargetRva,
+	    void* replacement, const char* what);
+
 } // namespace workshop

@@ -115,7 +115,11 @@ namespace ffx
 			{ 0x0000, 0x00B8, "Header", true },
 			{ 0x00B8, 0x00BC, "MapId", false },   // diverges for a frame on a warp
 			{ 0x00C0, 0x3D0C, "Progress", true }, // 0xBC..0xC0 is playtime, skipped
-			{ 0x3D0C, 0x3ECC, "Config", true },
+			// Was "Config", which sent a reader to the wrong place: the kernel "conf"
+			// block is only 0x84 of these 448 bytes. The rest is gil, the party arrays,
+			// and 256 bytes of world event flags, the most script-written region in the
+			// block. A hit here is far more likely to be a story flag than a setting.
+			{ 0x3D0C, 0x3ECC, "PartyGilFlags", true },
 			{ 0x3ECC, 0x41CC, "Inventory", true },
 			{ 0x41CC, 0x420C, "ItemMasks", false }, // menu state, not game state
 			{ 0x420C, 0x448C, "Monsters", true },

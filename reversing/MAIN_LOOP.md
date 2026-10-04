@@ -323,9 +323,15 @@ comes back behind and burns catch-up steps that the other machine does not take.
 `ffx::AddTimingTrackPauseMs()`, and `plugins\pilgrimage\net\LockstepLink.cpp` calls it when it
 releases a hold.
 
-The other wall-clock readers were enumerated by an earlier pass: nine Blitzball sites through
-`FFX_Input__getTimeSeconds 0x630C40`, plus `sub_6F0670`'s `GetTickCount` ramp. I did not re-derive
-those. `sub_42FA00`'s play-time float at `FFXApplication+0x3B0` is a further accumulator of raw real
+The other wall-clock readers were enumerated by an earlier pass, and **that enumeration was wrong.**
+It said nine Blitzball sites through `FFX_Input__getTimeSeconds 0x630C40`. Three things are wrong with
+that: the clock is at `0x630C60` (`0x630C40` is `FFX_Input__clearThreadedSampleQueues`), it has eight
+callers and all of them are input-hold, input-thread, menu or message-window key repeat, and none is
+Blitzball. Blitzball reads no wall clock at all, it is ATEL bytecode, see `reversing/BLITZBALL.md`.
+The real battle-side reader is `FFX_BtlOd_LuluFuryStickMinigame 0x491B80`, two sites through
+`FFX_Time_AppElapsedSeconds 0x241410`. That clock has 30 callers of which 20 reach the simulation
+step, mostly battle-menu UI pulsing, detailed in `COOP_DESIGN.md`. Also still true:
+`sub_6F0670`'s `GetTickCount` ramp. `sub_42FA00`'s play-time float at `FFXApplication+0x3B0` is a further accumulator of raw real
 time, but it only feeds `+0x120` and I found no gameplay consumer.
 
 ### The 0.3 second clamp

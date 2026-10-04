@@ -398,8 +398,8 @@ fragile and wants a snapshot taken at the moment the door check runs. Also being
 
 Lockstep stays the design and the evidence for it is good. But the interaction layer should be built host
 authoritative first, over the frame stamped command channel described above, for one reason: lockstep has
-no graceful degradation. The first time an FMV, an audio callback or the Blitzball clock reads nudge one
-instance, everything diverges at once and there is no signal saying which feature broke. Host
+no graceful degradation. The first time an FMV, an audio callback or an overdrive's wall-clock timer
+nudges one instance, everything diverges at once and there is no signal saying which feature broke. Host
 authoritative events give a working build sooner and a natural place to hang a per event desync check.
 
 Both models use the identical command channel, so this is a staging decision rather than an architectural
@@ -480,6 +480,49 @@ it. Do both.
 entry 324. So every shipped visual-effect DLL can advance a gameplay RNG. If effect playback diverges,
 that state diverges.
 
+**That entry 324 is one slot of a much larger surface, now written up in
+`reversing/MAGIC_DLL.md`.** The table is `g_ffxMagicHostApiTable 0x864CE8`, **947 slots**, handed to
+each magic DLL by `MagicFile__start 0x5DA7F0`. 913 slots are function pointers and **34 are pointers
+to engine globals.** There are **581 DLLs** in `magicFiles/FFX/`, each exporting only
+`GetEffectOverlayTable` and `InitMagicPRX`, and 640 distinct slots are referenced across them. Use
+`tools/magicdll.py` rather than writing a scan, it already does this. Four consequences for this
+design:
+
+- **Entry 324 has a number now.** 92 of the 581 DLLs call `FFX_Btl_Rand`, at 274 call sites. The
+  worry above was right, stated qualitatively, and this is its size. (This said 83 until
+  `tools/magicdll.py`'s call scanner was rewritten. The old matcher only recognised one addressing
+  mode. `reversing/MAGIC_DLL.md` section 7 has the old and new figures side by side, and also why 99
+  and 292, which a looser rescan reported, are too high.)
+- **It is not just the RNG.** Slot 632 is `FFX_Ch_AttachToParentBone` and slot 634 is
+  `FFX_Ch_SetRotAndMoveDir`, so DLL code writes character state. Two DLLs, `magic_0393` and
+  `magic_0450`, reparent characters to bones, four sites each, one of which passes a null carrier to
+  detach and one of which attaches to bone 18. That is the state the held-object census hashes into
+  checksum region 15, so **expect spell animations to show up in that region** and verify they agree
+  rather than assuming a hit there is a real desync.
+- **The CRT `rand` stream is a second shared RNG, and effect code re-seeds it.** 42 of the particle
+  operators, which are exposed to the DLLs, call `srand(g_ffxEffectRandState & 0x7FFFFF)`, and
+  per-character simulation code reads the stream they reseed. A second, wider path to the entry 324
+  problem.
+- **The open question, and it is a real one: the DLLs are handed the catch-up flag.** Table slot 936
+  is `g_ffxIsCatchUpStep 0xEFB7D0` and slot 764 is `g_ffxMainStepCounter 0x1FCBBF0`, and **all 581
+  DLLs copy both into globals of their own at init.** So a magic DLL could skip work on a catch-up
+  step exactly the way the engine's own render path does. I found none that branches on either, and a
+  byte scan over 581 stripped binaries cannot show that none does.
+
+What is settled: all three `FFX_Magic_CallOverlayStep` call sites are inside `FFX_MainStep` and driven
+by `FFX_Player__getSubStepCount()`, not by presented frames. The two `g_ffxIsCatchUpStepRender` tests
+next to them guard only a stripped profiler marker, which is easy to misread. So the **engine** calls
+DLL code a step-deterministic number of times and the existing lockstep gate covers all of it. Both
+shared RNGs are seeded from constants by `FFX_Rand_Init 0x3FF360` with no clock read, and
+`maybe_FFX_Yonishi__feedPadStateBothPorts 0x3FF680` deliberately advances the CRT stream once per
+sub-step and discards the result, which pins its position to the step count.
+
+So the **confirmed** hazard is coupling: effect playback and gameplay share RNG state through code
+nobody has reviewed, so any divergence that happens for another reason gets amplified from cosmetic
+into gameplay. The **unresolved** hazard is whether DLL code is frame-dependent at all. The way to
+settle that is a runtime experiment rather than more reading: two instances at different frame rates
+with the step counter pinned, cast the same spell, compare `g_ffxEffectRandState`.
+
 ### 2. The simulation is not driven by the real frame delta
 
 This was the specific fear, and it was a false alarm. `FFX_Ch_UpdateMotionAll 0x832E10` does compute
@@ -518,15 +561,51 @@ or poke the field. That removes `QueryPerformanceCounter` from the delta entirel
 ### Two localised hazards, neither architectural
 
 An exhaustive breadth-first walk of 5 call levels from `FFX_MainStep`, visiting 4,606 functions and
-looking for every wall-clock source, found only four hits. Two of them are real problems:
+looking for every wall-clock source, found only four hits.
 
-- **Blitzball reads the wall clock directly**, at nine sites through
-  `FFX_Input__getTimeSeconds 0x630C40`. It is the one gameplay subsystem that will not lockstep as-is.
-  It is self-contained enough that host-authoritative streaming for just that minigame is a reasonable
-  escape hatch.
+**That audit undercounts and should be re-run.** `FFX_Time_AppElapsedSeconds 0x241410` is a real wall
+clock (`Phyre__getApplication` -> `sub_42F690` -> `QueryPerformanceCounter`), it has 30 callers, and
+**20 of them reach `FFX_MainStep` or `FFX_Btl_MainStep` within 6 hops.** Before anyone panics: the
+cluster is overwhelmingly battle-menu UI animation, and spot-checking the heaviest user
+(`sub_8A49B0`, 9 sites, 7,870 bytes) shows the dominant idiom is
+`cos(FFX_Time_AppElapsedSeconds() * 5.0)` fed straight into `FFX_UiScaleX/Y` and a draw call, which
+is a pulsing highlight and harmless. So the old "four hits" conclusion was roughly right in spirit
+and wrong as a count. What it cost us is below.
+
+The real problems:
+
+- **Lulu's Fury overdrive is wall-clock timed, and this was not in the list.**
+  `FFX_BtlOd_LuluFuryStickMinigame 0x491B80` reads `FFX_Time_AppElapsedSeconds` at two sites and is
+  reached by `FFX_BtlMenu_Step 0x49AE20` -> `FFX_Btl_MainStep 0x390C10`, which `FFX_MainStep` calls
+  inside its sub-step loop. It is a stick-rotation minigame whose result scales overdrive damage, so
+  it is gameplay, not UI. This needs the same treatment as any other clock read: drive it from the
+  step counter.
 - **The cutscene and FMV pacing path busy-waits on the millisecond clock.** `FFX_StepPacing` mode 1 is
   entered when a timing track exists, and it counts catch-up steps from real time in a spin loop.
   Cutscenes need either forced mode-0 pacing or an explicit resync at the end of each one.
+- **Eight ATEL syscalls hand script a wall-clock button auto-repeat mask, and one shipped scene uses
+  one of them.** The pad ring's words at +10 and +28 are filled by
+  `FFX_Pad__stepAutoRepeatMask 0x489980`, which decrements a remaining-time float by real elapsed
+  seconds and reloads from frame counts at `portState+148/+150`. `FFX_Atel__samplePadsBothPorts` ORs
+  them into globals that `core:69/73/79/83` and `core:591/592/593/594` return. A decode of all 397
+  shipped `.ebp` packages with `tools/ebp.py` finds seven of the eight unused and exactly one live:
+  **`core:593`, 12 calls across `hiku2100.ebp` and `psv_hiku2100.ebp`**, airship scenes. The ring's
+  other words are safe: +4 is the raw held mask and +6 / +8 are pure edge math
+  (`held & (held ^ prev)`).
+  **The fix is one detour.** The reload values are already frame counts multiplied by 1/30, so
+  feeding `FFX_Pad__stepAutoRepeatMask` a step-derived time instead of `FFX_Input__getTimeSeconds`
+  makes every auto-repeat in the game deterministic.
+
+**Blitzball is NOT on this list any more, and the old entry was wrong in every part.** It claimed
+nine wall-clock sites through `FFX_Input__getTimeSeconds 0x630C40`. That address is
+`FFX_Input__clearThreadedSampleQueues`, the clock is at `0x630C60`, it has eight callers and every
+one is input-hold, input-thread, menu or message-window key repeat. None is Blitzball. Blitzball is
+ATEL event-script bytecode (`bltz0000.ebp`, 4.6 MB, 41 actors) run by the same VM as every cutscene
+from inside the `FFX_MainStep` sub-step loop, so **the lockstep gate already covers it and it
+replicates for free.** Its input is four syscalls reading the raw pad staging block and its only
+randomness is seeded stream 2 via `core:166`. See `reversing/BLITZBALL.md`. The nine-site figure
+appears to have come from `FFX_BtlOd_LuluFuryStickMinigame`, which is two sites through a different
+clock and is the genuine hazard above.
 
 The other two are minor: `sub_6F0670` gates a transition on a two-second `GetTickCount` ramp, which
 will show up as a one-step divergence at scene transitions and should be patched to count steps.
@@ -922,9 +1001,32 @@ and the mod calls it when it releases a hold. **This was a real defect in the fi
 The ATEL VM itself steps inside the `FFX_MainStep` sub-step loop, never reads a clock, and touches the
 seeded RNG only through four script syscalls. So a cutscene replicates under lockstep for free.
 
-An FMV does not and does not need to. It is WebM on its own thread with a `GetTickCount` timebase, but
-`FFX_MainStep` early-returns while it plays, so no simulation runs at all. Both machines freeze on the
-same step, which makes a barrier the natural and cheap answer rather than a compromise.
+An FMV needs a barrier too, and **this paragraph used to give the wrong reason for it**, which matters
+because four other passages were built on that reason.
+
+It said `FFX_MainStep` early-returns while a movie plays so no simulation runs at all. It does not.
+`FFX_Fmv_GetPlaybackState 0x6411E0`, the function that test reads, has nothing to do with video: it
+lazily builds a 0x340 object and returns 2 when the byte at `+0x338` or `+0x33C` is set, and a byte
+write scan of the whole `.text` segment finds exactly four writers of those two bytes - the constructor
+zeroing both, the booster hotkey overlay toggle, and the Start-button in-cutscene pause. No FMV code
+writes either. It is renamed `FFX_Frame_GetSuspendState` in the IDB.
+
+The proof that needs no reversing at all: a script's movie wait **is** an ATEL poll handler, the ATEL VM
+steps from inside the `FFX_MainStep` sub-step loop, and that loop is past the suspend test. If the step
+were discarded a movie could never finish.
+
+So the simulation runs all the way through a movie, which moves the problem. The start needs no
+agreement, because both machines reach the Movie opcode on the same step. The body needs nothing. **The
+exit is what breaks on every FMV in the game**, because each machine's video finishes at its own
+wall-clock moment and WebM decode speed is not deterministic.
+
+The barrier therefore goes on the **script wait**, not the simulation. `ffx::HookFmvWaits` swaps the
+four Movie poll pointers in `g_ffxAtelSysFuncLib11_Movie 0xC40E30`, which is in writable `.data`, and
+the shim returns 0 to keep the script parked. The release is an ordered command, and the usual trap
+about an ordered command never releasing a barrier does **not** apply here precisely because nothing is
+held: every machine's clock keeps running, so every machine reaches the step the command is stamped for.
+`kHoldFmv` exists and is deliberately never raised, because holding the simulation would stop the local
+clock while a peer still playing its video kept stepping. See `reversing/FMV_SYNC.md`.
 
 One trap recorded for later: during a cutscene the hold belongs on the **animate** hook, not the narrow
 `FFX_MainStep` gate, because mode 1's busy-wait is inside `FFX_StepPacing`.
@@ -1311,8 +1413,12 @@ left is no longer blocking anything in the requirements, it is cleanup, confiden
    the one that still gates a feature, since the FMV barrier is not built.
 5. **Chr ids 45, 307, 901 and 908.** They have field motion sets and no entry in
    `g_ffxCharIndexToChrId`. Cheapest route is to spawn each and look, several at once.
-6. **Blitzball's nine wall-clock reads.** The one remaining pocket of clock-driven gameplay that has
-   not been looked at.
+6. **CLOSED. Blitzball reads no wall clock.** It is ATEL event-script bytecode run from inside the
+   `FFX_MainStep` sub-step loop, so the lockstep gate already covers it, and its input is the raw pad
+   staging block. `reversing/BLITZBALL.md`. The nine-site figure was wrong in every part, see the
+   wall-clock section above. Two things came out of closing it, both now listed there as live
+   hazards instead: Lulu's Fury overdrive is wall-clock timed inside the battle step, and `core:593`
+   hands one airship scene a wall-clock auto-repeat mask.
 
 ### What the running game has to settle, each already one keypress
 
@@ -1386,28 +1492,97 @@ Built, compiling clean at `/W4 /WX`, and installed:
 - **The lockstep layer.** The step clock, the delayed-input ring, the host-ordered command channel and
   the checksum comparison. See the section above.
 
-Since that was written the per-character battle command path, the menu and pause sync, and the co-op
-rows on the game's own Config screen have all been built, and the Config rows are confirmed working in
-a running game. The ownership table they all share is `plugins\pilgrimage\coop\Ownership.h`.
+### The checklist
 
-**What is left, in the order it matters:**
+The ownership table every gated feature shares is `plugins\pilgrimage\coop\Ownership.h`.
 
-1. **The bound player's input injection.** See the section above. One character is still computed two
-   different ways on the two machines, so positions will drift no matter how good the rest is.
-2. **The Steam backend end to end against a real second machine.** Everything above it has only run
-   over the loopback UDP transport.
-3. **The FMV barrier.** Not built, and it needs the FMV cancel path from the research list.
-4. **Turning the gate on.** Shift+F4 today, default once 1 is done.
+**Confirmed in a running game**
 
-**A correctness fix that has not run yet, and it is worth knowing about:** every machine used to seed
-its lockstep clock from its own `g_ffxMainStepCounter`, which is a per-process counter, so two machines
-numbered the same step differently and every ordered command stamped one machine and was matched
-against the other's clock. A client now adopts the host's step out of the world snapshot, which works
-because the host freezes itself for the whole transfer. That was never going to show up on loopback
-with one process and it would have broken everything on two machines.
+- [x] A second CHR that walks, collides and animates, driven with two float writes a frame
+- [x] Up to eight clones at once with the input focus moving between them
+- [x] Co-op options as native rows on the game's own in-game Config screen
 
-Beyond that, almost nothing from the last three sessions has run in a game yet. Treat the battle,
-menu, pause and arrival layers as written and reviewed rather than working.
+**Built, reviewed, NOT yet run in a game**
+
+- [x] Two transports: Steam over `ISteamNetworking005`, and UDP on loopback for testing
+- [x] Session layer: handshake, peer ids, frame-counted heartbeats, timeouts, build-id refusal
+- [x] Lockstep: step clock, delayed-input ring, host-ordered command channel, checksum compare
+- [x] World state transfer, the save block, host frozen for the duration
+- [x] Joiner arrival placement at the host's anchor, off a doorway rather than a position
+- [x] Remote peers driven from replicated quantised input, with coasting on a missing frame
+- [x] World triggers firing for a remote player, events as ordered commands
+- [x] Dialogue and choice sync
+- [x] Booster settings synced as values
+- [x] Camera resolved locally, stick sent as a world heading
+- [x] Battle, per-character command ownership, one menu replicated as records
+- [x] Menu input sync: party, equipment, sphere grid, with the per-character grid rule
+- [x] Pause sync and the host menu override
+- [x] A client adopts the host's step number instead of its own counter
+- [x] **The bound player's input injection, which was the item blocking a playable co-op.** Every
+      player character, this machine's own included, now goes through the engine's own
+      `FFX_Player__stepControl` with its own copy of the four direction ramps, driven from the
+      lockstep ring rather than from the pad. `world/PlayerDrive.cpp` patches the single call site
+      at RVA `0x421010`, `ffx::StepPlayerControlFor` does the per-character state swap, and the
+      wire gained the two raw stick bytes plus the owner's camera yaw at protocol 6. The old
+      approximate clone drive stays in `RemotePlayers.cpp` as a fallback for when the patch is
+      refused. Built and building clean, not yet run in a game
+- [x] **The FMV barrier.** Built on the script wait rather than the simulation, because the step runs
+      right through a movie. `ffx::HookFmvWaits` swaps the four Movie poll pointers in
+      `g_ffxAtelSysFuncLib11_Movie`, the shim returns 0 to keep a script parked, each machine's
+      arrival is an ordered command and the release is the step every machine has reported on.
+      `kHoldFmv` exists and is deliberately never raised. Arming is unconditional, so a machine whose
+      video fails to open sees no video but stays in step. The cancel path is settled too:
+      `FFX_Fmv_PollSkipButtons 0x6D9460`, Start then Square. See `reversing/FMV_SYNC.md`. Built, not
+      yet run in a game
+
+**Built but incomplete**
+
+- [~] Held and carried object sync. The attachment question is answered: it is a bone parent and
+      nothing streams, so a carry replicates for free under lockstep. `world/HeldObjects.cpp` takes a
+      per-step census, hashes it into checksum region 15, and ships the handover command and its
+      applier. **What is missing is the policy**: nothing calls `RequestHeldObjectHandover`, because
+      "which peer earned this pickup" has to be answered identically on both machines and the
+      bound-player actor id that a pickup lands on may not be the same id on both. See
+      `reversing/HELD_OBJECTS.md` and the header note in `world/HeldObjects.h`
+
+**Not built**
+
+- [ ] The lockstep gate enforcing by default rather than counting
+
+**Not yet exercised**
+
+- [ ] The Steam backend end to end against a real second machine. Everything above it has only ever
+      run over the loopback UDP transport, in one process
+- [ ] Shift+F2, the engine's fixed timestep
+- [ ] Shift+F8, which save-block regions sit still, which decides what the detector can hash
+- [ ] Shift+F4, the gate enforcing. The injection it was waiting on is now in, so this is the next
+      thing to turn on once the drive has been seen working
+
+**Research**, none of it blocking the requirements any more. Closed items kept so the next person does not re-derive them
+
+- [ ] Does a simulation step allocate. Decides whether a hash can include anything holding a pointer
+- [ ] Menu modules 6, 9, 20 and 23. Module 21 is probably Overdrive, unproved
+- [x] How a carried object is attached to its carrier. A **bone parent**, and nothing streams.
+      `FFX_Ch_BuildSkinMatrices` computes a carried object's world matrix from the carrier, its
+      joint palette, `m_parentJoint` and `m_attachOffset`, and reads neither the carried object's
+      position nor its rotation. Bullet is ruled out structurally. See `reversing/HELD_OBJECTS.md`
+- [x] Where a button press cancels an FMV. `FFX_Fmv_PollSkipButtons 0x6D9460`, from
+      `FFX_Fmv_StepFromMainStep` at the top of `FFX_MainStep`: Start arms the prompt, Square does
+      the skip. Note `g_ffxFmvSkipRequested` is NOT a one-byte way to end a movie, see
+      `reversing/FMV_SYNC.md` section 4
+- [ ] Chr ids 45, 307, 901 and 908, which have motion sets and no character-index entry
+- [x] Blitzball's wall-clock reads: there are none, it is ATEL script inside the gate
+- [ ] Lulu's Fury overdrive `0x491B80`, wall-clock timed inside the battle step, needs a step-driven
+      time like everything else
+- [ ] `FFX_Pad__stepAutoRepeatMask 0x489980`, the one detour that makes every script auto-repeat
+      deterministic. `core:593` in `hiku2100` is the only shipped script that reads the result
+
+**One fix worth knowing about, in but never run.** Every machine used to seed its lockstep clock from
+its own `g_ffxMainStepCounter`, a per-process counter, so two machines numbered the same step
+differently and every ordered command stamped one machine and was matched against the other's clock.
+A client now adopts the host's step out of the world snapshot, which works because the host freezes
+itself for the whole transfer. This could not show up on loopback in one process and would have broken
+everything on two machines.
 
 ### The diagnostics that are in there because a guess was cheaper to measure than to argue about
 

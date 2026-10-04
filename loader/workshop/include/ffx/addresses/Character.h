@@ -23,6 +23,12 @@ namespace ffx
 		const DWORD AnimateVtableSlot = 0x0070D9A8; // FFXApplication vtable +0x10
 		const DWORD AnimateExpected = 0x0002F520;   // what that slot should contain
 
+		// The matching teardown point, slot 6 of the same vtable. Reached only through
+		// the vtable, like animate, so it patches the same way. Hook it to get a
+		// callback while the engine is still readable, then call the original.
+		const DWORD ExitApplicationVtableSlot = 0x0070D9B0; // vtable +0x18
+		const DWORD ExitApplicationExpected = 0x0002F600;   // FFXApplication::exitApplication
+
 		// ---------------------------------------------------------------------------
 		// Character allocation and teardown
 		// ---------------------------------------------------------------------------
@@ -162,6 +168,54 @@ namespace ffx
 		const DWORD ControlledChr = 0x00F00788; // Character *, player 1's binding
 
 		// ---------------------------------------------------------------------------
+		// CARRYING AND BONE ATTACHMENT.
+		//
+		// All __cdecl. Argument counts and senses read back out of the IDB rather than
+		// taken from the decompiler's guess. The attachment is a BONE PARENT and nothing
+		// streams: FFX_Ch_BuildSkinMatrices computes a carried object's world matrix from
+		// the carrier's matrix, the carrier's joint palette, m_parentJoint and
+		// m_attachOffset, and reads neither the carried object's position nor its
+		// rotation. See reversing/HELD_OBJECTS.md.
+		//
+		// NOTE on the two id spaces. The bone functions take a LOGICAL BONE ID, 0 to 21,
+		// which is not a joint index. FFX_Ch_UpdateBonePositions indexes by the bone id
+		// field, which is what settles it, and it is why a replicated handover travels as
+		// a bone id rather than as a joint index.
+		// ---------------------------------------------------------------------------
+
+		// int (Character* chr, Character* carrier, int boneId)
+		// Writes m_parent and m_parentUid = carrier->m_objId, then LookupBonePoint fills
+		// m_parentJoint and m_attachOffset from the bone id. A null carrier detaches and
+		// sets m_parentUid to -1.
+		//
+		// DEREFERENCES carrier->m_data WITH NO NULL CHECK, inside LookupBonePoint. The
+		// kit's AttachToCarrierBone is what guards that, not any readiness flag.
+		const DWORD ChAttachToParentBone = 0x00432630;
+
+		// int (Character*, Character* carrier, int jointIndex)
+		// The same by joint index, with no bone point lookup and the attach offset
+		// zeroed. Pure field writes, so unlike the above it cannot fault on a carrier
+		// whose character data has not loaded.
+		const DWORD ChAttachToParentJoint = 0x00432680;
+
+		// CHRDATA* (Character*, Character* carrier, int jointIndex, float ox, float oy,
+		//           float oz)
+		// Explicit joint index and an offset pre-multiplied by 100 * m_modelScale. Reads
+		// chr->m_data and not the carrier's. Not wrapped in the kit yet, because wrapping
+		// it with no caller would mean guessing the units.
+		const DWORD ChAttachToParentOffset = 0x004326E0;
+
+		// int (Character*, int boneId, int* outJoint, float* outOffset4)
+		// Returns the bone point kind: 0 none or a plain joint, 1 joint plus offset, 2
+		// plain node. *outJoint is 0 on a miss and NOT -1, which is worth knowing because
+		// 0 is also a valid joint.
+		const DWORD ChLookupBonePoint = 0x00433A70;
+
+		// float* (Character*, int boneId, float* out4)
+		// boneId is a logical bone id and the engine does NOT range check it.
+		const DWORD ChGetBoneWorldPos = 0x004354F0;
+
+		// ---------------------------------------------------------------------------
 		// PhyreEngine's input mapper, for reading a SECOND gamepad.
 		//
 		// Phyre keeps 18 fully independent pad slots and FFX only ever reads slot 0, so
@@ -202,6 +256,8 @@ namespace ffx
 			static const DWORD list[] = {
 				AnimateVtableSlot,
 				AnimateExpected,
+				ExitApplicationVtableSlot,
+				ExitApplicationExpected,
 				ChAllocate,
 				ChDisposeIfLive,
 				ChIsLive,
@@ -236,6 +292,11 @@ namespace ffx
 				ChrCount,
 				TidusChr,
 				ControlledChr,
+				ChAttachToParentBone,
+				ChAttachToParentJoint,
+				ChAttachToParentOffset,
+				ChLookupBonePoint,
+				ChGetBoneWorldPos,
 				Application,
 				CameActiveSlot,
 				CameSlots,

@@ -458,4 +458,130 @@ namespace ffx
 	// does not have control. Same frame-slot caveats as WriteButtonMask.
 	bool SuppressInput();
 
+	// Opaque, same as the declaration in ffx/Api.h. Declared again rather than
+	// including Character.h, because nothing here touches a field and a header that
+	// only needs the pointer type should not drag the layout in.
+	struct Character;
+
+	// ---------------------------------------------------------------------------
+	// DRIVING MORE THAN ONE CHARACTER THROUGH THE ENGINE'S OWN PLAYER DRIVER.
+	//
+	// FFX_Player__stepControl is the input to movement driver, and it is the reason a
+	// second player cannot simply be handed a pad: it drives the single
+	// Rva::ControlledChr out of one set of globals. Those globals include four
+	// direction ramps that accumulate across steps, and the ramps are the movement
+	// smoothing. So the state is per character by nature while the storage is not.
+	//
+	// The way out is to make the function re-entrant by hand. Save the block, write
+	// one character's copy in, call, read the result back out, restore. Then every
+	// character on every machine goes through the SAME function with its own state,
+	// which is identical behaviour by construction rather than by a reimplementation
+	// being faithful.
+	//
+	// WHY NOT REIMPLEMENT IT. The ramps are integers stepping by 32 and clamped to
+	// 0..256, so they would replicate fine, but the heading is an atan2 on them and
+	// the speed is a float multiply, and matching the engine's x87 rounding from
+	// different source is a bet with no upside. Calling the real thing costs a memcpy.
+	//
+	// WHY NOT TRANSMIT THE OUTPUT INSTEAD. Under delayed-input lockstep the owner
+	// submits input for a step some way ahead of the one it is currently running, so
+	// at submit time the driver has not run for that step and the owner does not know
+	// its own heading or speed for it. The inputs have to go on the wire and both
+	// machines have to run the derivation when they get there.
+	// ---------------------------------------------------------------------------
+
+	// One character's copy of everything FFX_Player__stepControl both reads and
+	// writes. Opaque on purpose: it is the engine's layout, it is copied wholesale,
+	// and naming the ten fields here would just be a second place to get one wrong.
+	// Rva::PlayerStateBlock and PlayerStateBlockBytes are the span.
+	struct PlayerControlState
+	{
+		BYTE bytes[0x30];
+		bool seeded; // false until this character has been driven once
+	};
+
+	// What the driver reads as input for one character.
+	struct PlayerControlInput
+	{
+		BYTE analogLX;   // 0x80 centred
+		BYTE analogLY;   // 0x80 centred, POSITIVE IS DOWN, same as Sticks
+		WORD buttons;    // the level mask. Bit 0x40 (cross) selects walk over run
+		float cameraYaw; // radians, and it must be the OWNER'S camera, not ours
+	};
+
+	// ---------------------------------------------------------------------------
+	// THE CAMERA, which is the one thing in the driver that is not already per
+	// character, and which has to be handled properly rather than worked around.
+	//
+	// The driver does NOT resolve the stick against the live camera. It resolves it
+	// against an ANCHOR: g_ffxPlayerCamYaw is refreshed from FFX_Came_GetYaw only when
+	// the desired heading jumps by more than 20 degrees, or when the graphics state is
+	// one of two specific values, and the final line reads the anchor. That is the FFX
+	// movement everybody knows, where you hold a direction, the camera swings round a
+	// corner, and you keep walking the way you were already going.
+	//
+	// The anchor lives in the state block, so it is already per character and already
+	// replicated. Patching the four camera reads inside the driver therefore makes the
+	// whole function a pure function of replicated state, with the engine's own
+	// anchoring intact, which is strictly better than standing in for the camera at the
+	// last line and losing it.
+	//
+	// WITHOUT THIS INSTALLED StepPlayerControlFor falls back to the engine's fixed-yaw
+	// override and forces the heading offset to zero, which is still deterministic and
+	// still agrees across machines. It just moves like a different game: continuously
+	// camera-relative, so a camera swing curves the walk. Prefer the override.
+	// ---------------------------------------------------------------------------
+
+	// Patches the four call sites. Once at startup. Returns false and logs if any site
+	// is not the expected call, and in that case NONE of them are left patched, because
+	// a driver reading the owner's yaw in three places and ours in the fourth is worse
+	// than one reading ours in all four.
+	bool InstallPlayerCameraOverride();
+	bool PlayerCameraOverrideInstalled();
+
+	// Pad auto repeat ran off the wall clock here. That patch moved to
+	// ffx/StepClock.h, which owns all five of the clock call sites that pace
+	// input rather than just this one. There turned out to be three separate
+	// auto-repeat implementations plus the battle menu's page lockout.
+
+	// Put a state block in the "has never been driven" condition. Call this when a
+	// character takes control of a peer, so it does not inherit somebody else's ramps.
+	void ResetPlayerControlState(PlayerControlState* out);
+
+	// Run the engine's own driver for one character, with that character's own ramps
+	// and that character's own input, and leave the live globals exactly as they were.
+	//
+	// cameraYaw reaches the driver one of two ways, depending on whether
+	// InstallPlayerCameraOverride succeeded.
+	//
+	// WITH the override, which is the good path: it is handed to the four patched
+	// camera reads, so the engine's own anchoring runs with the owner's yaw and
+	// UseFixedYaw, FixedYaw and HeadingOffset are left exactly as the game has them.
+	//
+	// WITHOUT it: it goes in through the engine's fixed-yaw pair, which stands in for
+	// the camera in the final line only, and the heading offset is forced to zero so
+	// the result collapses to
+	//     moveDir = -(desiredHeading - cameraYaw)
+	// Deterministic, and not the shipped feel. See InstallPlayerCameraOverride.
+	//
+	// Returns false when the driver or the state block is not reachable, and in that
+	// case nothing is written and nothing is left swapped.
+	bool StepPlayerControlFor(Character* chr, PlayerControlState* state,
+	    const PlayerControlInput& in);
+
+	// Is the engine's own driver reachable at all. Worth checking once at startup
+	// rather than discovering it per step.
+	bool PlayerControlDriverAvailable();
+
+	// The two left-stick bytes exactly as FFX_Player__stepControl reads them, 0x80
+	// centred and Y positive down.
+	//
+	// These rather than ReadPlayerSticks when the values are going to be fed back into
+	// the driver, because the driver's deadzone and its four ramps are defined against
+	// the BYTE. Going out through the float and back in through
+	// FFX_Pad__axisFloatToByte is a truncation each way and does not reliably land on
+	// the byte you started from, which on a replicated path is a divergence rather
+	// than a rounding detail.
+	bool ReadPlayerAnalogBytes(BYTE* outLX, BYTE* outLY);
+
 } // namespace ffx

@@ -38,6 +38,18 @@ namespace workshop
 		frame.moveMag = 0; // idle, which is what matters. The angle is then ignored
 		frame.reserved = 0;
 
+		// 0x80 IS CENTRED AND 0 IS FULL DEFLECTION. Zeroing these would make a neutral
+		// frame mean hard up and hard left, so every dropped frame and every pre-roll
+		// slot would walk the character into a wall. The engine deadzones a band around
+		// 0x80 rather than around 0.
+		frame.analogLX = 0x80;
+		frame.analogLY = 0x80;
+
+		// A yaw of 0 is a real direction rather than an absent one, and there is no
+		// sentinel for "no camera". It only reaches anything when moveMag is non-zero,
+		// which a neutral frame never has.
+		frame.cameraYaw = 0;
+
 		return frame;
 	}
 
@@ -503,7 +515,13 @@ namespace workshop
 
 	const InputFrame* Lockstep::InputForStep(uint8_t peer) const
 	{
-		static const InputFrame neutral = { 0, 0, 0, 0 };
+		// NeutralInput, and NOT a zero-filled aggregate. Since protocol 6 the frame
+		// carries the raw stick bytes, and a raw 0 is hard up and hard left rather than
+		// centre, so a zeroed fallback would walk a character diagonally for as long as
+		// the ring had nothing for it. This used to be { 0, 0, 0, 0 }, which was right
+		// when the frame was a heading and a magnitude and silently stopped being right
+		// when the two bytes were added.
+		static const InputFrame neutral = NeutralInput();
 		if (peer >= (uint8_t)MaxPlayers)
 			return &neutral;
 
@@ -703,7 +721,9 @@ namespace workshop
 		lastChecksumStep = currentStep;
 		lastChecksumCombined = combined;
 
-		const int keep = (partCount < 0) ? 0 : ((partCount > 16) ? 16 : partCount);
+		const int keep = (partCount < 0)
+		    ? 0
+		    : ((partCount > ChecksumRegionCount) ? ChecksumRegionCount : partCount);
 		lastChecksumPartCount = (uint32_t)keep;
 		memset(lastChecksumParts, 0, sizeof(lastChecksumParts));
 		if (parts && keep > 0)

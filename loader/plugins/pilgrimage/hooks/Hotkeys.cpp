@@ -5,7 +5,7 @@
 #include "ModState.h"
 #include "workshop/Log.h"
 #include "hooks/VisibilityDetour.h"
-#include "ui/ControlPanel.h"
+#include "ui/OverlayPanel.h"
 
 namespace pilgrimage
 {
@@ -189,14 +189,14 @@ namespace pilgrimage
 			else if (ShiftHeld())
 				InterlockedExchange(&requests.logTriggerPass, 1);
 			else
-				ToggleControlPanel();
+				ToggleOverlayPanel();
 		}
 	}
 
 	const char* HotkeySummary()
 	{
 		return "F9 spawn, F10 despawn, shift+F10 despawn all, F4 next clone, "
-		       "arrow keys to move, shift to run, F11 control window, "
+		       "arrow keys to move, shift to run, F11 the in-game panel, "
 		       "F7 cycles the spawn id, F8 dumps a field diff, "
 		       "shift+F8 runs the save block stability probe, "
 		       "F6 cull override, F5 force visible, "
@@ -207,7 +207,8 @@ namespace pilgrimage
 		       "on the nearest one, shift+F5 arms the esc menu row test, "
 		       "ctrl+F3 asks the host for the world again, "
 		       "ctrl+F4 lets the host take control of the menu, "
-		       "ctrl+F11 logs the world transfer, the menu and the pause";
+		       "ctrl+F11 logs the world transfer, the menu, the pause and the player "
+		       "drive";
 	}
 
 } // namespace pilgrimage

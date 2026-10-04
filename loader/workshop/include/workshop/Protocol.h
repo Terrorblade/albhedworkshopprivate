@@ -32,7 +32,12 @@ namespace workshop
 	// Bump on ANY change to a struct in this file or to the meaning of a field. The
 	// handshake refuses a peer whose version differs, which is the behaviour you
 	// want: a clear refusal beats two builds that almost agree.
-	const uint16_t ProtocolVersion = 5;
+	// 6 added the raw stick bytes and the owner's camera yaw to InputFrame, so that
+	// both machines can run the engine's own player driver rather than one of them
+	// running it and the other approximating it.
+	// 7 grew the checksum regions from 16 to 24 and added MessageRandomState. The
+	// RNG state sits outside the save block, so the world transfer never carried it.
+	const uint16_t ProtocolVersion = 7;
 
 	enum MessageKind
 	{
@@ -56,6 +61,10 @@ namespace workshop
 		MessageWorldSnapshot = 11, // host to client, one chunk of the save block
 		MessageWorldApplied = 12,  // client to host, installed it, here is my hash
 		MessageWorldAnchor = 13,   // host to client, where everybody is standing
+
+		// The RNG state. Seeded from constants at boot, so two processes that start
+		// together agree, but a joiner does not and the save block does not carry it.
+		MessageRandomState = 14, // host to client
 	};
 
 	// The sender's peer id before the host has given it one.
@@ -170,12 +179,33 @@ namespace workshop
 	// other with what came off the wire, the two are being fed different numbers and they
 	// drift apart slowly and inexplicably. QuantiseAngle and QuantiseMagnitude in Lockstep.h
 	// are the only place those conversions live.
+	// WHAT IS AUTHORITATIVE HERE, because there are now two ways to read this struct.
+	//
+	// analogLX, analogLY, buttons and cameraYaw are the INPUTS to the engine's own
+	// player driver, FFX_Player__stepControl, and they are what actually moves a
+	// character. Both machines feed them to that same function through
+	// ffx::StepPlayerControlFor, which is what makes two machines agree: identical
+	// inputs into identical code, including the four direction ramps that do the
+	// smoothing.
+	//
+	// moveAngle and moveMag are DERIVED and are no longer what drives anybody. They
+	// are kept because "is this peer pushing the stick, and roughly where" is a cheap
+	// question a lot of diagnostics want, and recomputing it from the raw bytes at
+	// every call site would be worse. Do not drive movement from them.
+	//
+	// WHY THE CAMERA YAW IS ON THE WIRE. The driver resolves the stick against the
+	// camera, and the camera is local to each machine, so the owner's yaw has to
+	// travel with the stick or the two machines send the same character in two
+	// different directions. It goes through the engine's fixed-yaw override.
 	struct InputFrame
 	{
 		uint32_t buttons;   // the FFX global button mask, as read from g_ffxInput
-		uint16_t moveAngle; // world heading, 0..65535 over a full turn. 0 is +X, 16384 is +Z
-		uint8_t moveMag;    // stick deflection, 0..255. Exactly 0 means idle
-		uint8_t reserved;   // keeps the frame 8 bytes and naturally aligned
+		uint16_t moveAngle; // DERIVED world heading, 0..65535 a full turn. 0 is +X, 16384 is +Z
+		uint8_t moveMag;    // DERIVED stick deflection, 0..255. Exactly 0 means idle
+		uint8_t analogLX;   // raw left stick X, 0x80 centred, exactly as the pad layer has it
+		uint8_t analogLY;   // raw left stick Y, 0x80 centred, POSITIVE IS DOWN
+		uint8_t reserved;   // keeps cameraYaw aligned and the frame a round 12
+		uint16_t cameraYaw; // the OWNER'S camera yaw, quantised like moveAngle
 	};
 
 	// The most frames one input message can carry. Raising it costs bytes on every
@@ -214,12 +244,37 @@ namespace workshop
 
 	// A state hash for one step, so a divergence is caught near where it started
 	// rather than minutes later when something visible goes wrong.
+	// How many hash regions a checksum message carries. 13 save block buckets, 2
+	// menu, 1 carried objects, 1 minigame, and spares. Raising this is a protocol
+	// change, which is why it is one constant rather than a literal in five places.
+	const int ChecksumRegionCount = 24;
+
 	struct ChecksumPayload
 	{
 		uint32_t step;
 		uint32_t combined;  // the whole-state hash
 		uint32_t partCount; // how many of parts[] are meaningful
-		uint32_t parts[16]; // per region, so a mismatch says WHERE
+		uint32_t parts[ChecksumRegionCount]; // per region, so a mismatch says WHERE
+	};
+
+	// Why the stream is carried by value rather than chunked: 272 bytes fits one
+	// datagram with room to spare, and a partial RNG state is worse than none.
+	const int RandomStreamBytes = 272;
+
+	enum RandomStateReason
+	{
+		RandomStateJoin = 1,   // a peer is joining and needs the host's state
+		RandomStateReseed = 2, // the host saw a reseed and is re-publishing
+	};
+
+	struct RandomStatePayload
+	{
+		uint32_t step;        // the step the host read this on
+		uint32_t reason;      // one of RandomStateReason
+		uint32_t streamBytes; // 272 today. A different value is a refusal, not a guess
+		uint32_t battle;      // the single LCG
+		uint32_t effect;      // effect and particle RNG, float bits
+		uint8_t stream[RandomStreamBytes];
 	};
 
 	// ---------------------------------------------------------------------------
@@ -332,10 +387,18 @@ namespace workshop
 	typedef char ProtocolHeaderSizeCheck[(sizeof(MessageHeader) == 16) ? 1 : -1];
 	typedef char ProtocolHelloSizeCheck[(sizeof(HelloPayload) == 32) ? 1 : -1];
 	typedef char ProtocolWelcomeSizeCheck[(sizeof(WelcomePayload) == 12) ? 1 : -1];
-	typedef char ProtocolInputFrameSizeCheck[(sizeof(InputFrame) == 8) ? 1 : -1];
-	typedef char ProtocolInputSizeCheck[(sizeof(InputPayload) == 72) ? 1 : -1];
+	typedef char ProtocolInputFrameSizeCheck[(sizeof(InputFrame) == 12) ? 1 : -1];
+	// 104, up from 72 when InputFrame grew to carry the stick bytes and the camera
+	// yaw: 8 bytes of header plus 8 frames of 12. At 29.97 Hz with redundancy that is
+	// a few KB a second, which is nothing against what the world transfer does once.
+	typedef char ProtocolInputSizeCheck[(sizeof(InputPayload) == 104) ? 1 : -1];
 	typedef char ProtocolCommandSizeCheck[(sizeof(CommandPayload) == 108) ? 1 : -1];
-	typedef char ProtocolChecksumSizeCheck[(sizeof(ChecksumPayload) == 76) ? 1 : -1];
+	typedef char ProtocolChecksumSizeCheck
+	    [(sizeof(ChecksumPayload) == 12 + 4 * ChecksumRegionCount) ? 1 : -1];
+	typedef char ProtocolRandomStateSizeCheck
+	    [(sizeof(RandomStatePayload) == 20 + RandomStreamBytes) ? 1 : -1];
+	typedef char ProtocolRandomStateFitsCheck
+	    [(sizeof(RandomStatePayload) + sizeof(MessageHeader) <= 1200) ? 1 : -1];
 	typedef char ProtocolWorldRequestSizeCheck[(sizeof(WorldRequestPayload) == 8) ? 1 : -1];
 	typedef char ProtocolWorldAppliedSizeCheck[(sizeof(WorldAppliedPayload) == 16) ? 1 : -1];
 	typedef char ProtocolWorldAnchorSlotSizeCheck[(sizeof(WorldAnchorSlot) == 20) ? 1 : -1];

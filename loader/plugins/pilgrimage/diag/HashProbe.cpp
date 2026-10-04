@@ -21,7 +21,7 @@ namespace pilgrimage
 			"mapId",
 			"playtime",
 			"progress",
-			"gil",
+			"partyGilFlags",
 			"inventory",
 			"itemMasks",
 			"monsters",

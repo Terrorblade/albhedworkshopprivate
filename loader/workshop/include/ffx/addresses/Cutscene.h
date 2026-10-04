@@ -237,7 +237,7 @@ namespace ffx
 		const DWORD RandStream = 0x003988F0;                // the seeded stream the script RNG draws from
 
 		// ---------------------------------------------------------------------------
-		// FMV, which CANNOT be lockstepped and has to be a barrier.
+		// FMV. The barrier goes on the SCRIPT WAIT, not on the simulation.
 		//
 		// The PS2 movie_* syscall surface is still in the binary and every one of those
 		// handlers is a stub that prints "Virtuos Warning: Movie on Windows, PS3 & PS
@@ -247,18 +247,66 @@ namespace ffx
 		// libwebm's mkvparser, so THE VIDEO IS WEBM, decoded on its own thread with a
 		// GetTickCount timebase and a 29.97 fallback frame rate.
 		//
-		// WHY THAT TURNS OUT NOT TO MATTER MUCH. FFX_MainStep early-returns on
-		// FmvGetPlaybackState() == 2, so NO SIMULATION RUNS during an FMV. The step
-		// counter, the game clock, the RNG and the script are all frozen. Both machines
-		// sit on the same simulation step for the whole movie, so the design only has
-		// to agree on when it starts, when it ends, and who may skip it.
+		// THIS BANNER USED TO SAY "no simulation runs during an FMV", on the strength of
+		// FFX_MainStep testing FrameGetSuspendState() == 2. THAT WAS WRONG, and it was
+		// the sentence four other documents were built on, so here is the derivation.
 		//
-		// For the start, replicate FmvScriptRunning, because that is set and cleared by
-		// ATEL Movie syscalls and so flips on the same opcode on both machines. For the
-		// end, barrier on both machines reporting FmvIsPlaying() == 0.
+		// FrameGetSuspendState lazily builds a 0x340 object into FrameSuspendState and
+		// returns 2 when the byte at +0x338 or the byte at +0x33C is set. A byte-write
+		// scan of the whole .text segment finds exactly four writers of those two bytes:
+		// the constructor sub_67FE70 zeroing both, FrameToggleSuspendOverlay (reached
+		// from the booster hotkey path in FFX_Frame_UpdateBoostersAndOverlays) and
+		// FrameSetCutsceneSuspend (reached from FFX_Cutscene_StepPauseOverlay and
+		// EnterPauseOverlay, which is the Start-button in-cutscene pause). NO FMV code
+		// writes either one. The object is a frame suspend state and not an FMV manager,
+		// which CWindowEventHandler__onFocusLost reading the same object confirms.
+		//
+		// So the simulation runs all the way through a movie, and the proof that needs no
+		// reversing at all is this: a script's movie wait IS an ATEL poll handler, the
+		// ATEL VM steps from inside the FFX_MainStep sub-step loop, and that loop is past
+		// the suspend test. If the step were discarded a movie could never finish.
+		//
+		// WHAT THAT CHANGES. The start needs no agreement: both machines reach the Movie
+		// opcode on the same step because the script is lockstepped. The body needs
+		// nothing. The EXIT is what breaks, because each machine's video finishes at its
+		// own wall-clock moment. So the barrier swaps the Movie library's poll pointers
+		// (see AtelMovieLibTable) and withholds the script, and the release is an ordered
+		// command. Holding the simulation would be the wrong tool twice over: it would
+		// stop the local lockstep clock while a peer still playing its video kept
+		// stepping. See reversing/FMV_SYNC.md and plugins/pilgrimage/world/FmvSync.h.
 		// ---------------------------------------------------------------------------
-		const DWORD FmvState = 0x008CC830;               // void *, lazily built, 0x340 bytes
-		const DWORD FmvGetPlaybackState = 0x002411E0;    // int __cdecl (void), 2 means the movie owns the frame
+
+		// WAS NAMED FmvState AND FmvGetPlaybackState. Both names were wrong, see above.
+		// Kept adjacent to the FMV block because that is where everyone will look for
+		// them, not because they are FMV state.
+		const DWORD FrameSuspendState = 0x008CC830;      // void *, lazily built, 0x340 bytes
+		const DWORD FrameGetSuspendState = 0x002411E0;   // int __cdecl (void), 2 means a USER suspend overlay is up
+		const DWORD FrameToggleSuspendOverlay = 0x00280320; // __thiscall, writes +0x338
+		const DWORD FrameSetCutsceneSuspend = 0x002803A0;   // __thiscall, writes +0x33C
+
+		// ONE BYTE, cleared per movie by FmvCreatePlayer, set only by
+		// FFX_Fmv_PollSkipButtons 0x6D9460, and read by FFX_Fmv_DrawFrame 0x6D7570,
+		// FFX_Fmv_StepPresentation 0x6D7680 and FFX_Fmv_IsFinishedOrSkipped 0x6DA240.
+		//
+		// NOT a one-byte way to end a movie, which is what it looks like and what an
+		// earlier note claimed. StepPresentation's keep-playing condition short circuits
+		// on PlaybackComplete == 0, so during playback this flag is unreachable. Ending a
+		// movie means clearing the manager's IsPlaying byte. ffx::RequestFmvSkip writes
+		// the whole field set for that reason.
+		const DWORD FmvSkipRequested = 0x008DED31;
+
+		// One int, one dword past FmvScriptRunning. Set by ATEL Movie:10's start and only
+		// when the player was really created, cleared by FFX_Fmv_AbortForSceneChange
+		// 0x76ECE0, and the Movie:10 wait's first test.
+		const DWORD FmvScriptBlocking = 0x00D2A00C;
+
+		// THE ATEL MOVIE LIBRARY'S HANDLER TABLE, in writable .data, which is what the
+		// whole barrier hangs off. 16 bytes per script function laid out
+		// [start, poll, resf, resi], so function N's poll pointer is at base + N*16 + 4.
+		// FFX_Atel_SysFuncPoll 0x877730 calls a poll as int __cdecl (int actor, int
+		// script). ffx::HookFmvWaits swaps the four Movie poll pointers, so a shim can
+		// return 0 to keep a script parked at its movie wait with no byte patching.
+		const DWORD AtelMovieLibTable = 0x00840E30;
 		const DWORD FmvPlayerManager = 0x008DED3C;       // void *, PhyFMVPlayerManager, see FmvManager::
 		const DWORD FmvGetManager = 0x002D73A0;          // void *__cdecl (void), prints if not built yet
 		const DWORD FmvIsPlaying = 0x00241CF0;           // int __cdecl (void), manager + 1744
@@ -368,8 +416,13 @@ namespace ffx
 				AtelGetPadPressed,
 				RandStream,
 
-				FmvState,
-				FmvGetPlaybackState,
+				FrameSuspendState,
+				FrameGetSuspendState,
+				FrameToggleSuspendOverlay,
+				FrameSetCutsceneSuspend,
+				FmvSkipRequested,
+				FmvScriptBlocking,
+				AtelMovieLibTable,
 				FmvPlayerManager,
 				FmvGetManager,
 				FmvIsPlaying,

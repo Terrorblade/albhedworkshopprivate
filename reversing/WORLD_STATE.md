@@ -894,7 +894,7 @@ useful and still contiguous:
 |---|---|---|---|
 | ScriptWork | +0x01EC .. +0x21EC | 8,192 | the world state. The one that matters. |
 | SphereGrid | +0x21EC .. +0x350C | 4,896 | changes only when someone activates a node |
-| Minigame | +0x350C .. +0x3D0C | 2,048 | four scenes only, almost always static |
+| GuideMap | +0x350C .. +0x3D0C | 2,048 | four scenes only, almost always static. **Was labelled Minigame, which is wrong.** It is guide-map / minimap state: `FFX_GuideMap_LoadSceneRecord 0x51CE50` hands these four 512-byte records to the `rcbgGuide` module (source path string `rcBg\rcbgGuide.c`, sibling `sub_91ECB0` carries `RenderMiniMapFog`). No minigame reads or writes it, and live minigame timers are ATEL class 6 or class 3 so they live in the loaded .ebp image or the actor pool, not in the save block at all. See `reversing/MINIGAMES_TIMED.md`. |
 
 and the header `+0x00C0 .. +0x01EC` (300 bytes) left on its own, because it contains the location
 fields and will differ for a frame or two during any transition, exactly like the map id already

@@ -7,6 +7,8 @@
 #include "menu/PauseSync.h"
 #include "world/BoosterSync.h"
 #include "world/DialogueSync.h"
+#include "world/FmvSync.h"
+#include "world/HeldObjects.h"
 #include "world/WorldSync.h"
 
 #include <stdio.h>
@@ -204,6 +206,16 @@ namespace pilgrimage
 		StopBattleSync();
 		StopDialogueSync();
 
+		// The FMV barrier has to be let go here or a script parked waiting for a peer
+		// that is no longer there never unparks, because the only thing that releases
+		// it is a command from that peer. StopFmvSync is what lets the wait through.
+		StopFmvSync();
+
+		// Only the command half stops. The carry census keeps running with no session,
+		// because it is read-only and is the thing that proves a carried object is a
+		// bone parent, which is worth being able to check solo.
+		StopHeldObjects();
+
 		// NOT StopCoopConfig. Those rows are settings and they stay available with no
 		// session, so that someone can set up who plays whom before a join and so this
 		// is testable alone. Retiring them here would take the screen away the moment a
@@ -285,6 +297,8 @@ namespace pilgrimage
 			StartBoosterSync();
 			StartBattleSync();
 			StartDialogueSync();
+			StartFmvSync();
+			StartHeldObjects();
 			StartMenuSync();
 			StartPauseSync();
 
@@ -300,6 +314,12 @@ namespace pilgrimage
 			StopBoosterSync();
 			StopBattleSync();
 			StopDialogueSync();
+
+			// Same reason as in StopNetworking: a parked movie wait is released by a
+			// peer's command and there are no peers left to send one.
+			StopFmvSync();
+
+			StopHeldObjects();
 
 			// NOT StopCoopConfig, same reason as in StopNetworking. The rows are
 			// settings and they outlive the session.

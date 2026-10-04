@@ -149,11 +149,127 @@ namespace ffx
 		const DWORD PadReadPressed16 = 0x00488E80;  // short (int port, int slot, int ring)
 		const DWORD PadReadReleased16 = 0x00488EA0; // short (int port, int slot, int ring)
 		const DWORD PadReadAnalogByte = 0x00488C20; // char (int port, int slot, int axis, char ring)
+		const DWORD PadReadStagingAnalogByte = 0x00488C00; // char (port, slot, axis)
+
+		// The pad ring entry is 32 bytes. +2/+4 held, +6 pressed, +8 released are all
+		// pure button math and deterministic. +10 and +28 are WALL CLOCK auto repeat
+		// masks, so avoid them: eight ATEL syscalls expose them to script
+		// (core:69/73/79/83 and core:591..594) and only core:593 is used by shipped
+		// data, in hiku2100.
+		const DWORD PadReadWord10 = 0x00488E50; // short (port, slot, ring), auto repeat
+		const DWORD PadReadWord28 = 0x00488E30; // short (port, slot, ring), auto repeat
+
+		const DWORD PadCommitRingSlot = 0x00489790;          // short (port, slot)
+		const DWORD PadStepAutoRepeatAllGroups = 0x00489940; // groups 0..3, ORs the masks
+		const DWORD PadStepAutoRepeatMask = 0x00489980;      // one group, reads the clock
+		// The clock call inside PadStepAutoRepeatMask. Patch this, not the clock.
+		const DWORD PadAutoRepeatClockCallSite = 0x00489989;
 
 		const DWORD PadFillSceReadData = 0x004898A0;        // int (int port, int slot, int state, int buf)
 		const DWORD PadFillAnalogAndSynthDpad = 0x00489570; // char (int state, int buf, short mask)
 		const DWORD PadUpdateAll = 0x00489A80;              // called from FFX_MainStep, inside animate
 
+		// ---------------------------------------------------------------------------
+		// THE PAD RING, AND THE CLEANEST INJECTION POINT IN THE GAME.
+		//
+		// A 256 byte port state is a FOUR ENTRY RING of 32 byte samples starting at
+		// offset 0, plus a STAGING area at +0x80. PadCommitAllPorts advances the cursor at
+		// +0x9C and calls PadCommitRingSlot once per port, and PadCommitRingSlot builds the
+		// new entry out of the staging bytes plus the previous entry:
+		//
+		//   ring +0x00 / +0x01   status and mode, from staging +0x80 and +0x81
+		//   ring +0x02 / +0x04   the held mask, both copied from staging +0x98
+		//   ring +0x06           pressed  = held & (held ^ prevHeld)
+		//   ring +0x08           released = prevHeld & (held ^ prevHeld)
+		//   ring +0x0C..+0x1B    16 analog bytes, copied straight from staging +0x84
+		//   ring +0x0A / +0x1C   the auto repeat masks. WALL CLOCK, the only two
+		//   ring +0x1E           staging +0x9A carried through
+		//
+		// SO: WRITE PadStagingHeldOff AND THE 16 BYTES AT PadStagingAnalogOff, THEN LET THE
+		// ENGINE DERIVE THE REST. Pressed, released and the analog copy are pure integer
+		// math over the previous entry, so two peers fed the same staging bytes for the
+		// same number of commits produce bit identical +0x02, +0x04, +0x06 and +0x08.
+		//
+		// That is cleaner than writing ring entries by hand and much cleaner than the menu
+		// globals, because everything above the ring already reads through the two port API
+		// and needs no change at all.
+		//
+		// THE CADENCE IS THE ONE THING TO GET RIGHT. PadCommitAllPorts has exactly three
+		// callers. The MainStep and StepPacing ones are the two arms of a single if/else at
+		// PadCommitAllPortsBranchSite, so between them it runs ONCE PER FRAME, and before
+		// the sub step loop that starts at RVA 0x00420FFA. The third is inside BtlMenuStep,
+		// gated on ThreadedPadMode, and that one runs once per SUB STEP. In the overdrive
+		// family only Lulu's Fury sets that flag.
+		//
+		// So the ring normally advances once per frame and once per sub step during Lulu's
+		// Fury, and an injector has to advance it the same number of times on both peers,
+		// because the overdrive minigames read lag -1 as well as lag 0.
+		// ---------------------------------------------------------------------------
+		const DWORD PadCommitAllPorts = 0x004893E0; // int (void), loops ports 0 and 1
+		const DWORD PadGetRingSlot = 0x00488B60;    // char *(char *portState, char lag)
+		const DWORD PadGetReadBuffer = 0x00488B80;  // (int port, int slot, int lag)
+		const DWORD PadGetPortBuffer = 0x00488E10;  // (int port, int slot)
+		const DWORD PadClearRingSlot = 0x00488970;  // zeroes one entry
+		
+		// FFX_Pad__getRingLagWindow 0x00487DC0 is declared in addresses/MagicDll.h,
+		// because it exists only to answer magic host API slot 305 and the exe never
+		// calls it. It returns a constant 1, and a DLL uses it as lag = 1 - ret, so a
+		// magic DLL's pad reads only ever see the CURRENT ring slot.
+
+		// PadGetRingSlot takes the PORT STATE POINTER, not a port index, and returns
+		// portState + 32 * ((lag + portState[0x9C]) & 3). lag 0 is the sample just
+		// committed, lag -1 the one before it.
+		const int PadPortStateBytes = 256;
+		const int PadRingEntryBytes = 32;
+		const int PadRingEntries = 4;
+
+		// Staging offsets inside a port state. The two marked INJECT are the whole point.
+		const int PadStagingStatusOff = 0x80;
+		const int PadStagingModeOff = 0x81;      // 1 builds a fresh entry, 2 copies the last
+		const int PadStagingStatus2Off = 0x82;
+		const int PadStagingAnalogOff = 0x84;    // INJECT. 16 bytes
+		const int PadStagingHeldOff = 0x98;      // INJECT. the held button word
+		const int PadStagingHeld2Off = 0x9A;     // feeds the ring +0x1C auto repeat
+		const int PadRingCursorOff = 0x9C;       // advanced by PadCommitAllPorts
+		const int PadStagingClearFlagOff = 0x9E; // zero makes the commit clear the new entry
+
+		// Ring entry offsets. +0x0A and +0x1C are the ONLY wall-clock derived words in an
+		// entry. Everything else is pure math, so hash or replicate the rest freely.
+		const int PadRingStatusOff = 0x00;
+		const int PadRingModeOff = 0x01;
+		const int PadRingHeldOff = 0x02;
+		const int PadRingHeld2Off = 0x04;   // what PadReadButtons16 returns
+		const int PadRingPressedOff = 0x06;
+		const int PadRingReleasedOff = 0x08;
+		const int PadRingRepeatAOff = 0x0A; // WALL CLOCK
+		const int PadRingAnalogOff = 0x0C;  // 16 bytes
+		const int PadRingRepeatBOff = 0x1C; // WALL CLOCK
+		const int PadRingHeld2CarryOff = 0x1E;
+
+		// Commit internals, for a patcher that wants to verify before it writes.
+		const DWORD PadRingCursorAdvanceSite = 0x004897CA;    // mov [esi+9Ch], cl
+		const DWORD PadCommitEdgeMathSite = 0x00489846;       // mov [ebx+6], ax
+		const DWORD PadCommitAutoRepeatCallSite = 0x00489867; // the only clock in a commit
+
+		// The three callers, and the if/else that picks between the first two.
+		const DWORD PadCommitAllPortsBranchSite = 0x00420B90;      // jnz, inside MainStep
+		const DWORD PadCommitAllPortsCallSiteMainStep = 0x00420BA3;
+		const DWORD PadCommitAllPortsCallSitePacing = 0x0042221F;
+		const DWORD PadCommitAllPortsCallSiteBtlMenu = 0x0049AE65; // once per SUB step
+
+		// The button remap layer, which is identity on this build. Listed so nobody chases
+		// it: PadMapButtonCode returns 0..3 unchanged, PadRemapButtonMask is an identity
+		// lookup through PadButtonRemapTable, and the table's only writer is PadResetPort
+		// writing the identity back.
+		const DWORD PadMapButtonCode = 0x00488CF0;
+		const DWORD PadRemapButtonMask = 0x00488C40;
+		const DWORD PadButtonRemapTable = 0x00F30488;
+		const DWORD PadSetButtonRemapEntry = 0x004894F0;
+		const DWORD PadResetPort = 0x00489360;
+
+		// The function older notes meant when they said 0x00230C40 was the input clock. It
+		// is not, InputGetTimeSeconds above is. This one clears the threaded sample queues.
+		const DWORD InputClearThreadedSampleQueues = 0x00230C40;
 		// ---------------------------------------------------------------------------
 		// The player-input globals. One slot each for the whole game, which is the
 		// co-op blocker proper. PlayerReadPad fills them from port 0 slot 0 and
@@ -175,6 +291,41 @@ namespace ffx
 		const DWORD PlayerReadPad = 0x0042D070;         // char (void), the latch
 		const DWORD PlayerGetPadButtons = 0x0042D050;   // int (void), CLEARS PlayerPadPressed
 		const DWORD PlayerStepControl = 0x0042D180;     // the input to movement driver
+
+		// THE ONLY CALL TO IT IN THE BINARY, inside FFX_MainStep, once per substep. The
+		// five bytes there are E8 6B C1 00 00.
+		//
+		// This is the seam for driving more than one character. Patch this one call to a
+		// function that loops, and every player character gets the engine's own driver at
+		// exactly the point in the step the engine wanted it, on the engine's own substep
+		// cadence. Patching the site rather than detouring the function is also the only
+		// option that works here, see workshop::PatchCallSite for why.
+		const DWORD PlayerStepControlCallSite = 0x00421010;
+
+		// THE CAMERA READS INSIDE THE PLAYER DRIVER, all four of them.
+		//
+		// Every one is "call j_FFX_Came_GetYaw" immediately followed by "fstp
+		// g_ffxPlayerCamYaw", and that store is the only way the live camera gets into the
+		// driver at all. Patch these four and the whole function becomes a pure fuction of
+		// the 0x30 state block, the pad globals and a handful of shared mode flags, which
+		// is what makes it safe to run per character on two machines.
+		//
+		// The thunk is a bare "jmp FFX_Came_GetYaw" at 0x43F2D0. FFX_Came_GetYaw itself is
+		// __fastcall returning a double in ST(0), takes one ecx argument that it writes
+		// through and then reads back, and pushes NOTHING on the stack. So a replacement
+		// declared "double __cdecl f(void)" is stack compatible with it.
+		const DWORD PlayerCameGetYawThunk = 0x0043F2D0;
+		const DWORD PlayerCameGetYaw = 0x003BCF20;
+		const DWORD PlayerDriverYawSite0 = 0x0042D6A9; // re-anchor on a >20 degree turn
+		const DWORD PlayerDriverYawSite1 = 0x0042D6E0; // gfx state 412
+		const DWORD PlayerDriverYawSite2 = 0x0042D6ED; // gfx state 544
+		const DWORD PlayerDriverYawSite3 = 0x0042D720; // the non-mode-3 path, every step
+
+		// BYTE, and it sits three bytes below PlayerControlEnabled rather than in the
+		// player state block. 3 selects the anchored camera-relative path in the driver,
+		// anything else takes the branch that refreshes the anchor every step and clears
+		// the heading offset. Script state, so it is the same on both machines.
+		const DWORD PlayerCtrlMode = 0x008496D5;
 		const DWORD PlayerCamReadPadInput = 0x0043F4B0; // right stick to camera
 
 		// Post-deadzone stick values PlayerStepControl derives, ints centred on 128.
@@ -188,13 +339,90 @@ namespace ffx
 		// flags1 bit 0x400, so it is a movement gate and not an input gate.
 		const DWORD PlayerControlEnabled = 0x008496D8;
 
-		// The four direction ramps, ints stepping by 32 and clamped to 256. Shared state,
-		// so two players driven through PlayerStepControl would smear into each other
-		// even if the mask were per character.
+		// The four direction ramps, ints stepping by 32 and clamped to 0..256. Shared
+		// state, so two players driven through PlayerStepControl would smear into each
+		// other even if the mask were per character.
+		//
+		// They are also the movement SMOOTHING, and they are pure integer arithmetic with
+		// no clock anywhere in them, so they replicate exactly as long as each character
+		// gets its own copy. That is the whole reason the swap below is worth doing rather
+		// than reimplementing the driver.
 		const DWORD PlayerDirRampUp = 0x00F0078C;
 		const DWORD PlayerDirRampDown = 0x00F00790;
 		const DWORD PlayerDirRampRight = 0x00F00794;
 		const DWORD PlayerDirRampLeft = 0x00F00798;
+
+		// ---------------------------------------------------------------------------
+		// THE REST OF THE PER-PLAYER STATE, which completes the set.
+		//
+		// Everything PlayerStepControl both reads and writes lives in one contiguous
+		// block, RVA 0x00F00780 through 0x00F007AF, and these are the entries that were
+		// missing from the list above. Driving a second character through the engine's own
+		// driver means saving this block, writing that character's copy in, calling, and
+		// saving the result back out. See the function comment on PlayerStepControl in the
+		// IDB for the full derivation and for why transmitting the OUTPUT instead does not
+		// work under delayed input.
+		//
+		// PlayerStateBlock and PlayerStateBlockBytes name the span so a swap can memcpy it
+		// rather than naming ten fields and getting one wrong later.
+		// ---------------------------------------------------------------------------
+		const DWORD PlayerStateBlock = 0x00F00780;
+		const DWORD PlayerStateBlockBytes = 0x30;
+
+		// Float radians. Subtracted from the desired heading before the camera yaw is
+		// applied, and reset to 0 by the branches that re-anchor off the live camera.
+		const DWORD PlayerHeadingOffset = 0x00F00780;
+
+		// Float radians, the engine's cached camera yaw. Written live from
+		// FFX_Came_GetYaw in four separate branches of PlayerStepControl, which is what
+		// makes the camera the one genuine obstacle to driving a remote character here:
+		// the camera is per machine.
+		const DWORD PlayerCamYaw = 0x00F0079C;
+
+		// Float radians, last step's desired heading. Drives the re-anchor test, which
+		// fires when the heading moves more than 0.34906578 radians, about 20 degrees.
+		const DWORD PlayerPrevHeading = 0x00F007A4;
+
+		// THE WAY PAST THE CAMERA, and the engine ships it. The final line of
+		// PlayerStepControl is
+		//     dir = -((DesiredHeading - HeadingOffset) - (UseFixedYaw ? FixedYaw : CamYaw))
+		// so setting the pair replaces the camera in the part that reaches the character.
+		//
+		// IT DOES NOT replace the camera in the earlier branches that re-anchor
+		// HeadingOffset and PrevHeading. A replicator that wants a result independent of
+		// the local camera has to supply the owner's yaw as FixedYaw AND force
+		// HeadingOffset to 0, which collapses the line to dir = -(DesiredHeading - yaw).
+		const DWORD PlayerUseFixedYaw = 0x00F007C4; // BYTE, non-zero selects FixedYaw
+		const DWORD PlayerFixedYaw = 0x00F007C8;    // float radians
+
+		// void __cdecl (float degrees, bool enable). The engine's own setter for the pair
+		// above, so the fixed-yaw mode does not have to be poked directly.
+		// WAS 0x42D9A0, which is 0x10 INTO this function rather than at it. Nothing
+		// caught it because nothing called it yet. Takes (float useFixed, float degrees),
+		// both as floats even though the first is really a boolean, and writes
+		// PlayerUseFixedYaw and PlayerFixedYaw.
+		const DWORD PlayerSetFixedYawDeg = 0x0042D990;
+
+		// The two functions that write the driver's camera anchor from OUTSIDE the driver.
+		// Each has exactly one caller and both callers are ATEL script opcodes, library 0
+		// functions 63 and 64, so this is script re-anchoring the player's movement frame.
+		//
+		// syncCamYaw latches the camera into PlayerCamYaw and zeroes PlayerHeadingOffset.
+		// setHeadingOffsetDeg latches the camera and sets the offset to
+		// wrap(deg * pi / 180) + PlayerDesiredHeading.
+		//
+		// Both write the LIVE block, which under a per-character swap is scratch space, so
+		// anything replicating the driver has to notice the write and push it into every
+		// character's own copy. world/PlayerDrive.cpp does that by watching the two fields.
+		const DWORD PlayerSyncCamYaw = 0x0042D930;
+		const DWORD PlayerSetHeadingOffsetDeg = 0x0042D950;
+
+		// Shared speed config, the same for every character, so a swap leaves it alone.
+		// WalkSpeed is a TWO entry table indexed by ((buttons & 0x40) == 0), so entry 1 is
+		// walk and entry 0 is run, and the final speed is
+		//     (locomotion == 2 ? SwimSpeed : WalkSpeed[idx]) * rampMagnitude * (1/256)
+		const DWORD PlayerWalkSpeed = 0x00F007B4; // float[2]
+		const DWORD PlayerSwimSpeed = 0x00F007BC; // float, used when locomotion mode is 2
 
 		// ---------------------------------------------------------------------------
 		// The other single-slot input consumers worth knowing about.
@@ -276,9 +504,34 @@ namespace ffx
 				PadReadPressed16,
 				PadReadReleased16,
 				PadReadAnalogByte,
+				PadReadStagingAnalogByte,
+				PadReadWord10,
+				PadReadWord28,
+				PadCommitRingSlot,
+				PadStepAutoRepeatAllGroups,
+				PadStepAutoRepeatMask,
+				PadAutoRepeatClockCallSite,
 				PadFillSceReadData,
 				PadFillAnalogAndSynthDpad,
 				PadUpdateAll,
+				PadCommitAllPorts,
+				PadGetRingSlot,
+				PadGetReadBuffer,
+				PadGetPortBuffer,
+				PadClearRingSlot,
+				PadRingCursorAdvanceSite,
+				PadCommitEdgeMathSite,
+				PadCommitAutoRepeatCallSite,
+				PadCommitAllPortsBranchSite,
+				PadCommitAllPortsCallSiteMainStep,
+				PadCommitAllPortsCallSitePacing,
+				PadCommitAllPortsCallSiteBtlMenu,
+				PadMapButtonCode,
+				PadRemapButtonMask,
+				PadButtonRemapTable,
+				PadSetButtonRemapEntry,
+				PadResetPort,
+				InputClearThreadedSampleQueues,
 				PlayerAnalogLY,
 				PlayerAnalogLX,
 				PlayerAnalogRY,
@@ -289,6 +542,16 @@ namespace ffx
 				PlayerReadPad,
 				PlayerGetPadButtons,
 				PlayerStepControl,
+				PlayerStepControlCallSite,
+				PlayerCameGetYawThunk,
+				PlayerCameGetYaw,
+				PlayerDriverYawSite0,
+				PlayerDriverYawSite1,
+				PlayerDriverYawSite2,
+				PlayerDriverYawSite3,
+				PlayerCtrlMode,
+				PlayerSyncCamYaw,
+				PlayerSetHeadingOffsetDeg,
 				PlayerCamReadPadInput,
 				PlayerStickLX,
 				PlayerStickLY,
@@ -298,6 +561,15 @@ namespace ffx
 				PlayerDirRampDown,
 				PlayerDirRampRight,
 				PlayerDirRampLeft,
+				PlayerStateBlock,
+				PlayerHeadingOffset,
+				PlayerCamYaw,
+				PlayerPrevHeading,
+				PlayerUseFixedYaw,
+				PlayerFixedYaw,
+				PlayerSetFixedYawDeg,
+				PlayerWalkSpeed,
+				PlayerSwimSpeed,
 				PhyreIsPadButtonDown,
 				PhyreGetPadAxis,
 				PhyreGetAnalogChannel,

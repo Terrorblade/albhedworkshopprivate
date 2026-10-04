@@ -264,58 +264,6 @@ namespace ffx
 		// its own constant and every list read is clamped to it.
 		const int kMenuCharListCapacity = 8;
 
-		// ---------------------------------------------------------------------------
-		// ADDRESSES THAT BELONG IN addresses\MenuSystem.h AND ARE PARKED HERE.
-		//
-		// They are here and not there because the pass that derived them was not
-		// allowed to edit the addresses\ files. Move them, add them to
-		// MenuSystemRvaList so VerifyLayout checks them at startup, and delete this
-		// block. Every one was read out of the IDB and is named and commented there.
-		//
-		// The derivation is in reversing\CONFIG_ROWS.md.
-		// ---------------------------------------------------------------------------
-		namespace ParkedRva
-		{
-			// Module 10's own four slots, in descriptor order.
-			const DWORD MenuConfigSelectRowTable = 0x004CB350; // PREPARE, sets both globals
-			const DWORD MenuConfigDrawScreen = 0x004CB320;     // DRAW
-			const DWORD MenuConfigInitRowValues = 0x004CB3C0;  // INIT, seeds every row
-			const DWORD MenuConfigRowAt = 0x004CBAA0;          // rows[i], unchecked
-			const DWORD MenuConfigDrawAllRows = 0x004CBAB0;
-			const DWORD MenuConfigDrawRow = 0x004CBAE0;
-
-			// The four candidate arrays FFX_Menu_ConfigSelectRowTable picks between, on
-			// (FFX_GetLanguage() != 0) by (the HDD/asset check). All four hold the same
-			// eight row pointers in the same order in this build.
-			const DWORD MenuConfigRowArrayIntlHdd = 0x0085A554;
-			const DWORD MenuConfigRowArrayIntlNoHdd = 0x0085A578;
-			const DWORD MenuConfigRowArrayJpHdd = 0x0085A598;
-			const DWORD MenuConfigRowArrayJpNoHdd = 0x0085A5C0;
-
-			// The ten shipped row objects, 44 bytes each, of which eight are used. Here
-			// so a reader can be checked against them, never written to.
-			const DWORD MenuConfigRowPool = 0x0085A39C;
-			const int MenuConfigRowPoolCount = 10;
-
-			// Permanently 0. No writer anywhere in the binary, and it sits in the
-			// zero-filled tail of .data, so FFX_Menu_ConfigDrawRow's "editing row"
-			// branch is really a hardcoded special case for row 0, the HD Remaster's
-			// Original / Arranged music selector, whose text comes from the LocKit.
-			const DWORD MenuConfigEditingRow = 0x0146A438;
-
-			// The string lookups. FFX_Menu_GetUiString is listed for completeness and
-			// deliberately NOT detoured: its fourth byte starts a rel32 call.
-			const DWORD MenuGetUiString = 0x004DC9B0;     // label, group 7
-			const DWORD MenuGetUiStringDesc = 0x004DC970; // help line
-			const DWORD KernelStringGet = 0x0038FCF0;     // (group, id, lang), name
-			const DWORD KernelStringGetDesc = 0x0038FBB0; // (group, id, lang), desc
-			const DWORD MenuSetHelpString = 0x004AAEB0;   // keeps the POINTER
-
-			// The text renderer, for a mod that wants to draw outside a row.
-			const DWORD TextDrawString = 0x00505AB0;    // (s, x, y, colourSel, scale)
-			const DWORD TextMeasureString = 0x00505290; // (s, &width, greyed, scale)
-		} // namespace ParkedRva
-
 		// The kernel string group the in-game menu's UI strings live in.
 		const int kUiStringGroup = 7;
 
@@ -1050,10 +998,10 @@ namespace ffx
 			return true; // the menu has never been opened, which is the game's state
 
 		const DWORD shipped[] = {
-			(DWORD)(UINT_PTR)ModuleAddress(ParkedRva::MenuConfigRowArrayIntlHdd),
-			(DWORD)(UINT_PTR)ModuleAddress(ParkedRva::MenuConfigRowArrayIntlNoHdd),
-			(DWORD)(UINT_PTR)ModuleAddress(ParkedRva::MenuConfigRowArrayJpHdd),
-			(DWORD)(UINT_PTR)ModuleAddress(ParkedRva::MenuConfigRowArrayJpNoHdd)
+			(DWORD)(UINT_PTR)ModuleAddress(Rva::MenuConfigRowArrayIntlHdd),
+			(DWORD)(UINT_PTR)ModuleAddress(Rva::MenuConfigRowArrayIntlNoHdd),
+			(DWORD)(UINT_PTR)ModuleAddress(Rva::MenuConfigRowArrayJpHdd),
+			(DWORD)(UINT_PTR)ModuleAddress(Rva::MenuConfigRowArrayJpNoHdd)
 		};
 
 		for (int i = 0; i < 4; ++i)
@@ -1273,8 +1221,8 @@ namespace ffx
 		if (DETOUR_INSTALLED(KernelStringGet) && DETOUR_INSTALLED(KernelStringGetDesc))
 			return true;
 
-		const bool name = DETOUR_INSTALL(KernelStringGet, ParkedRva::KernelStringGet);
-		const bool desc = DETOUR_INSTALL(KernelStringGetDesc, ParkedRva::KernelStringGetDesc);
+		const bool name = DETOUR_INSTALL(KernelStringGet, Rva::KernelStringGet);
+		const bool desc = DETOUR_INSTALL(KernelStringGetDesc, Rva::KernelStringGetDesc);
 
 		if (name && desc)
 			return true;

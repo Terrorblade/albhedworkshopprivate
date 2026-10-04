@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "workshop/Events.h"
 #include "workshop/Log.h"
 
 // ---------------------------------------------------------------------------
@@ -51,6 +52,8 @@ namespace workshop
 	      buildId(0),
 	      sharedSettingsHash(0),
 	      localStep(0),
+	      lifecycleActive(false),
+	      lifecyclePeerMask(0),
 	      messageSinkCount(0),
 	      frame(0),
 	      nextSequence(1),
@@ -64,6 +67,56 @@ namespace workshop
 		memset(rejectText, 0, sizeof(rejectText));
 		for (int i = 0; i < MaxPlayers; ++i)
 			transportSlotForPeer[i] = InvalidPeer;
+	}
+
+	void Session::PublishLifecycle()
+	{
+		const bool nowActive = state == SessionActive;
+
+		unsigned mask = 0;
+		if (nowActive)
+			for (int i = 0; i < MaxPlayers; ++i)
+				if (peers[i].active && !peers[i].isLocal)
+					mask |= 1u << i;
+
+		if (nowActive && !lifecycleActive)
+		{
+			lifecycleActive = true;
+			Event started;
+			started.id = EventSessionStarted;
+			started.step = localStep;
+			started.value = localPeer;
+			started.pointer = this;
+			Publish(started);
+		}
+
+		// Peers move before the session ends, so a subscriber sees everyone leave and
+		// then the session stop, rather than a stop with peers still apparently there.
+		for (int i = 0; i < MaxPlayers; ++i)
+		{
+			const unsigned bit = 1u << i;
+			if ((mask & bit) == (lifecyclePeerMask & bit))
+				continue;
+
+			Event moved;
+			moved.id = (mask & bit) ? EventPeerJoined : EventPeerLeft;
+			moved.step = localStep;
+			moved.value = (uint32_t)i;
+			moved.pointer = this;
+			Publish(moved);
+		}
+		lifecyclePeerMask = mask;
+
+		if (!nowActive && lifecycleActive)
+		{
+			lifecycleActive = false;
+			Event stopped;
+			stopped.id = EventSessionStopped;
+			stopped.step = localStep;
+			stopped.value = 0;
+			stopped.pointer = this;
+			Publish(stopped);
+		}
 	}
 
 	bool Session::Start(Transport* useTransport, SessionRole useRole, uint32_t useBuildId,
@@ -146,13 +199,23 @@ namespace workshop
 		memset(peers, 0, sizeof(peers));
 		for (int i = 0; i < MaxPlayers; ++i)
 			transportSlotForPeer[i] = InvalidPeer;
+
+		// Step returns early once the state is Idle, so this is the only chance to
+		// tell the bus about a deliberate disconnect.
+		PublishLifecycle();
 	}
 
 	void Session::Step()
 	{
 		if (!transport || state == SessionIdle || state == SessionFailed ||
 		    state == SessionRejected)
+		{
+			// One edge check even on this path. A transport that died or a host that
+			// said no leaves the state right here, and a subscriber still needs to hear
+			// the session ended.
+			PublishLifecycle();
 			return;
+		}
 
 		++frame;
 		transport->Pump();
@@ -181,6 +244,7 @@ namespace workshop
 		}
 
 		DropQuietPeers();
+		PublishLifecycle();
 	}
 
 	// ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@
 #include "ffx/GameState.h"
 #include "ffx/WorldState.h"
 #include "world/Arrival.h"
+#include "world/MinigameSync.h"
 #include "net/LockstepLink.h"
 #include "net/NetLink.h"
 #include "workshop/Lockstep.h"
@@ -634,6 +635,14 @@ namespace pilgrimage
 			    "land at the doorway the save block names rather than beside us",
 			    peer);
 		}
+
+		// The RNG state lives outside the save block, so the snapshot cannot carry it.
+		// It goes out here, under the same transfer hold and so from the same instant,
+		// and reliable ordered delivery puts it ahead of the chunks.
+		if (!PublishRandomStateTo(peer, workshop::RandomStateJoin))
+			Log("world sync: could not send the RNG state to peer %d, so the two "
+			    "machines will draw different numbers until a reseed",
+			    peer);
 
 		Log("world sync: sending snapshot %u to peer %d, %u bytes in %d chunks",
 		    (unsigned)out.snapshotId, peer, (unsigned)SaveBlock::Size, out.chunkCount);

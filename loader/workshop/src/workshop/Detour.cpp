@@ -8,6 +8,61 @@
 
 namespace workshop
 {
+
+	bool PatchCallSite(CallSitePatch& site, DWORD siteRva, DWORD expectedTargetRva,
+	    void* replacement, const char* what)
+	{
+		site.rva = siteRva;
+		site.patched = false;
+
+		BYTE* call = (BYTE*)ModuleAddress(siteRva);
+		if (!Readable(call, 5))
+		{
+			Log("%s call site RVA 0x%08X is not readable, refusing", what, siteRva);
+			return false;
+		}
+		if (*call != 0xE8)
+		{
+			Log("%s call site RVA 0x%08X holds 0x%02X not an E8 call, refusing. Re-derive "
+			    "this site from the IDB.",
+			    what, siteRva, (unsigned)*call);
+			return false;
+		}
+
+		INT32 relative = 0;
+		memcpy(&relative, call + 1, sizeof(relative));
+		const BYTE* target = call + 5 + relative;
+		const BYTE* expected = (const BYTE*)ModuleAddress(expectedTargetRva);
+		if (target != expected)
+		{
+			Log("%s call site RVA 0x%08X calls 0x%08X, expected 0x%08X. Refusing to patch, "
+			    "because that is not the function this hook means.",
+			    what, siteRva, (unsigned)(UINT_PTR)target, (unsigned)(UINT_PTR)expected);
+			return false;
+		}
+
+		// PAGE_EXECUTE_READWRITE and not PAGE_READWRITE. Taking execute off a .text page,
+		// even for the one dword this writes, is a window in which another thread running
+		// through that page faults. InstallDetour below makes the same choice.
+		const INT32 wanted = (INT32)((BYTE*)replacement - (call + 5));
+		DWORD previousProtect = 0;
+		if (!VirtualProtect(call, 5, PAGE_EXECUTE_READWRITE, &previousProtect))
+		{
+			Log("%s call site RVA 0x%08X could not be made writable, GetLastError=%lu", what,
+			    siteRva, GetLastError());
+			return false;
+		}
+
+		memcpy(call + 1, &wanted, sizeof(wanted));
+		VirtualProtect(call, 5, previousProtect, &previousProtect);
+		FlushInstructionCache(GetCurrentProcess(), call, 5);
+
+		site.patched = true;
+		Log("%s call site patched: RVA 0x%08X now calls 0x%08X", what, siteRva,
+		    (unsigned)(UINT_PTR)replacement);
+		return true;
+	}
+
 	namespace
 	{
 

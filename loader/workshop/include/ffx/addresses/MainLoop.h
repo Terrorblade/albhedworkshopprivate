@@ -58,6 +58,11 @@ namespace ffx
 		const DWORD GameTick = 0x00239300;              // int __cdecl (void), booster hotkeys and overlays
 		const DWORD StepScalePublish = 0x004206C0;      // int __cdecl (void), fills StepScale88
 		const DWORD TimeScaleDtForBooster = 0x002F7340; // double __cdecl (float dt), the fast forward
+		// Wall clock seconds since app start. 30 callers, 20 of which reach the
+		// simulation step. Most are battle menu UI pulsing, but Lulu's Fury overdrive
+		// is timed off it, see Rva::BtlOdLuluFuryStickMinigame.
+		const DWORD TimeAppElapsedSeconds = 0x00241410;  // double __cdecl (void)
+		const DWORD TimeNowMicroseconds = 0x00241420;    // u64 __cdecl (void), MICROseconds
 
 		// The other three FFXApplication vtable bodies, because all four honour the
 		// simulation hold byte and a gate has to know what each one does.
@@ -226,6 +231,8 @@ namespace ffx
 				GameTick,
 				StepScalePublish,
 				TimeScaleDtForBooster,
+				TimeAppElapsedSeconds,
+				TimeNowMicroseconds,
 				FFXApplicationUpdate,
 				FFXApplicationRender,
 				FFXApplicationEndFrame,

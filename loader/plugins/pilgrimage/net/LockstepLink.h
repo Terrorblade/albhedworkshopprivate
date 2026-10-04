@@ -34,21 +34,21 @@ namespace workshop
 //
 // ## What this does and does not inject
 //
-// A remote peer's input IS now applied, but not by writing the pad. It is read
-// out of the clock by world/RemotePlayers.cpp and turned straight into a heading
-// and a speed on that peer's character, which skips the engine's player control
-// path entirely. That is better than a pad write rather than a workaround for
-// one: the engine's path subtracts the LOCAL camera yaw, and the camera is not
-// replicated, so two machines would turn the same stick into two different
-// headings. The wire carries a world direction instead. See the InputFrame
-// comment in workshop/Protocol.h.
+// EVERY player character, this machine's own included, is now driven from the
+// replicated bytes. The pad is read in exactly one place, the gate callback
+// below, where it goes into the ring. Nothing downstream of that reads it.
 //
-// What is still not injected is the BOUND PLAYER's own input. The engine reads
-// the pad inside FFX_MainStep, ahead of FFX_StepPacing, and drives the bound
-// player from it using that local camera. So the host's own character is the one
-// character in the world that is not yet driven from replicated bytes, which
-// means it is the one that can still diverge. Closing that is the same frame
-// order question as before, and it is now the only place it matters.
+// The driving itself is not here. world/PlayerDrive.cpp patches the engine's one
+// call to FFX_Player__stepControl and runs it once per player character with
+// that character's own ramps, which means both machines put identical input
+// through identical code. It deliberately does NOT write the pad globals to do
+// that: the pad is one slot and there are up to three characters, so the state
+// is swapped per call instead. See ffx/Input.h.
+//
+// The one thing the wire has to carry for that to work is the OWNER'S camera
+// yaw, because the driver resolves the stick against the camera and the camera
+// is local. It goes through the engine's own fixed-yaw override. See the
+// InputFrame comment in workshop/Protocol.h.
 //
 // Game thread only.
 
@@ -112,6 +112,15 @@ namespace pilgrimage
 		// through the engine's own byte, and a second writer for the same condition
 		// would just be racing animate's own latch.
 		kHoldPauseMenu = 1 << 1,
+
+		// An FMV is playing and this machine has reached the end of it while another
+		// has not, or has not reached it yet. The barrier, in other words.
+		//
+		// Reserved here because this file is the single writer of the hold byte, and
+		// adding a second writer for a new condition is the one thing the comment
+		// above forbids. The FMV layer raises and lowers this through
+		// HoldSimulationFor and ReleaseSimulationFor like everything else.
+		kHoldFmv = 1 << 2,
 	};
 
 	void HoldSimulationFor(int reason);

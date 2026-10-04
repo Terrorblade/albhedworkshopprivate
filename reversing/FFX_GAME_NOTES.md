@@ -707,15 +707,26 @@ reads host offsets up to `0xEA0` (index 936) and calls up to index 942. Note the
 NULL slots, so a scan that stops at the first zero stops early.
 
 Entries 0-38 are the character API and **entry 0 is `FFX_Ch_Allocate`**, so spawning a CHR from an
-externally loaded DLL is a *sanctioned* operation. It is not an exercised one: across all 581 shipped
-DLLs there is not a single call to any of indices 0-32. The only character-block entries any DLL
-actually uses are 36, 37 and 38. Keep the confidence signal for `PHASE1_CLONE.md`, but read it as
-"the developers made this callable", not "the shipped code does this".
+externally loaded DLL is a *sanctioned* operation. **It is also an exercised one.** This section used
+to say there is not a single call to any of indices 0-32 and that only 36, 37 and 38 are used. That
+was the old `tools/magicdll.py` matcher reporting zeroes it could not help reporting: it only
+recognised the mod=10 `disp32` addressing form, and every slot below 32 has a displacement under
+0x80 and so compiles to the mod=01 `disp8` form, with slot 0 compiling to mod=00 and no
+displacement at all. With the scanner fixed, **38 of the 39 entries 0 through 38 are called, at 2951
+sites below index 32 alone.** The only one untouched is slot 2, `FFX_Ch_MarkDirty`, and the
+character block really does end at 38, because nothing from 39 to 45 is called either. **Entry 0
+`FFX_Ch_Allocate` is called by 28 DLLs at 47 sites.** `magic_0162` at `0x10002DB0` is
+`mov eax, dword_1010A28C; push esi; mov eax, [eax]; push 3011h; call eax`, and `0x3011` decodes
+through `FFX_Ch_Allocate`'s own documented argument encoding as category 3 "sum", model 17, so a
+summon effect DLL allocating its own CHR. So `PHASE1_CLONE.md`'s confidence signal is stronger than
+"the developers made this callable". The shipped code does do this.
 
-Usage data, measured across all 581 DLLs: **49,442 host-table call sites over 459 distinct indices**,
-max index 942, and **488 of the 947 entries are never called by any FFX magic DLL**. The hottest
-single entry is 941 (`maybe_FFX_PrxPtr_Get 0xA44650`, an identity function) with 2,318 sites in 534
-DLLs, followed by the camera accessors 724 and 723.
+Usage data, measured across all 581 DLLs: **74,612 host-table call sites over 608 distinct indices**,
+max index 946, and **339 of the 947 entries are never called by any FFX magic DLL**. The hottest
+single entry is 941 (`maybe_FFX_PrxPtr_Get 0xA44650`, an identity function) with 2,853 sites in 539
+DLLs, followed by 719 (`FFX_Oef2_GetSubTable`) and 233. These numbers replace an earlier
+49,442 / 459 / max 942 / 488-never-called, which came from the broken matcher and was a lower bound
+everywhere. `reversing/MAGIC_DLL.md` section 7 has the old and new figures side by side.
 
 The rest, by region: the effect and particle module (`0x72xxxx-0x75xxxx`) takes 238 slots, battle
 (`0x78xxxx-0x7Bxxxx`) 118, another render or effect block at `0x92xxxx` 91, the CHR module

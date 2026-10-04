@@ -16,6 +16,7 @@
 #include "workshop/Log.h"
 #include "workshop/Protocol.h"
 #include "world/DialogueSync.h"
+#include "world/PlayerDrive.h"
 #include "world/TriggerPass.h"
 
 namespace pilgrimage
@@ -157,18 +158,30 @@ namespace pilgrimage
 				return;
 			}
 
-			// A world heading and a deflection, already resolved against the owner's
-			// camera, already deadzoned and already quantised. No camera is read here on
-			// purpose, and no atan2 either: the angle came over as an angle.
-			const float heading = DequantiseAngle(frame.moveAngle);
-			const float magnitude = DequantiseMagnitude(frame.moveMag);
+			// THE FALLBACK PATH ONLY. world/PlayerDrive.cpp normally moves this character,
+			// through the engine's own driver, at the engine's own point in the step. This
+			// branch runs when it could not patch its call site.
+			//
+			// It is a reimplementation of the driver and it is not a faithful one: the
+			// speeds are the mod's constants rather than the engine's table, and the
+			// heading is set directly rather than ramped, so there is no acceleration. It
+			// will not agree with a machine that is using the real driver. Keeping it is
+			// still right, because the alternative when the patch fails is a character
+			// that does not move at all.
+			if (!PlayerDriveActive())
+			{
+				// A world heading and a deflection, already resolved against the owner's
+				// camera, already deadzoned and already quantised. No camera is read here
+				// on purpose, and no atan2 either: the angle came over as an angle.
+				const float heading = DequantiseAngle(frame.moveAngle);
+				const float magnitude = DequantiseMagnitude(frame.moveMag);
 
-			// Run unless the walk modifier is held, which is exactly what the local pad
-			// path decides with out->run = !pad.cross. Mirroring it rather than inventing a
-			// second rule keeps a networked character moving like a local one.
-			const bool run = (frame.buttons & Btn::Cross) == 0;
+				// Run unless the walk modifier is held, which is exactly what the local
+				// pad path decides with out->run = !pad.cross.
+				const bool run = (frame.buttons & Btn::Cross) == 0;
 
-			DriveCloneFromHeading(chr, heading, magnitude, run);
+				DriveCloneFromHeading(chr, heading, magnitude, run);
+			}
 
 			// The position AFTER the drive, because the trigger pass wants where this
 			// character is now. The engine integrates motion later in the step, so this is
@@ -259,6 +272,11 @@ namespace pilgrimage
 		    rosterEntry < 0 ? "unbound" : "bound to roster entry");
 	}
 
+	Character* RemotePlayerCharacter(int peer)
+	{
+		return CharacterForPeer(peer);
+	}
+
 	LONG RemotePlayerEntry(int peer)
 	{
 		if (peer < 0 || peer >= MaxPeers)
@@ -331,9 +349,17 @@ namespace pilgrimage
 			}
 
 			// Out of patience. Stop, because by now the guess is worse than the truth.
-			Character* chr = CharacterForPeer(peer);
-			if (chr)
-				HoldCloneStill(chr);
+			//
+			// Only on the fallback path. PlayerDrive handles running out of patience by
+			// feeding that character a neutral input, which lets the engine's own ramps
+			// decay it to a halt instead of snapping it, and a snap is both visible and a
+			// motion the other machine never produced.
+			if (!PlayerDriveActive())
+			{
+				Character* chr = CharacterForPeer(peer);
+				if (chr)
+					HoldCloneStill(chr);
+			}
 		}
 
 		g_lastDriven = driven;

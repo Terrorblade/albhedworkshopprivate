@@ -11,8 +11,12 @@
 //
 // Plain volatile plus interlocked requests is enough. The UI only writes tuning
 // scalars and request flags, and a half-applied float for one frame is harmless.
-// No game function is ever called off the UI thread, which is the rule that
-// makes this safe. See ui/ControlPanel.h.
+// No game function is ever called off the game thread, which is the rule that
+// makes this safe.
+//
+// The UI draws inside Present, which is normally the game's own thread but is not
+// guaranteed to be, so the panel still goes through these rather than acting
+// directly. See ui/OverlayPanel.h.
 
 namespace pilgrimage
 {

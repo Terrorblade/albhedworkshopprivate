@@ -21,11 +21,19 @@ call "%LOADER%build_workshop.bat"
 if errorlevel 1 exit /b 1
 
 set "VCVARS=C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars32.bat"
-call "%VCVARS%" >nul
-if errorlevel 1 exit /b 1
+rem 2>nul as well as >nul: vcvars32 probes for vswhere.exe, which is not on PATH
+rem here, and its "not recognized" goes to stderr. The errorlevel check below is
+rem what actually catches a broken vcvars, so nothing is lost by hiding it.
+call "%VCVARS%" >nul 2>nul
+if errorlevel 1 (
+    echo ERROR: vcvars32.bat failed. Run it by hand to see why:
+    echo        "%VCVARS%"
+    exit /b 1
+)
 
 set "MODDIR=%LOADER%plugins\pilgrimage"
 set "LIBINC=%LOADER%workshop\include"
+set "IMGUI=%LOADER%third_party\imgui"
 set "OUTDIR=%LOADER%build"
 set "OBJDIR=%OUTDIR%\pilgrimage"
 
@@ -41,12 +49,13 @@ if not defined SOURCES (
 
 echo === building PilgrimageTogether.dll ===
 cl /nologo /c /EHsc /MT /O2 /W4 /DNDEBUG /DWIN32 /D_WINDOWS /D_CRT_SECURE_NO_WARNINGS ^
-   /I"%MODDIR%" /I"%LIBINC%" /Fo"%OBJDIR%\\" !SOURCES!
+   /I"%MODDIR%" /I"%LIBINC%" /I"%IMGUI%" /I"%IMGUI%\backends" /Fo"%OBJDIR%\\" !SOURCES!
 if errorlevel 1 goto :fail
 
 link /nologo /DLL /MACHINE:X86 /SUBSYSTEM:WINDOWS /DYNAMICBASE /NXCOMPAT ^
      /OUT:"%OUTDIR%\PilgrimageTogether.dll" "%OBJDIR%\*.obj" "%OUTDIR%\AlBhedWorkshop.lib" ^
-     kernel32.lib user32.lib gdi32.lib
+     kernel32.lib user32.lib gdi32.lib delayimp.lib ^
+     /DELAYLOAD:d3dcompiler_47.dll
 if errorlevel 1 goto :fail
 
 echo.

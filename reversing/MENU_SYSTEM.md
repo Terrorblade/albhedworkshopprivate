@@ -93,26 +93,26 @@ static descriptor for each id. Descriptor layout confirmed:
 | id | descriptor | exec | what it is |
 |----|-----------|------|-----------|
 | 0 | 0xC59500 | 0x8A8C10 | boot / title sequencer, loads the `menumain` overlay |
-| 1 | 0xC5B2B0 | 0x8E0350 | field / map top level (the default mode) |
-| 2 | 0xC5A320 | 0x8C60B0 | submenu |
-| 3 | 0xC5A2FC | 0x8C5450 | submenu |
-| 4 | 0xC5A744 | 0x8CF020 | submenu |
-| 6 | 0xC5A7D8 | 0x8D1E00 | submenu |
-| 7 | 0xC5A720 | 0x8CC330 | submenu |
-| 9 | 0xC5A7FC | 0x8D5540 | submenu |
-| 10 | 0xC5A5E4 | 0x8CB0E0 | submenu |
+| 1 | 0xC5B2B0 | 0x8E0350 | **the main menu top level.** Every submenu calls `ModuleStart(1, 0)` when it closes, and `ModuleSwitchGameMode` picks it for game mode 0. It starts 19 and 11 directly |
+| 2 | 0xC5A320 | 0x8C60B0 | submenu, **Ability** (main menu row 1) |
+| 3 | 0xC5A2FC | 0x8C5450 | submenu, **Items** (row 0). Starts module 23 for the Map item |
+| 4 | 0xC5A744 | 0x8CF020 | submenu, **Equip** (row 2) |
+| 6 | 0xC5A7D8 | 0x8D1E00 | submenu, **Status** (row 4). Read only |
+| 7 | 0xC5A720 | 0x8CC330 | submenu, **Aeons** (row 5) |
+| 9 | 0xC5A7FC | 0x8D5540 | submenu, **Customize** (row 7). Writes equipment entries in place |
+| 10 | 0xC5A5E4 | 0x8CB0E0 | submenu, **Config** (row 8) |
 | 11 | 0xC5A08C | 0x8BEF50 | save / load menu. Its suspend hook is `j_sa_menu_stop`, and the `sa_menu_*` strings belong to it. Game mode 0x400000 |
 | 12 | 0xC5A820 | 0x8D6E40 | game mode 0x40000 |
 | 13 | 0xC5A844 | 0x8D9600 | game mode 0x20000 |
-| 14 | 0xC5A0B0 | 0x8C3340 | game mode 0x80000, FMV / movie |
+| 14 | 0xC5A0B0 | 0x8C3340 | game mode 0x80000. Read as FMV / movie, but the row mapping suggests **Name Entry**. Not settled, its exec was never opened |
 | 15 | 0xC59FF0 | 0x8B15D0 | game mode 0x200000, also a submenu |
 | 16 | 0xC5A014 | 0x8B15D0 | game mode 0x100000, same exec as 15 |
 | 17 | 0xC59524 | 0x8BA660 | game mode 0x10000 |
-| **19** | **0xC5B2F4** | **0x8E26D0** | **THE MAIN MENU (party / system / equipment)** |
-| 20 | 0xC5B318 | 0x8E2870 | submenu |
-| 21 | 0xC5A768 | 0x8D0460 | submenu |
+| **19** | **0xC5B2F4** | **0x8E26D0** | **THE SPHERE GRID.** The first pass called this "the main menu" and that was wrong, see the proof section below. Module 1 is the main menu top level |
+| 20 | 0xC5B318 | 0x8E2870 | submenu, **PS2 HDD install** (row 20). DEAD, result 20 cannot be produced |
+| 21 | 0xC5A768 | 0x8D0460 | submenu, **Overdrive mode** (row 15) |
 | 22 | 0xC5A8D8 | 0x8DB4E0 | TK dev menu test harness, game mode 0x800000 |
-| 23 | 0xC5B33C | 0x8E2960 | - |
+| 23 | 0xC5B33C | 0x8E2960 | **World map viewer**, not a main menu row. From module 3's Map item |
 
 `g_ffxModuleGameMode` at **0x18408F8** holds the current mode bit.
 
@@ -475,7 +475,25 @@ forgets `+0x18` works on every screen except the Sphere Grid.** `ffx::WriteMenuP
 
 ## WHERE THE MENU COMMITS TO THE SAVE BLOCK (question 1)
 
-**No function in the menu touches the save block by address.** That was established two ways.
+**WRONG AS ORIGINALLY WRITTEN, corrected here.** The claim was "no function in the menu touches
+the save block by address", established by the three checks below. The Customize screen (module 9)
+does, through a pointer rather than an address: at 0x8D5BD8 it calls `FFX_SaveData__getEquipEntry`,
+then `FFX_Equip_AddAbilityToEntry 0x8D5680` writes `entry+14+2n` and
+`FFX_Equip_RefreshEntryNameId 0x7993B0` writes `entry+0`. For a normal slot id that pointer is
+inside `g_ffxEquipmentArray` at `saveData+0x449C`, 22 bytes per entry, 200 entries.
+
+Neither of the two checks could have found it. Check one looks for references INTO the save run,
+and there are none because the base arrives in a register. Check three follows `getCharRecord`
+and not `getEquipEntry`. The checks are kept below because the method is still the right one, with
+the hole now named: **a getter that returns a pointer into the block is a write site, and there is
+more than one getter.**
+
+What this does NOT change is the sync model. The menu runs inside `FFX_MainStep` from one
+replicated pad block, so the write lands on both machines on the same step whether or not it has
+a named setter. What it changes is the DETECTOR: a list of commit functions is not a complete
+attachment surface, so the save block checksum regions are the thing to trust.
+
+The original three checks follow.
 
 **Check one**, every direct reference into the 26,816-byte run at 0x112CA90..0x1133350. 123
 functions reference it. Of those, the only ones in the menu code ranges (0x8A0000..0x8F0000 and
@@ -494,8 +512,9 @@ in the menu ranges, and only **three** of those write: `FFX_Menu_SetCharCurrentH
 (record+0x1C, and it clears record+0x3D when HP is non-zero), `FFX_Menu_SetCharCurrentMp 0x8AAEF0`
 (record+0x20) and `FFX_Menu_SetCharRecordByte38 0x8C2C90` (record+0x38). The other 19 are readers.
 
-So **the whole in-game menu commits through about ten named functions**, and that is the desync
-detector's natural attachment point:
+So the in-game menu commits through about ten named functions **plus the two pointer writes named
+at the top of this section**. That is a good set of attachment points for watching what a screen
+does, and not a proof of completeness:
 
 | VA | function | what it writes | reached from |
 |----|----------|----------------|--------------|
@@ -582,22 +601,50 @@ Identified, with what proved each:
 |----|--------|-------|
 | 1 | **main menu top level** | every submenu calls `FFX_Module_Start(1, 0)` on close, and `FFX_Module_SwitchGameMode` picks it for game mode 0 |
 | 2 | **Abilities** | L1 (repeat 0x04) and R1 (0x08) call the character cursor prev/next, and casting reads the ability's MP cost at `item record + 37` then calls `FFX_Menu_SetCharCurrentMp(char, mp - cost)`. Loads `scene10`. |
-| 3 | **Customise** | calls `FFX_SaveData_AddItem` (spends the materials) and `FFX_SaveData_SwapEquipEntries` (re-sorts after the name id changes). Strings `TK:ABL ID:0x%x`, `TK:EXCHANGE:%d <> %d`, `TK:SRC = %d / DST = %d`. Starts module 23 as a sub-screen. |
+| 3 | **Items** | main menu row 0. Starts module 23, the world map, which is reached only from the item whose kernel row has bit 0x08 at +34, and exactly one of 112 item rows has it: id 100, "Map". The list rearrange lives here too, in `sub_8C9C40` via `sub_8C9BF0`: `FFX_SaveData_SwapEquipEntries` with `TK:ABL ID:0x%x`, `TK:EXCHANGE:%d <> %d`, `TK:SRC = %d / DST = %d`. **An earlier pass called this Customise, which was wrong, see the correction below.** |
 | 4 | **Equip** | one of only three menu callers of `FFX_SaveData__setCharEquip`, and its strings are `KEEPHP:%d` and `NOW HP:%d`, which is the max-HP clamp an armour change needs |
-| 7 | **Items** | `FFX_SaveData_AddItem` with a negative delta, plus `sub_785C50` to set a learned ability when a sphere or an Al Bhed primer is used. String `TK:SMN:Learn id = %d / command = %d(0x%x) / result = %d`. |
+| 7 | **Aeons** | main menu row 5. `FFX_SaveData_AddItem` with a negative delta, plus `sub_785C50` to set a learned ability. String `TK:SMN:Learn id = %d / command = %d(0x%x) / result = %d`, and SMN is summon. **An earlier pass called this Items.** |
+| 6 | **Status** | main menu row 4. `FFX_Menu_StatusLoadLayout 0x8D4920` is the only reader of `rect_stsmw`, `col_lmtg0/1/lmtgf0` (lmtg = limit gauge = Overdrive), `num_staplt` and the `wpn*` weapon plates. Read only, no save-block write anywhere in its closure. Writes `g_ffxMenuCharCursor`. |
+| 9 | **Customize** | main menu row 7. Its commit block is `FFX_Menu_CustomizeStep 0x8D5830` at 0x8D5BD8: `getEquipEntry`, `FFX_Equip_AddAbilityToEntry`, `FFX_Equip_RefreshEntryNameId`, `FFX_SaveData_AddItem`, then `TK:SND:KAIZOU`. Kaizou is remodel. Also `SELCOUNTER:%d`. Gated on scenario >= 1096, where Rikku joins. |
+| 20 | **PS2 HDD install, dead code** | main menu row 20. Strings `ffxpassf`, `pfs0:ffx%d`, `PP.SLUS-20312.0.FF10`. Its only start site is `FFX_Menu_StartSubmoduleByResult` case 20, and result 20 cannot be produced because the row mask maxes at 0x83FF. |
+| 23 | **World map viewer** | not a main menu row. Reached from module 3 for the "Map" item. Loads ROM group 18 entry 23 and uploads 512x416 PSMT8 = 212,992 bytes, which is the exact size of `menu/worldmap.fmt` and the only file that size in `menu/`. |
 | 10 | **Config** | a row table at `g_ffxMenuConfigRows 0x186A44C`: row+4 value count, row+8 current value, row+12 selectable, row+20 apply callback. Cursor row `g_ffxMenuConfigCursorRow 0x186A444`, count `0x186A448`. Up/Down move rows skipping rows whose +12 is not 1, Left/Right change the value, Cross confirms, and on confirm it compares the map id and runs `TOSwapInternationalEnvExec` when it changed. |
 | 11 | **save frontend** | `sa_menu_*` strings, suspend hook is `j_sa_menu_stop`, game mode 0x400000 |
 | 12 | **a shop** | `FFX_SaveData_SpendGil` + `FFX_SaveData_RemoveEquipEntry` (sell), game mode 0x40000 |
 | 13 | **a second shop** | `FFX_SaveData_SpendGil` via `sub_8D9BD0` / `sub_8D9E20`, game mode 0x20000 |
 | 15, 16 | **save and load** | `/FFX_Data/GameData/PS3Data/saves/`, `.SAV`, `icon.sys`, `010906%02d.ico`. Same exec `sub_8B15D0` for both. |
 | 19 | **Sphere Grid** | see above |
-| 21 | **probably Overdrive mode** | only distinctive string is `TK:SND:OVERDRIVE`, and its only save-block write is `FFX_Menu_SetCharRecordByte38`, record+0x38 per character. Not proved. |
+| 21 | **Overdrive mode** | main menu row 15, now proved by the row id. String `TK:SND:OVERDRIVE`, and its only save-block write is `FFX_Menu_SetCharRecordByte38`, record+0x38 per character. |
 | 22 | TK dev harness | `TK:Open Menu:%d`, game mode 0x800000 |
 
-**Still unidentified: 6, 9, 20 and 23.** None of them writes the save block and none has a
-distinctive string. Module 9's subtree is 21 functions and module 20's is 11, so they are thin
-helper screens, probably a confirmation prompt and a tutorial or help page. Module 6 is 58
-functions. Module 23 is reached only from module 3, so it is a Customise sub-screen.
+**Nothing is unidentified any more.** The key that opened the last four is that a submenu's result
+code is the kernel string id of its own main menu row, string group 9 =
+`battle/kernel/mmain_txt.bin`. `FFX_Menu_StartSubmoduleByResult` maps result 0 -> 3, 1 -> 2,
+2 -> 4, 4 -> 6, 5 -> 7, 7 -> 9, 8 -> 10, 10 -> 15, 15 -> 21, 20 -> 20, and reading the row names
+out of that string group names every target. Doing that also corrected modules 3 and 7, which the
+first pass had the wrong way round. See `reversing/MENU_MODULES_6_9_20_23.md` for the full
+per-module determinism, RNG, clock, input and save-block audit of the last four.
+
+### What was wrong here, and why the method missed it
+
+| claim | correction |
+|-------|-----------|
+| module 3 is Customise | it is **Items**. Module 9 is Customize, and `TK:SND:KAIZOU` sits in module 9's commit block. |
+| module 7 is Items | it is **Aeons**. `TK:SMN:Learn` is summon, not an item use. |
+| "module 23 is reached only from module 3, so it is a Customise sub-screen" | the premise is right and the conclusion is wrong. It is the world map, reached from Items for the Map item. |
+| Cross confirms | Cross cancels, Circle confirms. See the button table above. |
+| "no function in the menu touches the save block by address" | incomplete. The Customize screen writes equipment entries in place through the pointer `FFX_SaveData__getEquipEntry` returns. Neither check could have caught it: one looked for references INTO the save run, the other followed `getCharRecord` and not `getEquipEntry`. |
+| the commit list | needs `FFX_SaveData_RecomputeAllCharDerived 0x786900`. Modules 1, 4 and 9 all call it on close, so the character record and ability mask buckets move on **every menu close** even with no player change. Worth knowing before reading a checksum difference as a desync. |
+| "reached exactly one RNG function by exactly one path" | the conclusion survives, the method does not. There is a second path into `FFX_Rand_Stream` through module 9's MODEL boot task, invisible to a direct-call walk because the callback is a function pointer. It is dead twice over: `push 0` at 0x7FEC53 against `cmp [ebp+arg_8],0` at 0x7B7210, and a `FFX_Btl_GetPhase() != 0` wrapping the branch. |
+| subtree sizes 58 / 21 / 11 | not reproducible as written, because the edge relation was not stated. A direct-call closure gives 370 / 1,432 / 244 / 189 when function pointers are followed and 38 / 31 / 14 / 32 when they are not. |
+| module 14 is FMV | probably **Name Entry**. Flagged from the row mapping alone, not asserted. |
+
+One more, found while checking the Config screen for this correction: **module 10's
+`TOSwapInternationalEnvExec` path is dead code.** State 4 compares `dword_186A43C` against
+`FFX_GetInternationalEnvId 0x7851D0`, which is three bytes returning a hardcoded 0 and is also
+what seeded the global in `FFX_Menu_ConfigInitRowValues`. So the test is 0 == 0, always, and
+states 6, 7 and 8 are unreachable. The Config screen cannot trigger an asset reload, which means
+neither can a mod that adds rows to its table.
 
 ## IS THERE A PER-CHARACTER GATE (question 5): yes, and it is better than expected
 
@@ -644,14 +691,22 @@ read the entry, not the cursor.
 ## The menu's button conventions, read off the Config screen
 
 The bit names are already in `loader\workshop\include\ffx\Input.h` as `ffx::Btn::*` and the menu
-uses the same 16-bit layout. What the first pass could not say, and this one can, is the meaning:
+uses the same 16-bit layout. What the first pass could not say, and this one can, is the meaning.
+
+**The confirm and cancel rows below were backwards in an earlier version of this table** and are
+corrected here. `FFX_MenuObj_StepListCursor 0x8B44B0` is the generic list cursor most screens
+install, and it reads `Pressed & 0x20` to call the confirm callback at obj+28 and `Pressed & 0x40`
+to cancel. The sound ids agree: 0x80000001 ok, 0x80000003 refuse, 0x80000004 cancel. Module 10
+state 3 tests 0x40 and goes to state 4, which plays 0x80000004, so Cross backs out of the Config
+screen rather than confirming it.
 
 | bit | button | what the menu does with it |
 |-----|--------|----------------------------|
 | 0x0004 | L1 | previous character |
 | 0x0008 | R1 | next character |
 | 0x0010 | Triangle | opens the menu from the field (tested in `FFX_MainStep`, not in the menu) |
-| 0x0040 | Cross | **confirm** (module 10 state 3, `Pressed & 0x40`) |
+| 0x0020 | Circle | **confirm**, it fires the list cursor's callback at obj+28 |
+| 0x0040 | Cross | **cancel / back out**, and that includes module 10 state 3 |
 | 0x1000 | Up | cursor up |
 | 0x2000 | Right | increase a value |
 | 0x4000 | Down | cursor down |

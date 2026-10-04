@@ -45,8 +45,9 @@ Seven answers, in the order they were asked.
    There are four cheap reads that together cover it, and the engine itself trusts three of them:
    `FFX_Atel_MesWinBlockingKind 0x86C8B0` (a dialogue box is up, and whether it is waiting on the
    player), `g_ffxPacingMode 0x12FB8A0 == 1` (a voiced cutscene segment is pacing itself),
-   `FFX_Fmv_GetPlaybackState 0x6411E0 == 2` (an FMV owns the screen) and `g_ffxFmvScriptRunning
-   0x112A008` (the script's own view of a movie). See section 3.
+   `g_ffxFmvScriptRunning 0x112A008` (the script's own view of a movie), and a fourth that USED to be
+   listed here as "an FMV owns the screen": `FFX_Frame_GetSuspendState 0x6411E0 == 2`, which actually
+   means a user-driven suspend overlay is up and is not an FMV read at all. See section 3 and 7.2.
 
 4. **Where is "advance the dialogue box" read?** `FFX_MesWin_OnConfirmPressed 0x8B64A0` does
    `test byte ptr g_ffxMenuPadHeldTrig+2, 20h`, which is the **newly pressed** half of the shared
@@ -69,12 +70,15 @@ Seven answers, in the order they were asked.
    through exactly four script-visible syscalls, so the RNG stream has to be synced but nothing else
    does. See section 6.
 
-7. **FMV cannot be lockstepped and has to be a barrier.** The video is **WebM, parsed by libwebm's
-   `mkvparser`, decoded on its own thread** (`PVideoPlaybackWin32::_VideoDecodingThread 0xA27F20`)
-   with a `GetTickCount` timebase and a 29.97 fallback frame rate. The simulation is not running at
-   all while it plays, because `FFX_MainStep` early-returns on `FFX_Fmv_GetPlaybackState() == 2`, so
-   there is nothing to keep in step. What has to be agreed is when it ends and whether anybody
-   skipped it. See section 7.
+7. **FMV cannot be lockstepped and has to be a barrier, but not where this used to say.** The video
+   is **WebM, parsed by libwebm's `mkvparser`, decoded on its own thread**
+   (`PVideoPlaybackWin32::_VideoDecodingThread 0xA27F20`) with a `GetTickCount` timebase and a 29.97
+   fallback frame rate. This point used to go on to claim the simulation is not running while it
+   plays, on the strength of `FFX_MainStep` testing `FFX_Fmv_GetPlaybackState() == 2`. **That was
+   wrong**, see 7.2: that function is a frame suspend read, the step runs all the way through a
+   movie, and the barrier therefore belongs on the script's movie wait rather than on the
+   simulation. What has to be agreed is when it ends and whether anybody skipped it, which was right.
+   See section 7 and `reversing/FMV_SYNC.md`.
 
 8. **The cutscene camera is one global per screen, not per player.** All 66 ATEL camera syscalls go
    through `FFX_Came_GetHandleForClass 0x7BA780`, which caches one handle per (class, screen) in four
@@ -92,9 +96,27 @@ They have nothing in common mechanically, so keep them apart.
 
 | thing | what runs it | pacing | observable |
 | --- | --- | --- | --- |
-| an ATEL event scene | the opcode VM, `FFX_Atel_RunScript 0x8641E0`, stepped from `FFX_MainStep` | one step per simulation step | `g_ffxAtelCtx` per-context step counter at ctx+500 |
+| an ATEL event scene | the opcode VM, `FFX_Atel_RunScript 0x8641E0`, stepped from `FFX_MainStep` | **once per SUB step**, see the note under this table | `g_ffxAtelCtx` per-context step counter at ctx+500 |
+
+**Correction, and it is the hinge of every script timing question.** This row used to say "one step
+per simulation step". The ATEL VM advances once per **sub step**. `FFX_MainStep` runs
+
+```c
+for ( i = 0; i < FFX_Player__getSubStepCount(); ++i )
+{
+  FFX_Player__stepControl();
+  FFX_Btl_MainStep(ebx0);
+  FFX_Atel_StepOnce();        // <- here, inside the sub-step loop
+  FFX_MesWin_StepAll();
+  ...
+}
+```
+
+So `FFX_Player__getSubStepCount() 0x42D7E0` scales every script timer in the game, every
+`WaitFrames`, every cutscene beat and every minigame clock. **Both peers must agree on it**, and it
+is not a constant. Everything in `reversing/MINIGAMES_TIMED.md` rests on this.
 | a voiced line inside one | the same VM, but `FFX_StepPacing` switches to the SyncData timing track | the millisecond clock, with a busy-wait | `g_ffxPacingMode == 1` |
-| an FMV | a Phyre WebM player on its own thread | decode speed and `GetTickCount` | `FFX_Fmv_GetPlaybackState() == 2` |
+| an FMV | a Phyre WebM player on its own thread | decode speed and `GetTickCount` | `FFX_Fmv_IsPlaying 0x641CF0`, and `PlaybackComplete` at manager+1764 for the finish. **Not** `FFX_Frame_GetSuspendState`, see 7.2 |
 
 A dialogue box is a fourth thing again, driven by ATEL syscalls but stepped by its own module inside
 the sub-step loop. It can be up outside a cutscene, which is why "a message window is open" is not
@@ -337,7 +359,7 @@ What does exist is four cheap reads, and the engine itself consults three of the
 | --- | --- | --- | --- |
 | `FFX_Atel_MesWinBlockingKind 0x86C8B0` | `int (void)` | 0 no box, 1 a box is up, 2 a box is up and waiting for a button | `FFX_StepPacing_AllowCatchUp` and `FFX_Atel_StepFrame` |
 | `g_ffxPacingMode 0x12FB8A0` | `int` | 1 means a voiced cutscene segment is pacing itself | `FFX_StepPacing`, `FFX_MainStep_PublishStepScale` |
-| `FFX_Fmv_GetPlaybackState 0x6411E0` | `int (void)` | 2 means an FMV owns the screen | `FFX_MainStep`, which skips all simulation |
+| `FFX_Frame_GetSuspendState 0x6411E0` | `int (void)` | 2 means a USER suspend overlay is up. **NOT an FMV signal**, see 7.2 | `FFX_MainStep`, which does NOT skip the step on it |
 | `g_ffxFmvScriptRunning 0x112A008` | `int` | the script's own view of a movie | `FFX_Time_ScaleDtForBooster`, `FFX_AtelOp_WaitFrames_poll`, `FFX_Atel_StepMoveCmd` |
 
 `FFX_Atel_MesWinBlockingKind` is the best of the four and it is worth reading in full:
@@ -676,38 +698,67 @@ The real player is Phyre's. `FFX_Fmv_CreatePlayer 0x6D9C80`, which is
 own.** It cannot be lockstepped. The owner's two machines with different hardware will not present
 the same FMV frame on the same simulation step, ever.
 
-### 7.2 Why that turns out not to matter much
+### 7.2 CORRECTED: the simulation runs all the way through a movie
+
+**This section used to say "no simulation runs during an FMV" and that was wrong.** It is corrected
+here rather than deleted, because the wrong claim had already been copied into `COOP_DESIGN.md`, into
+the kit's `addresses/Cutscene.h` banner, into section 3's table and into section 10's reasoning, and
+somebody reading an old copy of any of those needs to find this.
 
 `FFX_MainStep 0x820AE0` does, near its top:
 
 ```c
-if (FFX_Fmv_GetPlaybackState() == 2) { ... draw the movie ... return; }
+if (FFX_Frame_GetSuspendState() == 2) { ... the suspend-overlay path ... }
 ```
 
-**No simulation runs during an FMV.** `g_ffxMainStepCounter` does not advance, `g_ffxGameClock60Hz`
-does not advance, no RNG is drawn, no ATEL opcode executes. Both machines are frozen at the same
-simulation step for the whole movie.
+The function was named `FFX_Fmv_GetPlaybackState` and **it has nothing to do with video**. It lazily
+builds a 0x340 object into `g_ffxFmvState 0xCCC830` and returns 2 when the byte at `+0x338` or the byte
+at `+0x33C` is set. A byte-write scan of the whole `.text` segment finds exactly four writers of those
+two bytes:
 
-So an FMV is a **barrier**, and a natural one. The design needs:
+| site | writes | reached from |
+| --- | --- | --- |
+| `sub_67FE70` | both, to 0 | the object's constructor |
+| `FFX_Frame_ToggleSuspendOverlay 0x680320` | `+0x338` | `FFX_Frame_UpdateBoostersAndOverlays`, the booster hotkey path, action 32 |
+| `FFX_Frame_SetCutsceneSuspend 0x6803A0` | `+0x33C` | `FFX_Cutscene_StepPauseOverlay` and `EnterPauseOverlay`, the Start-button in-cutscene pause |
 
-1. agreement on when it starts. `g_ffxFmvScriptRunning 0x112A008` is the right signal for that,
-   because it is set and cleared by ATEL Movie syscalls (9 and 10 set it, 0, 1 and 4 clear it), so it
-   flips on the same opcode on both machines.
-2. agreement on when it ends, which is the actual barrier. Each machine reports "my movie finished",
-   and the simulation does not resume until both have. The read is
-   `FFX_Fmv_IsPlaying 0x641CF0`, which is `*(u8 *)(g_ffxFmvPlayerManager + 1744)`, going from 1 to 0.
-   `FFX_Fmv_IsDecoderBusy 0x641CE0` covers the drain.
-3. a rule for skipping. Either player pressing skip has to skip on both, and the cleanest way is to
-   treat a skip as a networked command rather than a local input, the same as any other.
+No FMV code writes either one. `CWindowEventHandler__onFocusLost` reading the same object is the other
+tell: this is a frame suspend state, not an FMV manager. Renamed `FFX_Frame_GetSuspendState` in the IDB,
+and `Rva::FrameGetSuspendState` / `Rva::FrameSuspendState` in the kit.
+
+**The proof that needs no reversing at all.** A script's movie wait IS an ATEL poll handler. The ATEL VM
+steps from inside the `FFX_MainStep` sub-step loop, which is past the suspend test. So if the step were
+discarded a movie could never finish. The old section's own third claim, "no ATEL opcode executes",
+disproves the first one.
+
+So what the design actually needs is not what this section used to say:
+
+1. **Agreement on when it starts: nothing to do.** Both machines reach the Movie opcode on the same
+   step because the script is lockstepped. `g_ffxFmvScriptRunning 0x112A008` does flip on the same
+   opcode on both machines, which was right, but nothing needs it.
+2. **Agreement on when it ends: this is the whole job**, and the barrier goes on the SCRIPT WAIT, not
+   on the simulation. `ffx::HookFmvWaits` swaps the four Movie poll pointers in
+   `g_ffxAtelSysFuncLib11_Movie 0xC40E30`, which is writable `.data`, and the shim returns 0 to keep
+   the script parked. Each machine's arrival is an ordered command, and the release is the step on
+   which every machine has reported. Holding the simulation instead would be wrong twice over: it
+   stops the local lockstep clock while a peer still playing its video keeps stepping.
+3. **A rule for skipping: still right.** A skip has to be a networked command rather than a local
+   input. See section 4 of `reversing/FMV_SYNC.md` for the skip path, which is now settled.
+
+**The flag list above was also incomplete.** Movie:9 sets `g_ffxFmvScriptRunning` from its **resi**
+slot and not its start, Movie:10 sets it from its start **and only on success**, and
+`FFX_Fmv_AbortForSceneChange 0x76ECE0` is a fourth clearer the old list did not have.
 
 ### 7.3 The observables
 
 | read | type | meaning |
 | --- | --- | --- |
-| `FFX_Fmv_GetPlaybackState 0x6411E0` | `int (void)` | 2 means the movie owns the frame. Lazily builds the 0x340-byte state object at `g_ffxFmvState 0xCCC830`, returns 2 if either byte at `+0x338` or `+0x33C` is set, else the state dword at `+0`. |
+| `FFX_Frame_GetSuspendState 0x6411E0` | `int (void)` | **NOT an FMV read**, see 7.2. 2 means a user suspend overlay is up. Lazily builds the 0x340-byte object at `g_ffxFmvState 0xCCC830`, returns 2 if either byte at `+0x338` or `+0x33C` is set, else the state dword at `+0`. The detail here was always right, the meaning on top of it was not. |
 | `FFX_Fmv_IsPlaying 0x641CF0` | `int (void)` | `g_ffxFmvPlayerManager + 1744`, set to 1 when a player is created |
 | `FFX_Fmv_IsDecoderBusy 0x641CE0` | `int (void)` | any decode slot still active, or the manager's queue not drained |
-| `g_ffxFmvScriptRunning 0x112A008` | `int` | the ATEL script's own view. The one to replicate. |
+| `FFX_Fmv_PlaybackComplete` | `u8` | `g_ffxFmvPlayerManager + 1764`. **The field Movie:9 and Movie:10 actually wait on**, and the one the old table was missing. |
+| `g_ffxFmvScriptRunning 0x112A008` | `int` | the ATEL script's own view |
+| `g_ffxFmvScriptBlocking 0x112A00C` | `int` | one dword past the above. Set by Movie:10's start and only on success, cleared by `FFX_Fmv_AbortForSceneChange 0x76ECE0`, and the Movie:10 wait's first test |
 
 `FFX_StepPacing_AllowCatchUp 0x81FD30` reads `FFX_Fmv_IsPlaying`, so the engine already refuses to
 frame-skip during a movie.
@@ -801,12 +852,20 @@ priority arbitration picks one winner per screen.
 
 ### What needs doing for an FMV
 
-1. Treat it as a barrier. Both machines stop simulating anyway.
-2. Start on the script flag, `g_ffxFmvScriptRunning`, which flips on the same opcode on both.
-3. End on both machines reporting `FFX_Fmv_IsPlaying() == 0`.
-4. Make skip a networked command.
+**Rewritten. The old list's first point, "both machines stop simulating anyway", was false**, see 7.2.
+
+1. Treat it as a barrier on the **script wait**, not on the simulation. Both machines keep simulating
+   right through a movie, so holding the simulation would stop the local lockstep clock while a peer
+   still playing its video kept stepping.
+2. **Nothing to do for the start.** Both machines reach the Movie opcode on the same step because the
+   script is lockstepped. `g_ffxFmvScriptRunning` does flip on the same opcode on both, but nothing
+   needs it.
+3. End on every machine having reported, as an ordered command, not on a local read of
+   `FFX_Fmv_IsPlaying`. The local read is what decides when to send your own report.
+4. Make skip a networked command. Still right, and the skip path is settled now, section 4 of
+   `reversing/FMV_SYNC.md`.
 5. Do not try to pace it. WebM on a decode thread with a `GetTickCount` timebase will never line up
-   with a simulation step.
+   with a simulation step. Still right, and it is the whole reason the exit needs a barrier.
 
 ### The one thing that still looks risky
 
@@ -826,17 +885,23 @@ hook during a cutscene, not the narrow `FFX_MainStep` gate.
 - **What `word_112D67C` is.** It is the first key of the sync-table lookup and a save-data field.
   Comparison values elsewhere suggest a story progress counter. Not proved, and nothing here depends
   on it.
-- **Whether a mode-1 track ever spans an FMV.** `FFX_MainStep` returns before `FFX_StepPacing` on
-  the FMV path, so the track cannot advance during a movie, which means a track that is live when a
-  movie starts resumes from where it was, with the elapsed time having run on in the meantime. The game
-  presumably never authors that combination, but the compensation global exists, so it might. Not
+- **Whether a mode-1 track ever spans an FMV.** Still open, and **for the opposite reason to the one
+  this entry used to give.** It said `FFX_MainStep` returns before `FFX_StepPacing` on the FMV path so
+  the track cannot advance during a movie. That premise is wrong, see 7.2: the step runs, so the track
+  CAN advance during a movie. Which makes the question sharper rather than softer, because a track
+  advancing while a movie plays at wall-clock speed is exactly the shape of thing that diverges. Not
   checked.
 - **Whether the engine ever writes `g_ffxTimingTrackPauseMsPending` from anywhere but the Esc menu.**
   Four xrefs total, three of them in `FFX_StepPacing`. So almost certainly no, but the Esc menu
   function itself is another agent's area and I did not read all of it.
-- **The FMV skip path.** I established that playback is a separate thread and that
-  `FFX_Fmv_IsPlaying` and `g_ffxFmvScriptRunning` are the observables, but I did not find where a
-  button press during a movie cancels it. The Movie library's `_poll` handlers are where to look.
+- **The FMV skip path. SETTLED**, see section 4 of `reversing/FMV_SYNC.md`. It is
+  `FFX_Fmv_PollSkipButtons 0x6D9460`, called from `FFX_Fmv_StepFromMainStep 0x645DF0` at the top of
+  `FFX_MainStep`: Start arms the prompt, Square performs the skip, both through
+  `FFX_Input__isPressed`, which is a newly-pressed edge test on the merged keyboard-and-pad action map
+  with no port argument. Note `g_ffxFmvSkipRequested` is NOT a one-byte way to end a movie, which is
+  what it looks like: `FFX_Fmv_StepPresentation`'s keep-playing condition short circuits on
+  `PlaybackComplete == 0`, so during playback the flag is unreachable. Ending a movie means clearing
+  the manager's IsPlaying byte.
 - **Whether the two MenuPadBlock samplers can both run in the same frame.** `FFX_MesWin_StepAll`
   runs from the sub-step loop and `FFX_MenuSys_SamplePad` from the menu exec, and
   `g_ffxMenuPadBlock+0` is a "has been sampled" latch that both check. If they can both run, the

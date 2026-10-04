@@ -385,7 +385,7 @@ namespace workshop
 		// whichever order they arrive in.
 		uint32_t lastChecksumStep;
 		uint32_t lastChecksumCombined;
-		uint32_t lastChecksumParts[16];
+		uint32_t lastChecksumParts[ChecksumRegionCount];
 		uint32_t lastChecksumPartCount;
 
 		uint32_t desyncStep;

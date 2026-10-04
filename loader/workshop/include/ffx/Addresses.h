@@ -52,6 +52,8 @@
 #include "ffx/addresses/EscMenu.h"
 #include "ffx/addresses/Input.h"
 #include "ffx/addresses/GameState.h"
+#include "ffx/addresses/MagicDll.h"
 #include "ffx/addresses/MainLoop.h"
 #include "ffx/addresses/MenuSystem.h"
+#include "ffx/addresses/Minigames.h"
 #include "ffx/addresses/WorldState.h"

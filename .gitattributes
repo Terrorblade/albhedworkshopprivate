@@ -1,0 +1,8 @@
+# The repo is LF. Without this, a tool that writes CRLF on Windows leaves a file
+# whose every line differs from the one next to it, and patch scripts that match
+# on a line ending start failing for no visible reason.
+* text=auto eol=lf
+
+# Vendored, left exactly as it arrived.
+loader/third_party/** -text
+reversing/phyre_types.h -text

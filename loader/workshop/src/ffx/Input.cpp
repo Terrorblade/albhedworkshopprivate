@@ -3,7 +3,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "ffx/addresses/Character.h" // Rva::ControlledChr lives there, it owns the CHR
 #include "ffx/addresses/Input.h"
+#include "ffx/addresses/Minigames.h" // the pad auto repeat timer lives there
+#include "workshop/Detour.h"
 #include "workshop/HostModule.h"
 #include "workshop/Log.h"
 
@@ -13,6 +16,269 @@ namespace ffx
 	using workshop::Log;
 	using workshop::ModuleAddress;
 	using workshop::Readable;
+
+	namespace
+	{
+
+		typedef void*(__cdecl* StepControlFn)(void);
+
+		// Everything the swap has to stand in for, gathered so the save and the restore
+		// cannot drift apart. The state block is the contiguous span, the rest are the
+		// inputs the driver reads from elsewhere.
+		struct ControlGlobals
+		{
+			BYTE* block;      // Rva::PlayerStateBlock, 0x30 bytes
+			void** chr;       // Rva::ControlledChr
+			BYTE* analogLY;   // Rva::PlayerAnalogLY, LX is the next byte
+			DWORD* buttons;   // Rva::PlayerPadButtons
+			BYTE* useFixed;   // Rva::PlayerUseFixedYaw
+			float* fixedYaw;  // Rva::PlayerFixedYaw
+			StepControlFn fn; // Rva::PlayerStepControl
+		};
+
+		// Resolve and guard the whole set in one go. Returns false if any part of it is
+		// unreachable, because a partial swap would leave the engine driving the wrong
+		// character with the wrong ramps, which is worse than not driving at all.
+		bool ResolveControlGlobals(ControlGlobals* g)
+		{
+			g->block = (BYTE*)ModuleAddress(Rva::PlayerStateBlock);
+			g->chr = (void**)ModuleAddress(Rva::ControlledChr);
+			g->analogLY = (BYTE*)ModuleAddress(Rva::PlayerAnalogLY);
+			g->buttons = (DWORD*)ModuleAddress(Rva::PlayerPadButtons);
+			g->useFixed = (BYTE*)ModuleAddress(Rva::PlayerUseFixedYaw);
+			g->fixedYaw = (float*)ModuleAddress(Rva::PlayerFixedYaw);
+			g->fn = (StepControlFn)ModuleAddress(Rva::PlayerStepControl);
+
+			if (!Readable(g->block, Rva::PlayerStateBlockBytes))
+				return false;
+			if (!Readable(g->chr, sizeof(void*)) || !Readable(g->analogLY, 2))
+				return false;
+			if (!Readable(g->buttons, sizeof(DWORD)) || !Readable(g->useFixed, 1))
+				return false;
+			if (!Readable(g->fixedYaw, sizeof(float)) || !Readable((void*)g->fn, 1))
+				return false;
+
+			return true;
+		}
+
+		// The heading offset is the first field of the block. Forced to zero before each
+		// call on the FALLBACK path only, see the header.
+		const DWORD kHeadingOffsetInBlock = Rva::PlayerHeadingOffset - Rva::PlayerStateBlock;
+
+		// ---------------------------------------------------------------------------
+		// The camera override.
+		// ---------------------------------------------------------------------------
+
+		typedef double(__fastcall* CameGetYawFn)(int);
+
+		workshop::CallSitePatch g_yawSites[4];
+		bool g_yawPatched = false;
+
+
+		// Set by StepPlayerControlFor around the one call, read by the replacement. A
+		// plain pair of globals and not an atomic anything: the driver, the call sites and
+		// this are all on the game thread, inside one function call, with nothing in
+		// between that could yield.
+		bool g_yawActive = false;
+		float g_yawValue = 0.0f;
+
+		// Stands in for FFX_Came_GetYaw at the four sites inside the driver.
+		//
+		// Declared __cdecl with no arguments rather than __fastcall with one. The real
+		// function takes its argument in ecx and pushes nothing, so the two are stack
+		// compatible, and the sites pass whatever happens to be in ecx, which the
+		// decompiler shows as an uninitialised variable because that is exactly what it
+		// is. Reading it would be reading rubbish.
+		double __cdecl DriverYawHook()
+		{
+			if (g_yawActive)
+				return (double)g_yawValue;
+
+			// Not driving anybody, so this is the shipped game asking the shipped
+			// question. Pass it through, with the ecx argument the site set up, which
+			// means doing it in assembly rather than calling a typed pointer.
+			CameGetYawFn fn = (CameGetYawFn)ModuleAddress(Rva::PlayerCameGetYawThunk);
+			if (!Readable((void*)fn, 1))
+				return 0.0;
+
+			// The real function writes through its ecx argument and reads it back, so it
+			// needs a real pointer rather than whatever was in the register. A local is
+			// the honest thing to give it: the value it leaves there is the yaw, which is
+			// also what it returns.
+			int scratch = 0;
+			return fn((int)&scratch);
+		}
+
+	} // namespace
+
+	bool InstallPlayerCameraOverride()
+	{
+		if (g_yawPatched)
+			return true;
+
+		const DWORD sites[4] = { Rva::PlayerDriverYawSite0, Rva::PlayerDriverYawSite1,
+			Rva::PlayerDriverYawSite2, Rva::PlayerDriverYawSite3 };
+
+		// All four or none. Verify every site reads the way we expect BEFORE writing any
+		// of them, because a driver that reads the owner's yaw in three places and this
+		// machine's in the fourth would diverge in exactly the situations the fourth
+		// covers, which is the hardest kind of bug to find later.
+		for (int i = 0; i < 4; ++i)
+		{
+			const BYTE* call = (const BYTE*)ModuleAddress(sites[i]);
+			if (!Readable(call, 5) || *call != 0xE8)
+			{
+				Log("player camera override: site %d at RVA 0x%08X is not a call, refusing "
+				    "to patch any of the four",
+				    i, sites[i]);
+				return false;
+			}
+
+			INT32 relative = 0;
+			memcpy(&relative, call + 1, sizeof(relative));
+			if (call + 5 + relative != (const BYTE*)ModuleAddress(Rva::PlayerCameGetYawThunk))
+			{
+				Log("player camera override: site %d at RVA 0x%08X does not call the camera "
+				    "yaw thunk, refusing to patch any of the four",
+				    i, sites[i]);
+				return false;
+			}
+		}
+
+		for (int i = 0; i < 4; ++i)
+		{
+			if (!workshop::PatchCallSite(g_yawSites[i], sites[i], Rva::PlayerCameGetYawThunk,
+			        (void*)&DriverYawHook, "player driver camera"))
+			{
+				// Cannot happen after the pass above, short of another thread writing
+				// .text, but if it does then some sites are patched and some are not and
+				// that is the one state worth shouting about.
+				Log("player camera override: site %d refused AFTER verifying. The driver is "
+				    "now half patched, which will diverge. Restart the game.",
+				    i);
+				return false;
+			}
+		}
+
+		g_yawPatched = true;
+		Log("player camera override: the player driver now anchors to the owner's "
+		    "replicated camera yaw, so the engine's own re-anchor smoothing replicates "
+		    "instead of being bypassed");
+		return true;
+	}
+
+	bool PlayerCameraOverrideInstalled()
+	{
+		return g_yawPatched;
+	}
+
+	void ResetPlayerControlState(PlayerControlState* out)
+	{
+		if (!out)
+			return;
+
+		// Zero is the right "never driven" value for all ten fields: the ramps start at
+		// no deflection, the headings at zero, and the offset at zero. The engine's own
+		// block is zero-filled .data at process start, so this is the state the shipped
+		// game begins from.
+		memset(out->bytes, 0, sizeof(out->bytes));
+		out->seeded = false;
+	}
+
+	bool PlayerControlDriverAvailable()
+	{
+		ControlGlobals g;
+		return ResolveControlGlobals(&g);
+	}
+
+	bool ReadPlayerAnalogBytes(BYTE* outLX, BYTE* outLY)
+	{
+		// One dword in the order LY, LX, RY, RX, so LY is first and LX is the next byte.
+		// Easy to get backwards, and addresses/Input.h says so for the same reason.
+		const BYTE* analog = (const BYTE*)ModuleAddress(Rva::PlayerAnalogLY);
+		if (!Readable(analog, 2))
+			return false;
+
+		if (outLY)
+			*outLY = analog[0];
+		if (outLX)
+			*outLX = analog[1];
+		return true;
+	}
+
+	bool StepPlayerControlFor(Character* chr, PlayerControlState* state,
+	    const PlayerControlInput& in)
+	{
+		if (!chr || !state)
+			return false;
+
+		ControlGlobals g;
+		if (!ResolveControlGlobals(&g))
+			return false;
+
+		// ---- save what is live -------------------------------------------------
+		BYTE savedBlock[Rva::PlayerStateBlockBytes];
+		memcpy(savedBlock, g.block, sizeof(savedBlock));
+		void* savedChr = *g.chr;
+		const BYTE savedLY = g.analogLY[0];
+		const BYTE savedLX = g.analogLY[1];
+		const DWORD savedButtons = *g.buttons;
+		const BYTE savedUseFixed = *g.useFixed;
+		const float savedFixedYaw = *g.fixedYaw;
+
+		// ---- swap this character in ---------------------------------------------
+		// A character that has never been driven starts from a zeroed block rather than
+		// from whoever ran last, or it inherits their ramps and lurches on its first
+		// step.
+		if (!state->seeded)
+		{
+			memset(state->bytes, 0, sizeof(state->bytes));
+			state->seeded = true;
+		}
+
+		memcpy(g.block, state->bytes, Rva::PlayerStateBlockBytes);
+
+		*g.chr = (void*)chr;
+		g.analogLY[0] = in.analogLY;
+		g.analogLY[1] = in.analogLX;
+		*g.buttons = (DWORD)in.buttons;
+
+		if (g_yawPatched)
+		{
+			// The good path. The four camera reads inside the driver answer with this,
+			// so the anchor, the 20 degree re-anchor test, PrevHeading and HeadingOffset
+			// all run the engine's own way on this character's own replicated state.
+			// UseFixedYaw and FixedYaw are left alone, which means a script that sets a
+			// fixed yaw still works and still replicates.
+			g_yawValue = in.cameraYaw;
+			g_yawActive = true;
+		}
+		else
+		{
+			// The fallback. Stand in for the camera at the final line and collapse the
+			// offset. See the header for what this costs.
+			*(float*)(g.block + kHeadingOffsetInBlock) = 0.0f;
+			*g.useFixed = 1;
+			*g.fixedYaw = in.cameraYaw;
+		}
+
+		// ---- run the game's own driver ------------------------------------------
+		g.fn();
+		g_yawActive = false;
+
+		// ---- keep the ramps, put everything else back ---------------------------
+		memcpy(state->bytes, g.block, Rva::PlayerStateBlockBytes);
+
+		memcpy(g.block, savedBlock, sizeof(savedBlock));
+		*g.chr = savedChr;
+		g.analogLY[0] = savedLY;
+		g.analogLY[1] = savedLX;
+		*g.buttons = savedButtons;
+		*g.useFixed = savedUseFixed;
+		*g.fixedYaw = savedFixedYaw;
+
+		return true;
+	}
 
 	namespace
 	{

@@ -12,20 +12,31 @@
 // Every reader here goes through workshop::Readable and returns false rather
 // than faulting, because all of it is meant to be callable from the frame path.
 //
+// Two exceptions, both documented where they are declared: CatchUpAllowed and
+// FmvDecoderBusy call into the game. FmvDecoderBusy is a pure read of the FMV
+// manager with no allocation, but it is a call, so ReadFmvState is a call too
+// and both want the game thread.
+//
 // ===========================================================================
 // THE ONE-PARAGRAPH VERSION
 // ===========================================================================
 //
 // An ATEL cutscene replicates for free. The script VM steps inside the
 // FFX_MainStep sub-step loop, once per simulation step, and never reads a
-// clock. An FMV does not replicate at all and has to be a barrier, because it
-// is WebM decoded on its own thread, but that costs nothing because no
-// simulation runs while it plays. In between sits the one genuine hazard: a
-// VOICED line switches the frame pacing to a timing track read off the
-// millisecond clock, and a machine that is ahead of its track BUSY-WAITS. Even
-// there, the content of each step comes out of the data file rather than the
-// clock, so lockstep wins by owning the step count rather than by rewriting the
-// pacing.
+// clock. An FMV does not replicate and has to be a barrier, because it is WebM
+// decoded on its own thread. In between sits the one genuine hazard: a VOICED
+// line switches the frame pacing to a timing track read off the millisecond
+// clock, and a machine that is ahead of its track BUSY-WAITS. Even there, the
+// content of each step comes out of the data file rather than the clock, so
+// lockstep wins by owning the step count rather than by rewriting the pacing.
+//
+// CORRECTION, AND IT MATTERS. An earlier version of this file said no
+// simulation runs while an FMV plays. That was wrong, and so was the claim in
+// reversing\CUTSCENE.md section 7.2 that it came from. THE SIMULATION KEEPS
+// RUNNING THROUGH A MOVIE. What is frozen is the one script that asked for the
+// movie, because it is parked in an ATEL poll handler waiting for it. See the
+// FMV section near the bottom of this file for the evidence and for what that
+// changes about the barrier.
 //
 // ===========================================================================
 // THE THREE THINGS A PLAYER CALLS A CUTSCENE
@@ -35,8 +46,10 @@
 //                         Deterministic given a synced RNG stream.
 //   a voiced line in one  the same VM, but FFX_StepPacing switches to the
 //                         SyncData timing track and paces off the clock.
-//   an FMV                a Phyre WebM player on its own decode thread.
-//                         No simulation runs. A barrier, not a sync problem.
+//   an FMV                a Phyre WebM player on its own decode thread. The
+//                         simulation keeps running. What is frozen is the one
+//                         script parked in the movie wait, and THAT is what the
+//                         barrier has to line up.
 //
 // A dialogue box is a fourth thing, driven by ATEL syscalls but stepped by its
 // own module inside the same sub-step loop. It can be up outside a cutscene,
@@ -200,24 +213,90 @@ namespace ffx
 		const DWORD Pressed = 0x14; // WORD, the newly-pressed edge. THE ADVANCE READ.
 	} // namespace MesWinPad
 
-	// PhyFMVPlayerManager, the fields read out of FFX_Fmv_CreatePlayer.
+	// PhyFMVPlayerManager, the fields read out of FFX_Fmv_CreatePlayer, plus the
+	// skip and completion fields read out of FFX_Fmv_PollSkipButtons 0x6D9460,
+	// FFX_Fmv_StepPresentation 0x6D7680 and FFX_Fmv_PlaybackFinished 0x645DC0.
 	namespace FmvManager
 	{
 		const DWORD FilePath = 0x4F0;  // char[], the resolved video path
-		const DWORD IsPlaying = 0x6D0; // BYTE, what FFX_Fmv_IsPlaying reads
-		const DWORD HasPlayer = 0x6D2; // BYTE, a player object exists
-		const DWORD VideoId = 0x6DC;   // int
-		const DWORD WidthF = 0x6F4;    // float
-		const DWORD HeightF = 0x6F8;   // float
+		const DWORD IsPlaying = 0x6D0; // BYTE (1744), what FFX_Fmv_IsPlaying reads
+		const DWORD HasPlayer = 0x6D2; // BYTE (1746), a player object exists
+		const DWORD VideoId = 0x6DC;   // int (1756)
+		const DWORD WidthF = 0x6F4;    // float (1780)
+		const DWORD HeightF = 0x6F8;   // float (1784)
+
+		// BYTE (1764). The decode side reached the end of the video.
+		// FFX_Fmv_PlaybackFinished returns this while IsPlaying is set, and 1 when
+		// it is clear, and that return is what the Movie:9 and Movie:10 script
+		// waits key off. So "the movie is over" is IsPlaying == 0 OR this byte.
+		const DWORD PlaybackComplete = 0x6E4;
+
+		// BYTE (1788). The Phyre player's own pause flag, toggled by
+		// FFX_Fmv_TogglePause. The suspend overlays and the window focus handlers
+		// are what set it, which is how alt-tab pauses a movie.
+		const DWORD Paused = 0x6FC;
+
+		// The three skip fields. FFX_Fmv_PollSkipButtons needs SkipAllowed to arm
+		// the prompt, sets SkipPromptUp when Start is pressed, and refuses the whole
+		// thing while SkipForbidden is set.
+		const DWORD SkipPromptUp = 0x74C;  // BYTE (1868), the prompt is on screen
+		const DWORD SkipAllowed = 0x74D;   // BYTE (1869), this movie may be skipped
+		const DWORD SkipForbidden = 0x74E; // BYTE (1870), skipping is refused
+
+		// int (1752) and int (1760). The frame index FFX_Fmv_StepPresentation
+		// advances from the player's own time, and the previous value of it. The
+		// skip forces both to 65534, which is the past-the-end sentinel the
+		// presentation step tests against with "< 65534".
+		const DWORD FrameIndex = 0x6D8;
+		const DWORD FrameIndexPrev = 0x6E0;
+
+		// BYTE (1808). Set to 1 both by the skip and by FFX_Fmv_StepPresentation's
+		// own stop branch, and cleared when the manager is constructed. So:
+		// presentation has stopped.
+		const DWORD PresentationStopped = 0x710;
+
+		// BYTE (1824). Guards the skip's clearing of IsPlaying and the three writes
+		// in the presentation step's stop branch, so a 1 here would mean "stopping
+		// does not actually stop playback".
+		//
+		// NOTHING IN THE BINARY EVER WRITES A 1. Checked by scanning .text for every
+		// "mov byte ptr [reg+720h], imm" encoding: the only two writers are
+		// FFX_Fmv_CreatePlayer and the manager constructor and both write 0. The
+		// guard is still honoured rather than assumed away, because it costs one
+		// read.
+		const DWORD StopSuppressed = 0x720;
 	} // namespace FmvManager
 
-	// The lazily built 0x340-byte FMV state object behind FFX_Fmv_GetPlaybackState.
-	namespace FmvStateLayout
+	// The lazily built 0x340-byte object behind the function the addresses file
+	// calls FrameGetSuspendState.
+	//
+	// THAT NAME IS WRONG AND THIS IS NOT AN FMV OBJECT. Every one of the three
+	// fields is a USER-DRIVEN full-screen suspend, and no FMV playback code writes
+	// any of them. The IDB now calls the function FFX_Frame_GetSuspendState. Walk
+	// the writers yourself if you want to check, there are only three:
+	//
+	//   Overlay   0x338  toggled by remappable action 32, mask 0x100000, through
+	//                    FFX_Frame_ToggleSuspendOverlay 0x680320. It pauses audio
+	//                    and pauses the Phyre video. Only other writer is the
+	//                    constructor sub_67FE70, which zeroes it.
+	//   Cutscene  0x33C  the Start-button in-cutscene pause overlay, written only
+	//                    by FFX_Frame_SetCutsceneSuspend 0x6803A0, reached only
+	//                    from FFX_Cutscene_StepPauseOverlay 0x8AB340 and
+	//                    FFX_Cutscene_EnterPauseOverlay 0x8AB3D0.
+	//   State     0x000  the debug free camera, remappable action 30, mask
+	//                    0x40000, unbound by default. FFX_Frame_StepSuspendOverlay
+	//                    0x680030 FORCES it to 0 whenever a movie is running.
+	//
+	// So FFX_MainStep's early return on "state == 2" is the PC port's pause, not
+	// the FMV path. The consequence is in the FMV section below.
+	namespace FrameSuspendLayout
 	{
-		const DWORD State = 0x000; // int, returned when neither flag is set
-		const DWORD FlagA = 0x338; // BYTE, either flag set means "returns 2"
-		const DWORD FlagB = 0x33C; // BYTE
-	} // namespace FmvStateLayout
+		const DWORD State = 0x000;    // int, the debug free camera mode
+		const DWORD FlagA = 0x338;    // BYTE, the action 32 suspend overlay
+		const DWORD FlagB = 0x33C;    // BYTE, the Start-button cutscene pause
+		const DWORD Overlay = 0x338;  // the same byte under the name it earned
+		const DWORD Cutscene = 0x33C; // ditto
+	} // namespace FrameSuspendLayout
 
 	// The ATEL context field this area cares about. The rest is addresses\Atel.h.
 	namespace AtelContext
@@ -425,42 +504,270 @@ namespace ffx
 	// own thread with a GetTickCount timebase, and the two players' machines will
 	// never present the same video frame on the same simulation step.
 	//
-	// That costs almost nothing, because FFX_MainStep early-returns while an FMV
-	// owns the frame, so NO SIMULATION RUNS. Both machines sit on the same
-	// simulation step for the whole movie. Treat it as a barrier:
+	// WHAT CHANGED, AND IT CHANGES THE WHOLE SHAPE OF THE BARRIER.
 	//
-	//   start   replicate FmvScriptRunning, which ATEL Movie syscalls set and
-	//           clear, so it flips on the same opcode on both machines
-	//   end     wait until BOTH machines report FmvPlaying() == 0 and
-	//           FmvDecoderBusy() == false
-	//   skip    make it a networked command, not a local input
+	// The old version of this comment said FFX_MainStep early-returns while a movie
+	// owns the frame, so no simulation runs and both machines sit on the same step
+	// for the whole movie. That is not true. The early return tests the suspend
+	// state object described above, and NO FMV CODE WRITES IT. Four independent
+	// things say so:
+	//
+	//   1. The only writers of all three suspend fields are the action-32 overlay
+	//      toggle, the Start-button cutscene pause and the debug free camera.
+	//   2. FFX_Frame_StepSuspendOverlay 0x680030 explicitly forces the free camera
+	//      field to 0 whenever the script says a movie is running, which is the
+	//      opposite of arming a suspend.
+	//   3. The script's movie waits are ATEL POLL HANDLERS (Movie library functions
+	//      1, 9, 10 and 11). The ATEL VM is stepped from the FFX_MainStep sub-step
+	//      loop, which is AFTER that early return. If the step were skipped the
+	//      polls would never run and a movie could never finish. This one is
+	//      decisive on its own.
+	//   4. FFX_StepPacing_AllowCatchUp goes out of its way to refuse frame-skipping
+	//      while a movie plays. There would be nothing to refuse if the step were
+	//      being thrown away anyway.
+	//
+	// SO THE SIMULATION RUNS THROUGH A MOVIE, and what is frozen is only the one
+	// script that asked for it. The co-op problem is therefore not "both machines
+	// are stopped, agree on when to start again". It is narrower and sharper:
+	//
+	//   both machines run the same script and park it on the same simulation step,
+	//   then each one UNPARKS IT on a step decided by its own decode thread, and
+	//   from the first step after that the two scripts are permanently offset
+	//
+	// So the barrier belongs on the SCRIPT WAIT, not on the simulation. Withhold
+	// the poll's completion until every machine has agreed, then let it complete on
+	// one agreed step. HookFmvWaits below is that mechanism.
+	//
+	// And the hold byte is exactly the wrong tool here, which is worth saying out
+	// loud because it is the obvious first guess. Holding the simulation stops
+	// FFX_MainStep, which stops the mod's own lockstep clock, while the machine
+	// still playing its movie keeps stepping and keeps advancing its clock. The two
+	// clocks then disagree about which step is which, and every input frame
+	// afterwards is applied to the wrong step. A pause can use the hold because
+	// every machine stops. A movie cannot, because the one that is still playing
+	// must not.
+	//
+	//   start   needs nothing. Movie:0 start and Movie:10 start are ATEL opcodes,
+	//           so two lockstepped machines reach them on the same step. The only
+	//           asymmetry is a local FFX_Fmv_StartVideo failure, and that one is
+	//           not recoverable by any amount of messaging.
+	//   end     withhold the script wait until every machine reports done, and
+	//           release it on one ordered step.
+	//   skip    Start then Square, see RequestFmvSkip. Local input, so it has to
+	//           become a networked command or one player watches the rest alone.
 	// ---------------------------------------------------------------------------
 	struct FmvState
 	{
-		int playbackState;  // 2 means the movie owns the frame
-		bool playing;       // the manager's byte
-		bool hasPlayer;     // a player object exists and has not been released
-		bool decoderBusy;   // a decode slot is still active or the queue is not drained
-		bool scriptRunning; // the ATEL script's own view
-		int videoId;        // -1 if the manager is not readable
+		// 2 means a user-driven suspend overlay owns the frame. It is NOT an FMV
+		// signal, see FrameSuspendLayout above. The field keeps the name because
+		// "playbackState" is what everyone will search for, and the address file now
+		// agrees: Rva::FrameGetSuspendState and Rva::FrameSuspendState.
+		int playbackState;
+		bool playing;          // the manager's IsPlaying byte, 1744
+		bool hasPlayer;        // a player object exists and has not been released
+		bool decoderBusy;      // FFX_Fmv_IsDecoderBusy, the real decode queue read
+		bool playbackComplete; // the manager's PlaybackComplete byte, 1764
+		bool scriptRunning;    // the ATEL script's own view
+		bool scriptBlocking;   // the Movie:10 wait is armed, g_ffxFmvScriptBlocking
+		bool skipRequested;    // g_ffxFmvSkipRequested, somebody skipped this movie
+		bool skipPromptUp;     // Start has put the skip prompt on screen
+		bool skipAllowed;      // this movie may be skipped at all
+		bool paused;           // the Phyre player's own pause flag
+		int videoId;           // -1 if the manager is not readable
 		float width;
 		float height;
 		const char* path; // the resolved file path, NULL if unreadable
 	};
 	bool ReadFmvState(FmvState* out);
 
-	// True while an FMV owns the frame and the simulation is therefore not running.
-	// This is the barrier condition.
+	// True while the manager says a video is playing. This is the manager's own
+	// IsPlaying byte and nothing else.
+	//
+	// IT NO LONGER ORS IN playbackState == 2, because that value turned out to mean
+	// "a suspend overlay is up" rather than anything about a movie, so OR-ing it
+	// made this return true for an alt-tab with no video anywhere.
 	bool FmvPlaying();
 
-	// True on the frame the movie stopped owning the frame, computed by comparing
+	// True while anything about a movie is live on this machine: the manager is
+	// playing, the decoder is still draining, or the script thinks a movie is on.
+	// This is the honest "do not treat this as plain gameplay" read for an FMV.
+	bool FmvInProgress();
+
+	// True while a user-driven suspend overlay owns the frame, which is the only
+	// thing that actually makes FFX_MainStep skip the simulation. Named for what it
+	// means rather than for what the address file calls it.
+	bool FrameSuspended();
+
+	// True on the frame the manager stopped reporting a video, computed by comparing
 	// against the previous call. Call it once per frame from one place, or the edge
 	// belongs to whoever called last. Returns false until it has been called twice.
 	bool FmvJustEnded();
 
-	// The script's own flag. This is the one to put on the wire, because it changes
-	// on an opcode rather than on a decode-thread transition.
+	// The script's own flag, set by the Movie:9 and Movie:10 handlers and cleared by
+	// Movie:0, Movie:1 and Movie:4. It changes on an opcode rather than on a
+	// decode-thread transition, which is why it is the one that is in step across
+	// two machines.
 	bool FmvScriptRunning();
+
+	// g_ffxFmvScriptBlocking, set by Movie:10 start ONLY WHEN THE PLAYER WAS
+	// ACTUALLY CREATED and cleared by the map-change teardown. False during a
+	// Movie:10 wait means this machine failed to open the video, which is the one
+	// FMV asymmetry nothing can repair.
+	bool FmvScriptBlocking();
+
+	// FFX_Fmv_IsDecoderBusy. Any decode slot still active, or the manager's queue
+	// not drained. Three of the four script movie waits consult it.
+	bool FmvDecoderBusy();
+
+	// The manager's PlaybackComplete byte, which the decode side sets when the video
+	// reaches its end.
+	bool FmvPlaybackComplete();
+
+	// The engine's own "this movie is over" test, FFX_Fmv_PlaybackFinished 0x645DC0,
+	// replicated as pure reads: the completion byte while a video is playing, and
+	// true when none is. This is the predicate the Movie:9 and Movie:10 waits use.
+	bool FmvPlaybackFinished();
+
+	// ---------------------------------------------------------------------------
+	// SKIPPING A MOVIE
+	//
+	// Found at FFX_Fmv_PollSkipButtons 0x6D9460, reached from
+	// FFX_Fmv_StepFromMainStep 0x645DF0 at the very top of FFX_MainStep. It is TWO
+	// presses and not one:
+	//
+	//   START  (ffx::Btn::Start, 0x800)  arms the on-screen prompt, but only while
+	//                                    FmvManager::SkipAllowed is set
+	//   SQUARE (ffx::Btn::Square, 0x80)  with the prompt up, performs the skip
+	//
+	// Both go through FFX_Input__isPressed, which is a newly-pressed edge test on
+	// the PC action map. That map is the merged keyboard-and-pad state with no port
+	// in it, so the skip is purely local input: in co-op each player would skip
+	// their own movie and nobody else's.
+	//
+	// What the skip actually does, in order: hide the prompt, force FrameIndex and
+	// FrameIndexPrev to 65534, seek the Phyre player to its own duration, set
+	// PresentationStopped, set g_ffxFmvSkipRequested, and clear IsPlaying unless
+	// StopSuppressed is set.
+	//
+	// WHICH OF THOSE IS LOAD BEARING, because the first guess was wrong and it is
+	// worth writing down. Setting g_ffxFmvSkipRequested ALONE DOES NOT END A MOVIE.
+	// The flag has exactly five xrefs: the skip sets it, FFX_Fmv_CreatePlayer clears
+	// it per movie, and three functions read it.
+	//
+	//   FFX_Fmv_DrawFrame             reads it and stops drawing. Immediate.
+	//   FFX_Fmv_IsFinishedOrSkipped   reads it and returns 1. This is Movie:11's
+	//                                 completion test, so Movie:11 does end on the
+	//                                 flag alone.
+	//   FFX_Fmv_StepPresentation      reads it, but only as the second half of
+	//                                 "time < duration && skip == 0", and that
+	//                                 whole term is unreachable while
+	//                                 PlaybackComplete is 0, because the condition
+	//                                 above it short circuits on PlaybackComplete
+	//                                 == 0. During normal playback it is 0. So the
+	//                                 flag does NOT make the presentation step take
+	//                                 its stop branch.
+	//
+	// Movie:1 tests FFX_Fmv_IsPlaying and FFX_Fmv_IsDecoderBusy, and Movie:9 and
+	// Movie:10 test FFX_Fmv_PlaybackFinished, which is "IsPlaying ? PlaybackComplete
+	// : 1". None of those read the flag. So the thing that actually ends a movie for
+	// three of the four script waits is CLEARING THE MANAGER'S IsPlaying BYTE, which
+	// also stops FFX_Fmv_StepFromMainStep from doing anything at all, since that is
+	// gated on the same byte.
+	//
+	// RequestFmvSkip below therefore writes the whole set and not just the flag.
+	// ---------------------------------------------------------------------------
+
+	// g_ffxFmvSkipRequested. Cleared per movie by FFX_Fmv_CreatePlayer and set only
+	// by the skip handler, so this is both "somebody skipped" and a clean edge to
+	// watch for a local skip without hooking anything.
+	bool FmvSkipRequested();
+
+	// Make this machine skip the movie it is playing, the way a networked cancel
+	// has to. Writes the same fields FFX_Fmv_PollSkipButtons writes when Square is
+	// pressed, in the same order, so every one of the four script waits ends the
+	// same way it would have for a local press.
+	//
+	// WHAT IT DOES NOT DO, both deliberately:
+	//
+	//   The Phyre seek to the player's own duration. That needs two unnamed Phyre
+	//   methods on the embedded player at manager+56 whose signatures are only
+	//   inferred from one call site, and it changes nothing that matters: clearing
+	//   IsPlaying stops FFX_Fmv_StepFromMainStep, so the presentation step is not
+	//   called again and the player's time is never read again before teardown.
+	//
+	//   The prompt-hide draw call sub_6E78C0. The prompt flag is cleared, which is
+	//   what FFX_Fmv_DrawFrame reads, and the draw call is a UI object this layer
+	//   has no wrapper for.
+	//
+	// Returns false when there is no manager yet, which is the normal answer early
+	// in startup.
+	bool RequestFmvSkip();
+
+	// ---------------------------------------------------------------------------
+	// THE BARRIER: withholding the script's movie wait
+	//
+	// The ATEL Movie library's waits are poll handlers, and FFX_Atel_SysFuncPoll
+	// calls them as int __cdecl (int actor, int script) through a table of 16-byte
+	// entries at g_ffxAtelSysFuncLib11_Movie, laid out [start, poll, resf, resi].
+	// The table is in writable .data, so this hooks by replacing four pointers
+	// rather than by patching code. A returned 0 has none of the status bits set,
+	// which is how the engine's own waits say "not finished, call me again".
+	//
+	// Four slots are waits:
+	//
+	//   Movie:1   wait for an already-open movie. THE ONLY ONE WITH SIDE EFFECTS ON
+	//             ITS DONE PATH: it clears FmvScriptRunning and calls sub_63DF30. So
+	//             this hook never calls it speculatively. It mirrors the engine's
+	//             own test with pure reads and calls the real handler only on the
+	//             step the gate opens, which is also where those side effects then
+	//             happen, identically on both machines.
+	//   Movie:9   wait, no side effects.
+	//   Movie:10  play and wait, no side effects. Its first test is
+	//             g_ffxFmvScriptBlocking, so it reports done immediately on a
+	//             machine whose FFX_Fmv_StartVideo failed.
+	//   Movie:11  wait, or a skip, no side effects.
+	//
+	// THE GATE IS CALLED ON EVERY POLL, not only when the wait has finished, and
+	// localComplete says which of the two it is. That is deliberate and it is the
+	// reason this signature has two arguments:
+	//
+	//   localComplete == false  the movie is still playing. The return value is
+	//                           IGNORED, because the engine is going to keep waiting
+	//                           anyway. What the call is for is the TICK: it is the
+	//                           only thing in this kit that fires once per
+	//                           simulation step for the whole length of a movie,
+	//                           which is exactly the window a networked cancel has
+	//                           to be agreed in.
+	//   localComplete == true   the engine's own wait has finished. Return true to
+	//                           let it finish, false to keep the script parked for
+	//                           another step.
+	//
+	// So a gate that always returns true leaves behaviour byte for byte unchanged,
+	// and so does a null gate. A null gate means "never withhold", which is how the
+	// hook can go in at startup and be armed when a session starts, the rule the
+	// rest of this kit follows.
+	//
+	// Called from the ATEL VM, so from inside the FFX_MainStep sub-step loop, on the
+	// game thread. It can fire more than once in a step if the sub-step count is
+	// above one, so anything per-step inside it has to guard on the step number.
+	// ---------------------------------------------------------------------------
+	namespace FmvWait
+	{
+		const int WaitForOpenMovie = 1; // Movie:1
+		const int WaitFullscreen = 9;   // Movie:9
+		const int PlayAndWait = 10;     // Movie:10
+		const int WaitOrSkip = 11;      // Movie:11
+	} // namespace FmvWait
+
+	typedef bool(__cdecl* FmvWaitGateFn)(int movieFunction, bool localComplete);
+
+	bool HookFmvWaits(FmvWaitGateFn gate);
+	bool FmvWaitHookInstalled();
+
+	// How many poll calls this hook has turned into "keep waiting", and which slot
+	// it last did it for. Diagnostics only.
+	unsigned long FmvWaitsWithheld();
+	int FmvWaitLastSlot();
 
 	// ---------------------------------------------------------------------------
 	// THE CUTSCENE CAMERA

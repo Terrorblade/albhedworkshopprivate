@@ -72,6 +72,21 @@ namespace pilgrimage
 		// deriving the binding locally would split the ownership table and nothing
 		// afterwards would notice.
 		kCommandCharOwner = 6,
+
+		// An FMV starting or being cancelled. Reserved here so the kind number is
+		// fixed, and the payload lives in the FMV layer's own header rather than in
+		// this file, because nothing here needs to know its shape. RequestCommand
+		// takes a void pointer and a length.
+		//
+		// An FMV needs a barrier rather than ordinary replication: the video is
+		// decoded on a path the simulation clock does not drive, so two machines
+		// cannot be relied on to leave it on the same step, and a cancel is one
+		// player pressing a button that ends it for everybody.
+		kCommandFmv = 7,
+
+		// A held or carried object changing hands, or being picked up or put down.
+		// Payload shape belongs to that layer too, for the same reason.
+		kCommandHeldObject = 8,
 	};
 
 	// The booster payload. Four ints rather than a packed bitfield because

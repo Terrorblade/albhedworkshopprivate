@@ -6,12 +6,17 @@
 #include "ModState.h"
 #include "ffx/Cutscene.h"
 #include "ffx/GameState.h"
+#include "ffx/Hub.h"
 #include "ffx/Input.h"
 #include "ffx/MainLoop.h"
 #include "net/NetLink.h"
+#include "workshop/Events.h"
 #include "workshop/Lockstep.h"
 #include "workshop/Log.h"
 #include "world/RemotePlayers.h"
+#include "world/HeldObjects.h"
+#include "world/MinigameSync.h"
+#include "world/PlayerDrive.h"
 #include "world/WorldSync.h"
 #include "battle/BattleSync.h"
 #include "menu/CoopConfig.h"
@@ -86,6 +91,29 @@ namespace pilgrimage
 			InputFrame frame = NeutralInput();
 			frame.buttons = ButtonMask();
 
+			// THE AUTHORITATIVE MOVEMENT INPUT, as of protocol 6. The two stick bytes and
+			// our camera yaw are what the engine's own player driver reads, and both
+			// machines feed them to that same function, so the ramps and the smoothing
+			// come out identical rather than approximately so. See the InputFrame comment
+			// in Protocol.h.
+			//
+			// Read as BYTES rather than taken from the float Sticks below, because the
+			// driver's deadzone and ramps are defined against the byte.
+			BYTE rawLX = 0x80;
+			BYTE rawLY = 0x80;
+			if (ReadPlayerAnalogBytes(&rawLX, &rawLY))
+			{
+				frame.analogLX = rawLX;
+				frame.analogLY = rawLY;
+			}
+
+			// Our camera, quantised the same way as a heading. It travels with the stick
+			// because the driver resolves one against the other and the camera is local,
+			// so without this the two machines send one character two ways.
+			float camYawForWire = 0.0f;
+			if (ActiveCameraYaw(&camYawForWire))
+				frame.cameraYaw = QuantiseAngle(camYawForWire);
+
 			Sticks sticks;
 			if (ReadSticks(&sticks))
 			{
@@ -159,6 +187,18 @@ namespace pilgrimage
 			// step. For ownership that is the unrecoverable split, not a dropped frame.
 			ServiceCoopConfigStep();
 
+			// Carried objects, same reason a third time. A handover command re-points a
+			// carried object at a different carrier, which is a write to the simulation,
+			// so missing one on a catch-up step means one machine moved the object and
+			// the other did not. There is no way back from that.
+			ServiceHeldObjectStep();
+
+			// The pad auto repeat timer's step derived clock. On the step path because
+			// the engine's own auto repeat advances per committed pad ring slot, which
+			// is per step, so feeding it a frame derived value would reintroduce the
+			// frame dependence this replaces.
+			ServiceMinigameStep(clock.CurrentStep());
+
 			// A peer's pause, raised on the exact step the host named. The RELEASE is
 			// not here, it is in StepPauseSync on the frame path, because by the time
 			// anybody is paused there are no steps left to consume a command on. See
@@ -175,7 +215,7 @@ namespace pilgrimage
 			return !enforced;
 		}
 
-		void __cdecl AfterStepCallback(float)
+		void OnStep(const workshop::Event&, void*)
 		{
 			// The extra per-player trigger passes belong here rather than in the frame hook,
 			// because the engine runs its own trigger set once per SIMULATION step and one
@@ -217,12 +257,22 @@ namespace pilgrimage
 		if (installed)
 			return true;
 
-		installed = HookMainStep(&GateCallback, &AfterStepCallback);
+		// The hub owns the step hook. A gate here can still hold the simulation, and
+		// the per-step work comes back as EventStep, so another plugin can take the
+		// same step without unhooking this one. See ffx/Hub.h.
+		if (!StartHub())
+		{
+			Log("lockstep: the hub is not running, so the clock cannot run");
+			return false;
+		}
+
+		installed = AddStepGate(&GateCallback)
+		    && workshop::Subscribe(workshop::EventStep, &OnStep) != 0;
 		if (installed)
-			Log("lockstep: step hook installed on FFX_MainStep, gate is %s",
+			Log("lockstep: gate added to the hub's step chain, gate is %s",
 			    enforced ? "ENFORCING" : "measuring only");
 		else
-			Log("lockstep: could not install the step hook, so the clock cannot run");
+			Log("lockstep: could not register the gate, so the clock cannot run");
 
 		return installed;
 	}
@@ -286,6 +336,13 @@ namespace pilgrimage
 			    "ordered command on a step the host never runs.");
 			return;
 		}
+
+		// Fresh ramps for everybody. A clock that has just started is about to run steps
+		// that the other machine is also running from zero, so inheriting the ramps of
+		// whatever was happening before the session would mean starting from two
+		// different accelerations.
+		ResetPlayerDrive();
+		StartMinigameSync();
 
 		clock.Start(session, step);
 	}
@@ -430,7 +487,17 @@ namespace pilgrimage
 			// uint32_t. They are the same width here, but copying rather than casting
 			// means the day one of them changes is a compile error instead of a
 			// checksum that quietly means nothing.
-			uint32_t buckets[kBucketCount + kMenuHashRegions];
+			// 13 save block buckets, 2 menu, 1 carries, 2 minigame. Protocol 7 raised
+			// ChecksumRegionCount to 24, so there are spares again.
+			const int kHeldHashRegions = 1;
+			typedef char ChecksumRegionsFit[(kBucketCount + kMenuHashRegions
+			                                    + kHeldHashRegions + kMinigameHashRegions
+			                                    <= ChecksumRegionCount)
+			        ? 1
+			        : -1];
+
+			uint32_t buckets[kBucketCount + kMenuHashRegions + kHeldHashRegions
+			    + kMinigameHashRegions];
 			for (int i = 0; i < (int)kBucketCount; ++i)
 				buckets[i] = (uint32_t)hash.bucket[i];
 
@@ -451,7 +518,35 @@ namespace pilgrimage
 				combined ^= (uint32_t)menuRegions[i];
 			}
 
-			clock.SubmitChecksum(combined, buckets, (int)kBucketCount + menuCount);
+			// The carry census. Folded into the combined value as well as carried in its
+			// own region, for the same reason the menu regions are: the combined value is
+			// the only thing HandleChecksum compares, so a region that is sent but not
+			// folded in would never trigger a report.
+			//
+			// Zero when nothing is being carried, which is most of the time, and a zero
+			// XORs in as nothing. That is correct rather than a shortcut: two machines
+			// with nothing carried agree about nothing carried.
+			const uint32_t heldHash = HeldObjectsHash();
+			buckets[(int)kBucketCount + menuCount] = heldHash;
+			combined ^= heldHash;
+
+			// Two regions: the RNG state with the package swap flags and the sub step
+			// count, then the overdrive minigame timer with Lulu's keyboard latches. The
+			// RNG one is almost never zero, so unlike the others a zero there means the
+			// globals were unreadable rather than that nothing is happening. The overdrive
+			// one is seeded with a constant for the same reason, so it is never zero
+			// either and an all-zero value still means unreadable.
+			DWORD minigameRegions[kMinigameHashRegions];
+			const int minigameCount
+			    = MinigameHashRegions(minigameRegions, kMinigameHashRegions);
+			for (int i = 0; i < minigameCount; ++i)
+			{
+				buckets[(int)kBucketCount + menuCount + 1 + i] = (uint32_t)minigameRegions[i];
+				combined ^= (uint32_t)minigameRegions[i];
+			}
+
+			clock.SubmitChecksum(
+			    combined, buckets, (int)kBucketCount + menuCount + 1 + minigameCount);
 		}
 	}
 

@@ -191,6 +191,77 @@ namespace ffx
 		const DWORD BtlMenuOpen = 0x0049BB10;
 		const DWORD BtlMenuClose = 0x0049ADE0;
 		const DWORD BtlMenuStep = 0x0049AE20;
+
+		// EVERY BATTLE MENU PAGE HAS A WALL-CLOCK INPUT LOCKOUT, and this is where it
+		// comes from. BtlMenuStep walks BtlMenuPages through a six state machine:
+		// state 2 stamps record+0xDC from FFX_Time_AppElapsedSeconds, state 4 writes
+		// record+0xE0 = now - startTime, and eight of the nine state 4 callbacks refuse
+		// to run their page proc until elapsed passes 0.30 s or 0.45 s. So the number of
+		// SUB STEPS a page is deaf for depends on the frame rate, and a player's first
+		// press after a page opens lands on a different step on each peer.
+		//
+		// Patch the two call sites, not the clock: it has 30 callers and most are UI
+		// pulsing that nothing reads back. Both sites verified as 0xE8 rel32 to
+		// 0x00241410. At one step they become 9 and 13 steps, which is deterministic.
+		const DWORD BtlMenuPageStartClockCallSite = 0x0049AEF6;   // state 2, startTime
+		const DWORD BtlMenuPageElapsedClockCallSite = 0x0049AF39; // state 4, elapsed
+		// BtlMenuPages is declared further down, in the page stack block.
+
+		// The overdrive minigame clock. A STEP COUNTER, not a wall clock: it adds 1.0
+		// per sub step and divides by 30. The 25.0 path is dead, its selector
+		// MesWinFontMode is computed in FFX_MainInit from a byte that is still zero.
+		// It does burn one FFX_Btl_Rand draw per sub step to randomise the countdown's
+		// hundredths digit, which is cosmetic but moves the battle RNG.
+		const DWORD BtlOdStepSharedTimer = 0x00491AC0;
+		const DWORD BtlOdResetSharedTimer = 0x00497F00;
+		const DWORD BtlOdGetTimeRemaining = 0x00497780;
+		const DWORD BtlOdSetTimeBudget = 0x0049A2A0;
+		const DWORD BtlOdStepCounter = 0x00F3F788;   // float, += 1.0 per sub step
+		const DWORD BtlOdTimeBudget = 0x00F3F78C;    // float
+		const DWORD BtlOdTimeRemaining = 0x00F3F790; // float
+		const DWORD BtlOdMinigamePhase = 0x00F3F77C; // dword
+		const DWORD MesWinFontMode = 0x01465F00;     // picks 25 vs 30, always 0
+
+		// Lulu's Fury is the one native overdrive minigame that reads a wall clock, and
+		// the clock reaches exactly one thing: clearing the two KEYBOARD key latches
+		// after half a real second with the stick out of all four corner quadrants. The
+		// pad path is pure math off the pad ring at lag -1 and lag 0, and THE TIME LIMIT
+		// IS NOT WALL CLOCK EITHER. BtlOdTimeRemaining is budget minus stepCounter / fps
+		// and BtlOdStepSharedTimer is its only writer, so it replicates. Hash these two
+		// floats to catch a keyboard player diverging, and leave the rest alone.
+		const DWORD BtlOdLuluClockNow = 0x00F3C920;  // float, wall clock
+		const DWORD BtlOdLuluClockMark = 0x00F3C924; // float, wall clock
+
+		// The two call sites to patch if that latch timeout has to become step derived.
+		// Both are E8 rel32 to Rva::TimeAppElapsedSeconds, verified in the IDB.
+		const DWORD BtlOdLuluClockCallSiteNow = 0x00491BB6;
+		const DWORD BtlOdLuluClockCallSiteMark = 0x00491BD6;
+
+		// NOT A CALL SITE, so do not try to patch it like one. It is the
+		// fld flt_B5EDC8 / fcomp now - mark / test ah,5 / jp compare that guards the
+		// latch clear, and BtlOdLuluDeadZoneWindowConst is the float it loads.
+		const DWORD BtlOdLuluDeadZoneClockSite = 0x00491DA3;
+		const DWORD BtlOdLuluDeadZoneWindowConst = 0x0075EDC8; // float 0.5001, .rdata
+		const DWORD BtlOdLuluKeyboardReader = 0x00245EB0;
+		const DWORD BtlOdLuluKeyA = 0x00F3C928;         // dword, keyboard latch
+		const DWORD BtlOdLuluKeyB = 0x00F3C92C;         // dword, keyboard latch
+		const DWORD BtlOdLuluKeyboardHitSite = 0x00491E86;
+
+		// BoosterAutoBattle is declared in addresses/EscMenu.h. It forces input in two
+		// places in the overdrive family, so a peer with the booster on and a peer
+		// without it play a different minigame. Hash it.
+
+		// Rotate-the-stick overdrive minigame. Reached by BtlMenuStep -> FFX_Btl_MainStep,
+		// so it is inside the simulation and its result scales overdrive damage. The only
+		// clock in it is the keyboard latch timeout above, so the stick path replicates as
+		// long as the pad ring does.
+		//
+		// IT SETS ThreadedPadMode WHILE IT RUNS, and that changes the pad commit cadence
+		// from once per frame to once per sub step. See the ring block in addresses/Input.h.
+		const DWORD BtlOdLuluFuryStickMinigame = 0x00491B80;
+		const DWORD BtlOdLuluSetThreadedPadSite = 0x00491C7E;   // ThreadedPadMode = 1
+		const DWORD BtlOdLuluClearThreadedPadSite = 0x00491FD8; // ThreadedPadMode = 0
+
 		const DWORD BtlMenuPushPage = 0x0049A330;
 
 		// int __cdecl (void). The player's confirm. Builds the staged record and calls
@@ -236,6 +307,180 @@ namespace ffx
 		const DWORD BtlMenuPageProcC = 0x004A22F0;
 		const DWORD BtlMenuPageProcD = 0x004A2690;
 
+		// ---------------------------------------------------------------------------
+		// THE OVERDRIVE MINIGAME FAMILY.
+		//
+		// The gate is data driven the same way the command path is. The action phase
+		// machine calls BtlOdMaybeStartMinigame, that indexes a 33 byte kind table off the
+		// command's kind byte, and only Tidus, Auron, Lulu and Wakka have an entry.
+		// Kimahri, Rikku and the parent commands are plain menus.
+		//
+		// So one overdrive at a time, and replicate the RESULT through
+		// BtlOdReportMinigameResult rather than running two minigames. Every piece of live
+		// state in the per-character block below is one slot for the whole game.
+		// ---------------------------------------------------------------------------
+		const DWORD BtlOdMaybeStartMinigame = 0x003AFC90;
+		const DWORD BtlOdGateJumpTable = 0x003AFD00;         // 2 entries
+		const DWORD BtlOdGateKindIndexTable = 0x003AFD08;    // 33 bytes, kind -> minigame
+		const DWORD BtlOdStartMinigameForActor = 0x003AFD30; // magic host API 630
+		const DWORD BtlOdIsMinigamePending = 0x003AFDE0;     // host 629
+		const DWORD BtlOdReportMinigameResult = 0x003B0470;
+		const DWORD BtlActionPhaseStep = 0x00388480;
+		const DWORD BtlOdGateCallSite = 0x00388691; // the only call to the gate
+
+		// Offsets into the battle actor record, which is where the handshake and the result
+		// live. Already per actor, so nothing to fix here.
+		const int BtlActorOdPendingOff = 0x0D24;
+		const int BtlActorOdResultOff = 0x0D28;
+		const int BtlActorOdTimeLeftOff = 0x0D2C;    // float
+		const int BtlActorOdBudgetOff = 0x0D30;      // float
+		const int BtlActorWakkaReelLiveOff = 0x0D40; // 31 bytes
+		const int BtlActorWakkaReelSrcOff = 0x0D80;
+		const int BtlActorAbilityIdOff = 0x0F5C;
+		const int BtlActorMagicStatOff = 0x05AA;
+
+		// The 25 vs 30 divisor in BtlOdStepSharedTimer and its whole input chain. The 25
+		// path is dead because MesWinFontMode is written once at init from a byte that is
+		// still zero, but it is two bytes, so hash them and be sure.
+		const DWORD BtlOdFontModeBranchSite = 0x00491AF6;  // the jnz that picks 25 or 30
+		const DWORD BtlOdTimerRandBranchSite = 0x00491B2D; // the per-sub-step Rand draw
+		const DWORD MesWinGetFontMode = 0x004AC3A0;
+		const DWORD MesWinSelectFontForLanguage = 0x004AD900; // only writer, init only
+		const DWORD MesWinTextLanguage = 0x00F30830;          // signed byte, the only input
+		const DWORD MesWinTextLangVariant = 0x00F30833;       // byte
+
+		const DWORD BtlOdHudX = 0x00F3F780;        // word
+		const DWORD BtlOdHudY = 0x00F3F782;        // word
+		const DWORD BtlOdTimeDisplay = 0x00F3F794; // float, cosmetic
+
+		// ---------------------------------------------------------------------------
+		// THE PER-CHARACTER MINIGAME STATE, which is NOT per character. Every global here
+		// is one slot, so this is the set a second simultaneous overdrive would corrupt,
+		// and the set to hash for a desync check.
+		// ---------------------------------------------------------------------------
+		const DWORD BtlOdAuronSuccess = 0x00F3D6F2; // byte
+		const DWORD BtlOdAuronState = 0x00F3D6F4;   // word, high word is a HUD anchor
+		const DWORD BtlOdAuronSeqIndex = 0x00F3D6FC;
+		const DWORD BtlOdAuronSeqLen = 0x00F3D700;
+		const DWORD BtlOdAuronSeqPtr = 0x00F3D704;
+
+		const DWORD BtlOdTidusSuccess = 0x00F3D6F3;       // byte
+		const DWORD BtlOdTidusState = 0x00F3D734;         // word
+		const DWORD BtlOdTidusTrackLeft = 0x00F3D736;     // word
+		const DWORD BtlOdTidusTrackWidth = 0x00F3D73A;    // word
+		const DWORD BtlOdTidusZoneLow = 0x00F3D73C;       // word
+		const DWORD BtlOdTidusZoneHigh = 0x00F3D73E;      // word
+		const DWORD BtlOdTidusZoneAndBarPos = 0x00F3D740; // zone width low, bar pos high
+		const DWORD BtlOdTidusBarVel = 0x00F3D744;        // signed word
+
+		const DWORD BtlOdLuluState = 0x00F3D708;             // word
+		const DWORD BtlOdLuluGaugeMax = 0x00F3D70E;          // word, 192
+		const DWORD BtlOdLuluGauge = 0x00F3D71C;             // word
+		const DWORD BtlOdLuluRotCount = 0x00F3D71E;          // byte
+		const DWORD BtlOdLuluHitCount = 0x00F3D71F;          // byte, capped at 16
+		const DWORD BtlOdLuluQuadrantRing = 0x00F3D721;      // 16 bytes
+		const DWORD BtlOdLuluRingCount = 0x00F3D731;         // byte
+		const DWORD BtlOdLuluHitThresholdTable = 0x00F3F798; // 16 bytes
+		const DWORD BtlOdWakkaReelsActive = 0x00F3C93F;      // byte
+
+		// ---------------------------------------------------------------------------
+		// The three native minigames: one step function plus launch, reset and draw each.
+		// Step is reached from BtlMenuStep, so all three run inside the simulation.
+		// ---------------------------------------------------------------------------
+		const DWORD BtlOdTidusSwingBarMinigame = 0x00492320;
+		const DWORD BtlOdTidusLaunch = 0x00498CA0;
+		const DWORD BtlOdTidusReset = 0x00498180;
+		const DWORD BtlOdDrawTidusBar = 0x00497240;
+
+		const DWORD BtlOdAuronButtonSeqMinigame = 0x00490F70;
+		const DWORD BtlOdAuronLaunch = 0x00498AD0;
+		const DWORD BtlOdAuronReset = 0x00497970;
+		const DWORD BtlOdDrawAuronSeq = 0x00492740;
+
+		const DWORD BtlOdLuluLaunch = 0x00498BF0;
+		const DWORD BtlOdLuluReset = 0x00497F70;
+		const DWORD BtlOdDrawLuluGauge = 0x00495660;
+
+		// Wakka's reels live in a magic DLL. These are the host API entries it drives, so
+		// the engine only stores the strip and the DLL decides what lands on it.
+		const DWORD BtlOdWakkaReelsBegin = 0x00498DC0;        // host 656
+		const DWORD BtlOdWakkaReelsEnd = 0x00498230;          // host 655
+		const DWORD BtlOdWakkaReelsStopCue = 0x00490F10;      // host 649
+		const DWORD BtlOdWakkaReelsDraw = 0x004974A0;         // host 650
+		const DWORD BtlOdWakkaReelsIsCuePlaying = 0x004977C0; // host 652
+		const DWORD BtlOdWakkaReelsGetStrip = 0x003B1910;     // host 645
+		const DWORD BtlOdWakkaReelsGetLevel = 0x003B19F0;     // host 646
+		const DWORD BtlOdWakkaReelsPostDone = 0x003B1A70;     // host 647
+
+		// Phase and HUD, all host API entries. BtlOdMinigamePhase is what they move.
+		const DWORD BtlOdSetPhaseIdle = 0x00490E70;         // host 648
+		const DWORD BtlOdSetPhaseArmed = 0x0049AB20;        // host 659
+		const DWORD BtlOdSetPhaseRunning = 0x0049AB50;      // host 660
+		const DWORD BtlOdSetPhaseArmedDup = 0x0049ABA0;     // host 662, same effect as 659
+		const DWORD BtlOdIsGoodCuePlaying = 0x004977E0;     // host 653
+		const DWORD BtlOdPlayGoodCue = 0x0049AB80;          // host 661
+		const DWORD BtlOdSetHudPos = 0x0049A2D0;            // host 658
+		const DWORD BtlOdDrawTimerHud = 0x004955E0;
+		const DWORD BtlOdPressCircleGate = 0x00491A30;
+		const DWORD BtlOdArmPressCircleGate = 0x00490EC0;   // host 372
+		const DWORD BtlOdPressCircleGateState = 0x00F3F6A8; // word
+
+		// The tunables, so a desync hunt can rule them out. All read only, all indexed by
+		// overdrive level 0..3.
+		const DWORD BtlOdAuronTimeBudgets = 0x00886B60;      // 4 floats, 4 4 4 3
+		const DWORD BtlOdAuronSequences = 0x00886B70;        // 4 rows x 32 bytes, 0xFFFF ends
+		const DWORD BtlOdTidusTimeBudgets = 0x00886BF0;      // 4 floats, 3 3 3 2
+		const DWORD BtlOdGetAuronSequence = 0x0065CA60;
+		const DWORD BtlOdGetAuronBudget = 0x0065CA70;
+		const DWORD BtlOdGetLuluBudget = 0x0065CB10;         // always 4.0
+		const DWORD BtlOdGetTidusZoneWidth = 0x0065CB30;     // 24 20 20 18
+		const DWORD BtlOdGetTidusBarSpeed = 0x0065CB80;      // 11 12 13 14
+		const DWORD BtlOdGetTidusBudget = 0x0065CBD0;
+		const DWORD BtlOdLoadLuluRotationTable = 0x0065CC70; // 19 cases
+		const DWORD BtlOdLuluRotFamilyIndex = 0x0065CEC8;    // 19 bytes
+		const DWORD BtlOdGetLuluMagicStat = 0x0039AE90;      // returns actor+0x5AA
+		const DWORD BtlOdParseThresholdString = 0x0049A2F0;  // fills the threshold table
+
+		// ---------------------------------------------------------------------------
+		// The rest of the battle menu page machine, because Mix, Grand Summon and Ronso
+		// Rage are pages rather than minigames.
+		//
+		// The nine Step4 functions are the state 4 callbacks, one per page kind group.
+		// Eight of the nine hold the wall-clock input lockout described up at
+		// BtlMenuPageStartClockCallSite, and the two constants are the thresholds they
+		// compare against. Patching a constant is an alternative to patching the two clock
+		// call sites, and 0x00743D50 IS A DOUBLE rather than a float.
+		// ---------------------------------------------------------------------------
+		const DWORD BtlMenuPageLoopHeadSite = 0x0049AECD;
+		const DWORD BtlMenuInstallPageCallbacks = 0x004A0DE0;
+		const DWORD BtlMenuInstallPageLayout = 0x004A10D0;
+		const DWORD BtlMenuSetPageKindForCommand = 0x00499870; // Mix and Doublecast cases
+		const DWORD BtlMenuDrawRoot = 0x0049B360;
+
+		const DWORD BtlMenuStep4Kind0 = 0x004A8A70;     // 0.45 s lockout
+		const DWORD BtlMenuStep4KindCommon = 0x004A8B20; // kinds 1 2 3 4 6 0xE 0x11
+		const DWORD BtlMenuStep4Kind5 = 0x004A8B50;
+		const DWORD BtlMenuStep4Kind7 = 0x004A8B90;     // kinds 7 and 0xF
+		const DWORD BtlMenuStep4KindA = 0x004A87A0;
+		const DWORD BtlMenuStep4KindC = 0x004A8A40;
+		const DWORD BtlMenuStep4KindD = 0x004A8AF0;
+		const DWORD BtlMenuStep4Kind14 = 0x004A8AC0;    // Mix
+		const DWORD BtlMenuStep4Kind15 = 0x004A87D0;    // kinds 0x15 and 0x16
+
+		const DWORD BtlMenuPageLockoutConst = 0x0073EB44;      // float 0.30000001
+		const DWORD BtlMenuPageLockoutKind0Const = 0x00743D50; // double 0.44999999
+
+		// Page record offsets. BtlMenuPages is the array, stride 240, 8 slots.
+		const int BtlMenuPageStride = 240;
+		const int BtlMenuPageStateOff = 0x01;
+		const int BtlMenuPageKindOff = 0x06;      // from ability row byte 23
+		const int BtlMenuPageDrawCbOff = 0x90;
+		const int BtlMenuPageEnterCbOff = 0x94;   // null for every kind but 0xA
+		const int BtlMenuPagePollCbOff = 0x98;    // state 3
+		const int BtlMenuPageStepCbOff = 0x9C;    // state 4
+		const int BtlMenuPageExitCbOff = 0xA0;    // state 6
+		const int BtlMenuPageStartTimeOff = 0xDC; // WALL CLOCK seconds
+		const int BtlMenuPageElapsedOff = 0xE0;   // WALL CLOCK seconds
 		// ---------------------------------------------------------------------------
 		// The AI script runner. The other half of the proof that the command path is
 		// already data driven.
@@ -403,6 +648,30 @@ namespace ffx
 				BtlMenuOpen,
 				BtlMenuClose,
 				BtlMenuStep,
+				BtlMenuPageStartClockCallSite,
+				BtlMenuPageElapsedClockCallSite,
+				BtlOdStepSharedTimer,
+				BtlOdResetSharedTimer,
+				BtlOdGetTimeRemaining,
+				BtlOdSetTimeBudget,
+				BtlOdStepCounter,
+				BtlOdTimeBudget,
+				BtlOdTimeRemaining,
+				BtlOdMinigamePhase,
+				MesWinFontMode,
+				BtlOdLuluClockNow,
+				BtlOdLuluClockMark,
+				BtlOdLuluClockCallSiteNow,
+				BtlOdLuluClockCallSiteMark,
+				BtlOdLuluDeadZoneClockSite,
+				BtlOdLuluDeadZoneWindowConst,
+				BtlOdLuluKeyboardReader,
+				BtlOdLuluKeyA,
+				BtlOdLuluKeyB,
+				BtlOdLuluKeyboardHitSite,
+				BtlOdLuluFuryStickMinigame,
+				BtlOdLuluSetThreadedPadSite,
+				BtlOdLuluClearThreadedPadSite,
 				BtlMenuPushPage,
 				BtlMenuConfirmCommand,
 				BtlMenuBuildStagedCommand,
@@ -415,6 +684,104 @@ namespace ffx
 				BtlMenuPageProcB,
 				BtlMenuPageProcC,
 				BtlMenuPageProcD,
+				BtlOdMaybeStartMinigame,
+				BtlOdGateJumpTable,
+				BtlOdGateKindIndexTable,
+				BtlOdStartMinigameForActor,
+				BtlOdIsMinigamePending,
+				BtlOdReportMinigameResult,
+				BtlActionPhaseStep,
+				BtlOdGateCallSite,
+				BtlOdFontModeBranchSite,
+				BtlOdTimerRandBranchSite,
+				MesWinGetFontMode,
+				MesWinSelectFontForLanguage,
+				MesWinTextLanguage,
+				MesWinTextLangVariant,
+				BtlOdHudX,
+				BtlOdHudY,
+				BtlOdTimeDisplay,
+				BtlOdAuronSuccess,
+				BtlOdAuronState,
+				BtlOdAuronSeqIndex,
+				BtlOdAuronSeqLen,
+				BtlOdAuronSeqPtr,
+				BtlOdTidusSuccess,
+				BtlOdTidusState,
+				BtlOdTidusTrackLeft,
+				BtlOdTidusTrackWidth,
+				BtlOdTidusZoneLow,
+				BtlOdTidusZoneHigh,
+				BtlOdTidusZoneAndBarPos,
+				BtlOdTidusBarVel,
+				BtlOdLuluState,
+				BtlOdLuluGaugeMax,
+				BtlOdLuluGauge,
+				BtlOdLuluRotCount,
+				BtlOdLuluHitCount,
+				BtlOdLuluQuadrantRing,
+				BtlOdLuluRingCount,
+				BtlOdLuluHitThresholdTable,
+				BtlOdWakkaReelsActive,
+				BtlOdTidusSwingBarMinigame,
+				BtlOdTidusLaunch,
+				BtlOdTidusReset,
+				BtlOdDrawTidusBar,
+				BtlOdAuronButtonSeqMinigame,
+				BtlOdAuronLaunch,
+				BtlOdAuronReset,
+				BtlOdDrawAuronSeq,
+				BtlOdLuluLaunch,
+				BtlOdLuluReset,
+				BtlOdDrawLuluGauge,
+				BtlOdWakkaReelsBegin,
+				BtlOdWakkaReelsEnd,
+				BtlOdWakkaReelsStopCue,
+				BtlOdWakkaReelsDraw,
+				BtlOdWakkaReelsIsCuePlaying,
+				BtlOdWakkaReelsGetStrip,
+				BtlOdWakkaReelsGetLevel,
+				BtlOdWakkaReelsPostDone,
+				BtlOdSetPhaseIdle,
+				BtlOdSetPhaseArmed,
+				BtlOdSetPhaseRunning,
+				BtlOdSetPhaseArmedDup,
+				BtlOdIsGoodCuePlaying,
+				BtlOdPlayGoodCue,
+				BtlOdSetHudPos,
+				BtlOdDrawTimerHud,
+				BtlOdPressCircleGate,
+				BtlOdArmPressCircleGate,
+				BtlOdPressCircleGateState,
+				BtlOdAuronTimeBudgets,
+				BtlOdAuronSequences,
+				BtlOdTidusTimeBudgets,
+				BtlOdGetAuronSequence,
+				BtlOdGetAuronBudget,
+				BtlOdGetLuluBudget,
+				BtlOdGetTidusZoneWidth,
+				BtlOdGetTidusBarSpeed,
+				BtlOdGetTidusBudget,
+				BtlOdLoadLuluRotationTable,
+				BtlOdLuluRotFamilyIndex,
+				BtlOdGetLuluMagicStat,
+				BtlOdParseThresholdString,
+				BtlMenuPageLoopHeadSite,
+				BtlMenuInstallPageCallbacks,
+				BtlMenuInstallPageLayout,
+				BtlMenuSetPageKindForCommand,
+				BtlMenuDrawRoot,
+				BtlMenuStep4Kind0,
+				BtlMenuStep4KindCommon,
+				BtlMenuStep4Kind5,
+				BtlMenuStep4Kind7,
+				BtlMenuStep4KindA,
+				BtlMenuStep4KindC,
+				BtlMenuStep4KindD,
+				BtlMenuStep4Kind14,
+				BtlMenuStep4Kind15,
+				BtlMenuPageLockoutConst,
+				BtlMenuPageLockoutKind0Const,
 				BtlRunAiAndCommit,
 				BtlAiStagedCmd,
 				BtlAiScriptActorCtx,

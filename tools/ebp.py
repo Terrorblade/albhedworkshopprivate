@@ -127,7 +127,16 @@ VARIABLE DESCRIPTOR (8 bytes; FFX_Atel_ResolveVarAddress 0x86C2E0)
                                4  atel + off + actorDef[0x30]
                                5  actor + 0x48 + off  (the register block)
                                6  atel + off + atel[0x20]
-                bits 0..24   byte offset within that class
+                bit  24      a separate flag, NOT part of the offset
+                bits 0..23   byte offset within that class
+
+              The offset is 24 bits, not 25. FFX_Atel_ResolveVarAddress masks the
+              descriptor with 0xF0FFFFFF in all eight places it touches it, which
+              clears bit 24 along with the class bits, and it reads the class with
+              'shr eax,25; and eax,7'. With a 25-bit mask 1,476 of the 3,281
+              class-0 descriptors across the 397 packages land outside the
+              0x2000-byte ScriptWork region they index. With 24 bits all of them
+              fit.
   +0x04  u16  element count (bounds check for the indexed forms)
   +0x06  u16  unknown                                                   [unk]
 
@@ -793,7 +802,7 @@ def cmd_vars(src, ref):
     for i, desc, cnt, unk in rows:
         print("%-5d 0x%08X %-5s %-9s 0x%-8X %-6d 0x%04X"
               % (i, desc, tys.get(desc >> 28, "?%d" % (desc >> 28)),
-                 cls.get((desc >> 25) & 7, "?"), desc & 0x1FFFFFF, cnt, unk))
+                 cls.get((desc >> 25) & 7, "?"), desc & 0xFFFFFF, cnt, unk))
 
 
 def cmd_consts(src, ref):

@@ -502,7 +502,10 @@ namespace ffx
 		// be reported as a divergence.
 		kBucketCheckpoint,
 		kBucketProgress,   // +0x00C0 .. +0x3D0C
-		kBucketConfig,     // +0x3D0C .. +0x3ECC, includes gil and the party
+		// Named Config for historical reasons. It is mostly NOT config: the kernel
+		// "conf" block is 0x84 bytes of the 448, the rest is gil, the party arrays and
+		// 256 bytes of world event flags. Reported as "PartyGilFlags".
+		kBucketConfig,     // +0x3D0C .. +0x3ECC
 		kBucketInventory,  // +0x3ECC .. +0x41CC
 		kBucketItemMasks,  // +0x41CC .. +0x420C, menu state
 		kBucketMonsters,   // +0x420C .. +0x448C, capture counts and the bestiary

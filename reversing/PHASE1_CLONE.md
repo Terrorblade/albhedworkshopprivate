@@ -161,6 +161,32 @@ Five independent confirmations:
 The shipped code to copy is `FFX_Field_ChrRegTask 0x861850` (the `"CHRREG"` boot task) and, shorter,
 `FFX_Ch_DebugSpawnByName 0x8295E0`.
 
+**A third precedent, found 2026-10-04: the magic DLLs allocate characters too.** Entry 0 of
+`g_ffxMagicHostApiTable` is `FFX_Ch_Allocate 0x824F90`, and **28 of the 581 shipped effect DLLs call
+it, at 47 call sites.** So this is not a path that only boot code and a debug command use. Verified
+byte-exact rather than taken from a scanner, in `magic_0162.dll` at `.text+0x1DB0`:
+
+    a1 8c a2 10 10    mov  eax, [1010A28Ch]    ; the DLL's copy of the host table pointer
+    56                push esi
+    8b 00             mov  eax, [eax]          ; host entry 0, FFX_Ch_Allocate
+    68 11 30 00 00    push 3011h               ; category 3 "sum", model 17
+    ff d0             call eax
+
+This was invisible until now because `tools/magicdll.py`'s call matcher only recognised
+`mov reg,[reg+disp32]` with mod=10, so `8b 00` (mod=00, entry 0) and every `8b 40 xx` disp8 entry
+below 32 were reported as zero calls. `FFX_GAME_NOTES.md` carried the resulting claim that "not a
+single call to any of indices 0-32" exists. 38 of the 39 entries 0..38 are called, only entry 2 is
+untouched.
+
+**What this does NOT establish.** Whether those DLL calls happen on the overlay-step path, which
+would mean retail code allocates a character from inside `FFX_MainStep`'s sub-step loop, is open.
+`FFX_Magic_CallOverlayStep 0x787E00` does call overlay slot 3 from inside that loop, and the slot-0
+call sites sit in a function at `magic_0162.dll+0x10002A80`, but a direct `E8` call graph from the
+four overlay entry points reaches only four functions and not that one, so the DLL dispatches
+indirectly and this method cannot answer it. Treat the timing as unproven. What is proven is the
+weaker and still useful thing: allocating a character through this function is something shipped
+non-boot code does, 47 times.
+
 ```c
 // once per map, after the "DONE" boot task has run
 if (g_ffxChrArray == 0) return;                      // pool not up yet

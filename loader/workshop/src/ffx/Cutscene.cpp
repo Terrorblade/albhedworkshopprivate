@@ -25,6 +25,12 @@ namespace ffx
 		using workshop::ModuleAddress;
 		using workshop::Readable;
 
+		// The layout of one entry in an ATEL syscall library table, which is the
+		// same for all 20-odd libraries. Only the poll slot is used here, and the
+		// table itself is Rva::AtelMovieLibTable.
+		const DWORD atelSysFuncEntryBytes = 16;
+		const DWORD atelSysFuncPollSlot = 4;
+
 		// ---------------------------------------------------------------------------
 		// Typed access to one global, with the Readable check that keeps a bad read off
 		// the frame path. Same three helpers MainLoop.cpp uses, kept local so the two
@@ -82,6 +88,7 @@ namespace ffx
 
 		int closeWindowVerdict = 0;
 		int allowCatchUpVerdict = 0;
+		int decoderBusyVerdict = 0;
 
 		bool Callable(DWORD rva, int* cachedVerdict, const char* what)
 		{
@@ -215,6 +222,115 @@ namespace ffx
 		// belonging to whoever calls it, because an edge cannot have two owners.
 		bool fmvWasPlaying = false;
 		bool fmvEdgeInitialised = false;
+
+		// ---------------------------------------------------------------------------
+		// THE FMV BARRIER HOOK.
+		//
+		// Four pointers in the ATEL Movie library's table, swapped for shims. No code
+		// is patched, which is why this needs no prologue bytes and no trampoline: the
+		// table is plain writable .data and the original pointer is simply kept.
+		//
+		// A returned 0 has none of FFX_Atel_SysFuncPoll's status bits set, so the
+		// script stays parked on the opcode and the poll is called again next step.
+		// That is exactly what the engine's own waits return while a movie plays, so
+		// withholding is not a new state for the VM to be in.
+		// ---------------------------------------------------------------------------
+		typedef int(__cdecl* AtelPollFn)(int actor, int script);
+
+		struct FmvWaitSlot
+		{
+			int movieFunction;      // the Movie library function index
+			AtelPollFn original;    // what the table held before we swapped it
+			AtelPollFn replacement; // what we put there
+			bool installed;
+		};
+
+		FmvWaitGateFn fmvWaitGate = NULL;
+		volatile LONG fmvWaitsWithheld = 0;
+		volatile LONG fmvWaitLastSlot = -1;
+
+		AtelPollFn* FmvWaitPollSlot(int movieFunction)
+		{
+			BYTE* table = (BYTE*)ModuleAddress(Rva::AtelMovieLibTable);
+			const DWORD offset = (DWORD)movieFunction * atelSysFuncEntryBytes + atelSysFuncPollSlot;
+			AtelPollFn* slot = (AtelPollFn*)(table + offset);
+			return Readable(slot, sizeof(AtelPollFn)) ? slot : NULL;
+		}
+
+		// The one place the gate is asked and the one place the counters move.
+		//
+		// IT IS ASKED ON EVERY POLL, not only once the wait has finished, and that is
+		// not an accident. A lockstep gate needs a per-simulation-step tick for the
+		// WHOLE length of a movie, because the thing it has to agree on with the other
+		// machine, a cancel, happens while the movie is still playing. There is no
+		// other hook in this kit that fires once per step for that window. When
+		// localComplete is false the answer is ignored, because the engine is going to
+		// keep waiting regardless.
+		bool FmvWaitGateAllows(const FmvWaitSlot& slot, bool localComplete)
+		{
+			if (!fmvWaitGate)
+				return true;
+
+			const bool allow = fmvWaitGate(slot.movieFunction, localComplete);
+			if (!localComplete)
+				return false; // nothing to allow yet, and the caller ignores this
+
+			if (allow)
+				return true;
+
+			InterlockedIncrement(&fmvWaitsWithheld);
+			InterlockedExchange(&fmvWaitLastSlot, (LONG)slot.movieFunction);
+			return false;
+		}
+
+		FmvWaitSlot fmvWaitSlots[4];
+
+		// Movie:1. The ONE wait with side effects on its done path, which are clearing
+		// the script's movie flag and a call to sub_63DF30, so the original is never
+		// called speculatively. This mirrors its own test, which is
+		//     if (FFX_Fmv_IsPlaying() || FFX_Fmv_IsDecoderBusy()) return 0;
+		// and then calls the real handler only on the step the gate opens, so those
+		// side effects happen there and nowhere else.
+		int __cdecl FmvWait01Hook(int actor, int script)
+		{
+			FmvWaitSlot& slot = fmvWaitSlots[0];
+			if (!slot.original)
+				return 0;
+
+			const bool complete = !FmvPlaying() && !FmvDecoderBusy();
+			if (!FmvWaitGateAllows(slot, complete))
+				return 0;
+			return slot.original(actor, script);
+		}
+
+		// Movie:9, Movie:10 and Movie:11 have no side effects on either path, so the
+		// original IS the completion test and calling it every step costs nothing and
+		// cannot change anything.
+		int FmvWaitPassThrough(FmvWaitSlot& slot, int actor, int script)
+		{
+			if (!slot.original)
+				return 0;
+
+			const int result = slot.original(actor, script);
+			if (!FmvWaitGateAllows(slot, result != 0))
+				return 0;
+			return result;
+		}
+
+		int __cdecl FmvWait09Hook(int actor, int script)
+		{
+			return FmvWaitPassThrough(fmvWaitSlots[1], actor, script);
+		}
+
+		int __cdecl FmvWait10Hook(int actor, int script)
+		{
+			return FmvWaitPassThrough(fmvWaitSlots[2], actor, script);
+		}
+
+		int __cdecl FmvWait11Hook(int actor, int script)
+		{
+			return FmvWaitPassThrough(fmvWaitSlots[3], actor, script);
+		}
 
 	} // namespace
 
@@ -578,7 +694,13 @@ namespace ffx
 		f.playing = false;
 		f.hasPlayer = false;
 		f.decoderBusy = false;
+		f.playbackComplete = false;
 		f.scriptRunning = false;
+		f.scriptBlocking = false;
+		f.skipRequested = false;
+		f.skipPromptUp = false;
+		f.skipAllowed = false;
+		f.paused = false;
 		f.videoId = -1;
 		f.width = 0.0f;
 		f.height = 0.0f;
@@ -588,16 +710,25 @@ namespace ffx
 		if (ReadGlobal<int>(Rva::FmvScriptRunning, &script))
 			f.scriptRunning = script != 0;
 
-		// FFX_Fmv_GetPlaybackState replicated rather than called, because the game's
-		// version lazily allocates the state object and a read must not do that.
-		// No object yet means nothing is playing, which is state 0.
-		BYTE* state = Singleton(Rva::FmvState, FmvStateLayout::FlagB + 1);
+		int blocking = 0;
+		if (ReadGlobal<int>(Rva::FmvScriptBlocking, &blocking))
+			f.scriptBlocking = blocking != 0;
+
+		BYTE skip = 0;
+		if (ReadGlobal<BYTE>(Rva::FmvSkipRequested, &skip))
+			f.skipRequested = skip != 0;
+
+		// The suspend-state function replicated rather than called, because the
+		// game's version lazily allocates the object and a read must not do that. No
+		// object yet means no overlay is up, which is state 0. And remember what this
+		// value actually means: a user-driven suspend, not a movie. See the header.
+		BYTE* state = Singleton(Rva::FrameSuspendState, FrameSuspendLayout::Cutscene + 1);
 		if (state)
 		{
-			const BYTE* flagA = Field<BYTE>(state, FmvStateLayout::FlagA);
-			const BYTE* flagB = Field<BYTE>(state, FmvStateLayout::FlagB);
-			const int* value = Field<int>(state, FmvStateLayout::State);
-			if (flagA && flagB && (*flagA != 0 || *flagB != 0))
+			const BYTE* overlay = Field<BYTE>(state, FrameSuspendLayout::Overlay);
+			const BYTE* cutscene = Field<BYTE>(state, FrameSuspendLayout::Cutscene);
+			const int* value = Field<int>(state, FrameSuspendLayout::State);
+			if (overlay && cutscene && (*overlay != 0 || *cutscene != 0))
 			{
 				f.playbackState = 2;
 			}
@@ -607,11 +738,16 @@ namespace ffx
 			}
 		}
 
-		BYTE* mgr = Singleton(Rva::FmvPlayerManager, FmvManager::HeightF + sizeof(float));
+		BYTE* mgr = Singleton(Rva::FmvPlayerManager, FmvManager::SkipForbidden + 1);
 		if (mgr)
 		{
 			const BYTE* playing = Field<BYTE>(mgr, FmvManager::IsPlaying);
 			const BYTE* hasPlayer = Field<BYTE>(mgr, FmvManager::HasPlayer);
+			const BYTE* complete = Field<BYTE>(mgr, FmvManager::PlaybackComplete);
+			const BYTE* paused = Field<BYTE>(mgr, FmvManager::Paused);
+			const BYTE* promptUp = Field<BYTE>(mgr, FmvManager::SkipPromptUp);
+			const BYTE* skippable = Field<BYTE>(mgr, FmvManager::SkipAllowed);
+			const BYTE* forbidden = Field<BYTE>(mgr, FmvManager::SkipForbidden);
 			const int* videoId = Field<int>(mgr, FmvManager::VideoId);
 			const float* w = Field<float>(mgr, FmvManager::WidthF);
 			const float* h = Field<float>(mgr, FmvManager::HeightF);
@@ -619,6 +755,14 @@ namespace ffx
 				f.playing = *playing != 0;
 			if (hasPlayer)
 				f.hasPlayer = *hasPlayer != 0;
+			if (complete)
+				f.playbackComplete = *complete != 0;
+			if (paused)
+				f.paused = *paused != 0;
+			if (promptUp)
+				f.skipPromptUp = *promptUp != 0;
+			if (skippable && forbidden)
+				f.skipAllowed = *skippable != 0 && *forbidden == 0;
 			if (videoId)
 				f.videoId = *videoId;
 			if (w)
@@ -631,11 +775,11 @@ namespace ffx
 				f.path = path;
 		}
 
-		// The manager's byte is the authoritative "a video is being played", and the
-		// decode side keeps running for a moment after. Without reaching into the
-		// Phyre player object, "the manager still has a player" is the closest
-		// honest answer for the drain, and it is the conservative one for a barrier.
-		f.decoderBusy = f.hasPlayer && f.playing;
+		// The real decode-queue read this time, rather than the "has a player and is
+		// playing" stand-in the first cut of this used. Three of the four script
+		// movie waits consult exactly this function, so a barrier that wants to agree
+		// with the engine about when a movie is over has to ask the same question.
+		f.decoderBusy = FmvDecoderBusy();
 
 		*out = f;
 		return true;
@@ -643,10 +787,81 @@ namespace ffx
 
 	bool FmvPlaying()
 	{
+		BYTE* mgr = Singleton(Rva::FmvPlayerManager, FmvManager::IsPlaying + 1);
+		const BYTE* playing = Field<BYTE>(mgr, FmvManager::IsPlaying);
+		return playing && *playing != 0;
+	}
+
+	bool FrameSuspended()
+	{
 		FmvState f;
 		if (!ReadFmvState(&f))
 			return false;
-		return f.playbackState == 2 || f.playing;
+		return f.playbackState == 2;
+	}
+
+	bool FmvDecoderBusy()
+	{
+		// Called rather than replicated. It walks the manager's decode slot array,
+		// whose count and base live at manager+4 and manager+0xC, and it finishes with
+		// a test of manager+0x704 whose sense is inverted in a way nobody has
+		// explained. Reproducing that from the disassembly would be guessing at two
+		// fields, and three of the four script movie waits consult this exact
+		// function, so asking the engine is also the only way to be sure the barrier
+		// agrees with it.
+		//
+		// THE ONE REAL HAZARD, and it is why the manager is checked first:
+		// FFX_Fmv_IsDecoderBusy hands FFX_Fmv_GetManager's result straight to a
+		// __thiscall that dereferences it with no null check of its own, and
+		// FFX_Fmv_GetManager returns 0 with a TTY warning before the singleton exists.
+		// So calling this early would fault. No manager means no movie, which is not
+		// busy.
+		BYTE* mgr = Singleton(Rva::FmvPlayerManager, FmvManager::SkipForbidden + 1);
+		if (!mgr)
+			return false;
+
+		if (!Callable(Rva::FmvIsDecoderBusy, &decoderBusyVerdict, "fmv decoder busy"))
+		{
+			// The honest fallback is "not busy", because the alternative would make
+			// every barrier built on this read wait forever.
+			return false;
+		}
+		IntNoArgsFn busy = (IntNoArgsFn)(UINT_PTR)ModuleAddress(Rva::FmvIsDecoderBusy);
+		return busy() != 0;
+	}
+
+	bool FmvPlaybackComplete()
+	{
+		BYTE* mgr = Singleton(Rva::FmvPlayerManager, FmvManager::PlaybackComplete + 1);
+		const BYTE* complete = Field<BYTE>(mgr, FmvManager::PlaybackComplete);
+		return complete && *complete != 0;
+	}
+
+	bool FmvPlaybackFinished()
+	{
+		// FFX_Fmv_PlaybackFinished 0x645DC0, replicated as the two reads it is:
+		//     return mgr[IsPlaying] ? mgr[PlaybackComplete] : 1;
+		// Replicated rather than called because it is two byte reads and calling it
+		// would mean parking another address.
+		BYTE* mgr = Singleton(Rva::FmvPlayerManager, FmvManager::PlaybackComplete + 1);
+		if (!mgr)
+			return true; // no manager means no movie, which reads as finished
+
+		const BYTE* playing = Field<BYTE>(mgr, FmvManager::IsPlaying);
+		if (!playing || *playing == 0)
+			return true;
+
+		const BYTE* complete = Field<BYTE>(mgr, FmvManager::PlaybackComplete);
+		return complete && *complete != 0;
+	}
+
+	bool FmvInProgress()
+	{
+		if (FmvScriptRunning() || FmvScriptBlocking())
+			return true;
+		if (FmvPlaying())
+			return true;
+		return FmvDecoderBusy();
 	}
 
 	bool FmvJustEnded()
@@ -669,6 +884,154 @@ namespace ffx
 		if (!ReadGlobal<int>(Rva::FmvScriptRunning, &script))
 			return false;
 		return script != 0;
+	}
+
+	bool FmvScriptBlocking()
+	{
+		int blocking = 0;
+		if (!ReadGlobal<int>(Rva::FmvScriptBlocking, &blocking))
+			return false;
+		return blocking != 0;
+	}
+
+	bool FmvSkipRequested()
+	{
+		BYTE skip = 0;
+		if (!ReadGlobal<BYTE>(Rva::FmvSkipRequested, &skip))
+			return false;
+		return skip != 0;
+	}
+
+	bool RequestFmvSkip()
+	{
+		BYTE* flag = At<BYTE>(Rva::FmvSkipRequested);
+		if (!flag)
+			return false;
+
+		// Both the global and the manager live in writable .data, so there is nothing
+		// to unprotect, and FFX_Fmv_CreatePlayer resets all of this for the next
+		// movie, so none of it has to be undone.
+		BYTE* mgr = Singleton(Rva::FmvPlayerManager, FmvManager::SkipForbidden + 1);
+		if (!mgr)
+		{
+			// No manager means no movie, which makes this a no-op rather than a
+			// failure, but say false so a caller that was expecting to end something
+			// can log it.
+			return false;
+		}
+
+		// The same writes FFX_Fmv_PollSkipButtons does on the Square press, in the
+		// same order. See the header for which of them actually ends a movie: the
+		// short version is that the flag on its own only ends Movie:11, and clearing
+		// IsPlaying is what ends the other three.
+		int* frameIndex = Field<int>(mgr, FmvManager::FrameIndex);
+		int* framePrev = Field<int>(mgr, FmvManager::FrameIndexPrev);
+		BYTE* stopped = Field<BYTE>(mgr, FmvManager::PresentationStopped);
+		BYTE* suppressed = Field<BYTE>(mgr, FmvManager::StopSuppressed);
+		BYTE* playing = Field<BYTE>(mgr, FmvManager::IsPlaying);
+		BYTE* prompt = Field<BYTE>(mgr, FmvManager::SkipPromptUp);
+
+		if (!frameIndex || !framePrev || !stopped || !suppressed || !playing || !prompt)
+			return false;
+
+		*framePrev = 65534;
+		*frameIndex = 65534;
+		*stopped = 1;
+		*flag = 1;
+
+		// The engine honours this guard, so this does too, even though nothing in the
+		// binary ever sets the byte. If it ever were set, the real button path would
+		// leave the movie playing as well, so matching it is the honest choice.
+		if (*suppressed == 0)
+			*playing = 0;
+
+		*prompt = 0;
+		return true;
+	}
+
+	// ---------------------------------------------------------------------------
+	// The barrier hook
+	// ---------------------------------------------------------------------------
+
+	bool HookFmvWaits(FmvWaitGateFn gate)
+	{
+		fmvWaitGate = gate;
+
+		if (FmvWaitHookInstalled())
+			return true;
+
+		// Filled here rather than as a static initialiser so the function pointers
+		// and the slot numbers are written next to each other and cannot drift.
+		fmvWaitSlots[0].movieFunction = FmvWait::WaitForOpenMovie;
+		fmvWaitSlots[0].replacement = &FmvWait01Hook;
+		fmvWaitSlots[1].movieFunction = FmvWait::WaitFullscreen;
+		fmvWaitSlots[1].replacement = &FmvWait09Hook;
+		fmvWaitSlots[2].movieFunction = FmvWait::PlayAndWait;
+		fmvWaitSlots[2].replacement = &FmvWait10Hook;
+		fmvWaitSlots[3].movieFunction = FmvWait::WaitOrSkip;
+		fmvWaitSlots[3].replacement = &FmvWait11Hook;
+
+		// All four or none. A half-installed barrier would withhold some of the
+		// script's movie waits and not others, which is worse than withholding none
+		// of them: the two machines would then disagree about which waits are gated.
+		for (int i = 0; i < 4; ++i)
+		{
+			AtelPollFn* slot = FmvWaitPollSlot(fmvWaitSlots[i].movieFunction);
+			if (!slot)
+			{
+				Log("cutscene: the ATEL Movie library table is not readable at RVA "
+				    "0x%08X, so the FMV barrier cannot be installed",
+				    Rva::AtelMovieLibTable);
+				return false;
+			}
+			if (*slot == NULL)
+			{
+				Log("cutscene: Movie:%d has no poll handler registered, so this is not "
+				    "the analysed build and the FMV barrier is not being installed",
+				    fmvWaitSlots[i].movieFunction);
+				return false;
+			}
+			if (*slot == fmvWaitSlots[i].replacement)
+			{
+				Log("cutscene: Movie:%d already points at our shim, which should be "
+				    "impossible, refusing rather than losing the original",
+				    fmvWaitSlots[i].movieFunction);
+				return false;
+			}
+			fmvWaitSlots[i].original = *slot;
+		}
+
+		// Second pass writes, so nothing is swapped unless every original was
+		// captured. A pointer write to .data is atomic on x86 and the VM reads the
+		// slot fresh on every poll, so there is no window where a half-written
+		// pointer could be called.
+		for (int i = 0; i < 4; ++i)
+		{
+			AtelPollFn* slot = FmvWaitPollSlot(fmvWaitSlots[i].movieFunction);
+			*slot = fmvWaitSlots[i].replacement;
+			fmvWaitSlots[i].installed = true;
+		}
+
+		Log("cutscene: FMV barrier installed on Movie:1, Movie:9, Movie:10 and "
+		    "Movie:11 poll handlers. With no gate armed every wait completes exactly "
+		    "as the shipped game's does.");
+		return true;
+	}
+
+	bool FmvWaitHookInstalled()
+	{
+		return fmvWaitSlots[0].installed && fmvWaitSlots[1].installed &&
+		       fmvWaitSlots[2].installed && fmvWaitSlots[3].installed;
+	}
+
+	unsigned long FmvWaitsWithheld()
+	{
+		return (unsigned long)fmvWaitsWithheld;
+	}
+
+	int FmvWaitLastSlot()
+	{
+		return (int)fmvWaitLastSlot;
 	}
 
 	// ---------------------------------------------------------------------------
@@ -796,9 +1159,21 @@ namespace ffx
 		FmvState f;
 		if (ReadFmvState(&f))
 		{
-			Log("cutscene: fmv state %d playing %d player %d script %d  video %d  %.0fx%.0f  %s",
-			    f.playbackState, (int)f.playing, (int)f.hasPlayer, (int)f.scriptRunning,
-			    f.videoId, (double)f.width, (double)f.height, f.path ? f.path : "no path");
+			Log("cutscene: fmv playing %d player %d complete %d decoder %d paused %d  "
+			    "video %d  %.0fx%.0f  %s",
+			    (int)f.playing, (int)f.hasPlayer, (int)f.playbackComplete,
+			    (int)f.decoderBusy, (int)f.paused, f.videoId, (double)f.width,
+			    (double)f.height, f.path ? f.path : "no path");
+			Log("cutscene: fmv script %d blocking %d  skip requested %d prompt %d "
+			    "allowed %d  wait hook %s, withheld %lu, last slot %d",
+			    (int)f.scriptRunning, (int)f.scriptBlocking, (int)f.skipRequested,
+			    (int)f.skipPromptUp, (int)f.skipAllowed,
+			    FmvWaitHookInstalled() ? "installed" : "not installed",
+			    FmvWaitsWithheld(), FmvWaitLastSlot());
+			Log("cutscene: frame suspend state %d. That is the action-32 overlay, the "
+			    "Start-button cutscene pause or the debug camera, and NOT an FMV. "
+			    "While it is 2 FFX_MainStep skips the simulation.",
+			    f.playbackState);
 		}
 
 		CameraHandles c;

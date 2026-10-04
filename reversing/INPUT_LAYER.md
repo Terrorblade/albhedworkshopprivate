@@ -534,3 +534,230 @@ mod must read the flag at run time, not assume it. `ffx::ThreadedPadMode()` and
 Second biggest: **the stick-to-dpad synthesis interacting with `stepControl`'s dpad precedence**
 (section 3). It is understood on paper but not tested, and it determines whether injected movement
 comes out analogue or eight-way.
+
+## 9. `FFX_Player__stepControl`, and running it once per player
+
+Everything above is about getting bytes into the game. This section is about the function that turns
+those bytes into movement, because for co-op that function is the whole problem and the whole answer.
+
+`FFX_Player__stepControl 0x82D180` is called from exactly one site in the binary, `0x821010` inside
+`FFX_MainStep`, once per substep, gated on `FFX_Player__getSubStepCount() > 0`. A full cross
+reference sweep confirms the one caller. It drives the single `g_ffxControlledChr`.
+
+### 9.1 The state it keeps
+
+Ten globals in one contiguous span, `0xF00780` to `0xF007AF`, 0x30 bytes:
+
+| Offset | RVA | Name | What it is |
+| --- | --- | --- | --- |
+| +0x00 | `0xF00780` | HeadingOffset | subtracted from the desired heading at the end |
+| +0x04 | `0xF00784` | a debug toggle | `sub_82DB20` flips it 0/1 and has no callers, so it is dead in retail. `stepControl` never reads it |
+| +0x08 | `0xF00788` | ControlledChr | the CHR being driven. Owned by `addresses/Character.h` |
+| +0x0C | `0xF0078C` | DirRampUp | steps by 32, clamps 0..256 |
+| +0x10 | `0xF00790` | DirRampDown | same |
+| +0x14 | `0xF00794` | DirRampRight | same |
+| +0x18 | `0xF00798` | DirRampLeft | same |
+| +0x1C | `0xF0079C` | CamYaw | the camera ANCHOR, see 9.3 |
+| +0x20 | `0xF007A0` | DesiredHeading | `atan2` of the ramps or of the stick |
+| +0x24 | `0xF007A4` | PrevHeading | what the re-anchor test compares against |
+| +0x28 | `0xF007A8` | StickLX | the deadzoned stick byte |
+| +0x2C | `0xF007AC` | StickLY | the deadzoned stick byte |
+
+**The four direction ramps are the movement smoothing.** They accumulate across steps, which is why
+this state is per character by nature while the storage is single slot. That one sentence is the
+whole reason a second player cannot just be handed a pad.
+
+Outside the block and deliberately shared: `g_ffxPlayerWalkSpeed 0xF007B4` (a `float[2]`, indexed by
+`(buttons & 0x40) == 0` so cross selects the slower entry), `g_ffxPlayerSwimSpeed 0xF007BC`,
+`g_ffxPlayerUseFixedYaw 0xF007C4`, `g_ffxPlayerFixedYaw 0xF007C8`, `g_ffxPlayerControlEnabled
+0x8496D8` and `maybe_g_ffxPlayerCtrlMode 0x8496D5`. All script state, so all the same on two
+machines running the same scripts.
+
+### 9.2 What it computes
+
+Reads `g_ffxPlayerAnalogLY 0x1FC44A4` and `g_ffxPlayerAnalogLX 0x1FC44A5` and deadzones them, Y
+centred when `88 < v < 168` and X centred when `89 <= v <= 167`. **Note the deadzone is defined
+against the BYTE**, which is why a replicator has to put the byte on the wire rather than a float:
+a round trip out through a float and back in through `FFX_Pad__axisFloatToByte` truncates twice and
+does not reliably land on the byte it started from.
+
+Then, with `g_ffxControlledChr` non-null and only then, `FFX_Ch_SetFlags1Bit400(chr, 1)`,
+unconditionally, even when control is disabled. Then either the dpad path, which drives the four
+ramps and takes the heading from `atan2` of them, or the analogue path. Then:
+
+```
+speed = (locomotionMode == 2 ? SwimSpeed : WalkSpeed[(buttons & 0x40) == 0]) * deflection / 256
+FFX_Ch_SetMoveSpeed(chr, speed)
+yaw = UseFixedYaw ? FixedYaw : CamYaw
+FFX_Ch_SetMoveDir(chr, -((DesiredHeading - HeadingOffset) - yaw))
+```
+
+When `FFX_Player__isControlEnabled()` is 0 the speed is forced to 0 and the direction is not set,
+but bit 0x400 is still set.
+
+With `g_ffxControlledChr` null it writes the two deadzoned stick globals and returns, which is
+small but not nothing, so a replicator that drives nobody on a step should still call it once.
+
+### 9.3 The camera is an ANCHOR, not the live yaw
+
+This is the part that is easy to get wrong, and getting it wrong replicates perfectly while feeling
+like a different game.
+
+`g_ffxPlayerCamYaw` is written only from the four `FFX_Came_GetYaw` calls inside this function, at
+`0x82D6A9`, `0x82D6E0`, `0x82D6ED` and `0x82D720`. In mode 3, the normal field path, the first of
+those fires only when `|DesiredHeading - PrevHeading|` exceeds 20 degrees and the middle two only in
+graphics states 412 and 544. The fourth is the non-mode-3 path and fires every step. The final line
+reads the anchor.
+
+So in ordinary field movement the yaw your stick is resolved against is the camera as it was **when
+you last turned sharply**, not the camera as it is now. That is the FFX movement everybody knows:
+hold a direction, the camera swings round a corner, and you keep walking the way you were going.
+
+Two functions write the anchor from outside: `FFX_Player__syncCamYaw 0x82D930`, which latches the
+camera and zeroes the offset, and `FFX_Player__setHeadingOffsetDeg 0x82D950`, which latches the
+camera and sets the offset to `wrap(deg * pi / 180) + DesiredHeading`. Each has exactly one caller
+and both are ATEL script opcodes, library 0 functions 63 and 64.
+
+`FFX_Player__setFixedYawDeg 0x82D990` writes the `UseFixedYaw` / `FixedYaw` pair, which replaces
+`CamYaw` in the final line and nowhere else. **It does not replace the camera in the re-anchor
+branches**, so using it to stand in for the camera bypasses the anchor entirely and gives
+continuously camera-relative movement.
+
+### 9.4 Driving N players through it
+
+The anchor state, `CamYaw`, `PrevHeading` and `HeadingOffset`, is all inside the 0x30 block. So once
+the block is swapped per character, the anchoring is already per character. The only thing left that
+is not replicated is the four camera reads. Patch those four and the entire function becomes a pure
+function of the block, the pad globals and the shared script flags.
+
+**It is safe to point at a freshly spawned clone.** The function calls only six character
+functions, `FFX_Ch_AddVerticalVelocity 0x82A890`, `FFX_Ch_GetVertVel 0x82ABB0`,
+`FFX_Ch_SetFlags1Bit400 0x82AAE0`, `FFX_Ch_SetMoveDir 0x82B190`, `FFX_Ch_SetMoveSpeed 0x82B840` and
+`FFX_Ch_GetLocomotionMode 0x833F70`, plus three leaf helpers in its own module. Every one is between
+14 and 46 bytes and **none of them reads `m_data`**, so there is no path here that can fault on a
+character whose data has not loaded. That is checked rather than assumed, because it is the
+difference between needing a readiness guard and not.
+
+That is what `ffx::StepPlayerControlFor` and `pilgrimage::PlayerDrive` do:
+
+1. Patch the one call site at `0x821010` and run a loop instead, one call per player character.
+   Patching the **site** and not the function is what keeps the function callable by address, which
+   the loop needs.
+2. Patch the four camera reads so they answer with the owner's replicated yaw while a character is
+   being driven, and pass through to `FFX_Came_GetYaw` otherwise. All four or none: three patched
+   and one not would diverge in exactly the situations the fourth covers.
+3. Per character: save the live block plus `ControlledChr`, the two analog bytes,
+   `PlayerPadButtons`, `UseFixedYaw` and `FixedYaw`, write that character's state in, call, copy
+   the block back out, restore. Guard the whole set before touching any of it, because a partial
+   swap leaves the engine driving the wrong character with the wrong ramps.
+4. Watch `HeadingOffset` and `CamYaw` for a write from outside, because opcodes 63 and 64 write the
+   live block and under the swap the live block is scratch. Apply such a write to **every** player
+   character: "the player" means up to three of them now, and picking the locally bound one would
+   apply a replicated script's effect to a different character on each machine.
+
+### 9.5 Why the output cannot be transmitted instead
+
+The obvious alternative is to send the heading and the speed rather than the stick. It cannot work
+under delayed-input lockstep. The owner submits input for a step some way ahead of the one it is
+running, so at submit time this function has not run for that step and the owner does not know its
+own heading or speed for it. The inputs go on the wire and both machines run the derivation when
+they get there. That is what forces the state swap rather than making it a preference.
+
+The second alternative is reimplementing the function. The ramps are integers and would replicate
+fine, but the heading is an `atan2` on them and the speed is a float multiply, and matching the
+engine's x87 rounding from different source is a bet with no upside. Calling the real thing costs a
+`memcpy`.
+
+---
+
+## 10. The pad ring staging block, and where to inject
+
+Addresses here are VAs like the rest of this doc. RVA = VA - 0x400000, which is the form the
+`addresses/Input.h` constants use.
+
+A port state is 256 bytes. The first 128 are a **four entry ring** of 32 byte samples and the
+**staging area** starts at `+0x80`. Both ports sit in `g_ffxPadPortState 0x1330288`.
+
+### 10.1 The commit path
+
+`FFX_Pad__commitAllPorts 0x8893E0` is the whole cadence. It loops ports 0 and 1 calling
+`FFX_Pad__getPortBuffer 0x888E10` and then `FFX_Pad__commitRingSlot 0x889790` for each, so one call
+advances both ports by exactly one ring entry.
+
+`FFX_Pad__commitRingSlot(port, slot)` advances the cursor at `portState+0x9C` with
+`cursor = (cursor + 1) & 3` at `0x8897CA`, then fills the new entry out of the staging bytes and the
+previous entry:
+
+| ring offset | what | derived from |
+|---|---|---|
+| +0x00 | status | staging +0x80 |
+| +0x01 | mode | staging +0x81 |
+| +0x02, +0x04 | the held mask, twice | staging +0x98 |
+| +0x06 | pressed | `held & (held ^ prevHeld)`, computed at `0x889846` |
+| +0x08 | released | `prevHeld & (held ^ prevHeld)` |
+| +0x0A | auto repeat A | `FFX_Pad__stepAutoRepeatAllGroups 0x889940`, called at `0x889867`. **WALL CLOCK** |
+| +0x0C..+0x1B | 16 analog bytes | copied straight out of staging +0x84 |
+| +0x1C | auto repeat B | the same function, group 1. **WALL CLOCK** |
+| +0x1E | second held word | staging +0x9A carried through |
+
+Staging `+0x81` is a mode selector. 1 builds a fresh entry as above, 2 copies the previous entry over
+the new one with a 32 byte `qmemcpy` and zeroes the edge words. Staging `+0x9E` being zero makes the
+commit call `FFX_Pad__clearRingSlot 0x888970` on the new entry afterwards.
+
+`+0x0A` and `+0x1C` are the **only** two words in a ring entry that a clock touches. Everything else
+is integer arithmetic over the staging bytes and the previous entry.
+
+### 10.2 Reading it back
+
+`FFX_Pad__getRingSlot 0x888B60` is
+
+    portState + 32 * ((lag + portState[0x9C]) & 3)
+
+It takes the **port state pointer**, not a port index. `lag` 0 is the sample just committed and -1
+the one before it. It is the third argument of `FFX_Pad__getReadBuffer 0x888B80` and therefore the
+last argument of `readButtons16`, `readPressed16`, `readWord10` and `readWord28`, and the fourth of
+`readAnalogByte`. `FFX_Pad__readStagingAnalogByte 0x888C00` skips the ring and reads
+`portState[0x84 + axis]` live.
+
+### 10.3 Why this is the injection point
+
+Write the held word at staging `+0x98` and the 16 analog bytes at staging `+0x84`, then let the
+commit derive everything else. Pressed, released and the analog copy are pure integer math over the
+previous entry, so two peers fed the same staging bytes for the same number of commits produce bit
+identical `+0x02`, `+0x04`, `+0x06` and `+0x08`.
+
+That is cleaner than the three alternatives:
+
+- Writing ring entries directly means deriving the edge words yourself and keeping the cursor right.
+- The menu pad block at `0x25D09C0` is downstream, so battle, the atel VM and the menu system each
+  need separate handling, and two of the words in it are wall-clock auto repeat.
+- Writing the `FFX_Input` singleton before animate works, but it goes through the one global mask
+  that has no port argument, so port 1 stays a clone of port 0.
+
+Everything above the ring already reads through the two port API, so none of it needs changing.
+
+### 10.4 The cadence, which is the part to get right
+
+`FFX_Pad__commitAllPorts` has exactly three callers.
+
+| caller | VA of the call | when |
+|---|---|---|
+| `FFX_MainStep` | `0x820BA3` | once per frame, before the sub step loop at `0x820FFA` |
+| `FFX_StepPacing` | `0x82221F` | the other arm of the same if/else |
+| `FFX_BtlMenu_Step` | `0x89AE65` | once per **sub step**, gated on `g_ffxThreadedPadMode` |
+
+The first two are the two arms of one if/else at `0x820B90`, `cmp g_ffxMenuSysRunningAlt, 0 / jnz`,
+so between them the commit runs once per frame. The third only runs while `g_ffxThreadedPadMode` is
+set, and in the overdrive family only Lulu's Fury stick minigame sets it, at `0x891C7E`, clearing it
+again at `0x891FD8`.
+
+So the ring advances once per frame normally and once per sub step during Lulu's Fury. An injector
+has to advance it the same number of times on both peers, because the overdrive minigames read lag
+-1 as well as lag 0.
+
+### 10.5 The remap layer is identity, do not chase it
+
+`FFX_Pad__mapButtonCode 0x888CF0` returns codes 0..3 unchanged and `FFX_Pad__remapButtonMask
+0x888C40` is an identity lookup through `g_ffxPadButtonRemapTable 0x1330488`, whose only writer is
+`FFX_Pad__resetPort 0x889360` writing the identity back. `FFX_Pad__setButtonRemapEntry 0x8894F0` has
+one caller. Nothing in the retail build ever changes a mapping.

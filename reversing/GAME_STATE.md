@@ -26,6 +26,13 @@ That document's "Game state globals" table was the starting point. Scoring it:
 - `g_ffxCharNames` +0x634C, 18 x 20 bytes.
 - `g_ffxEquipStatBonus 0x1135E00`, 8 x 28 bytes.
 - `party_data` block +0x3D0C 0x1C bytes, kernel table 31 at +0x3D28, `conf` block +0x3D48 0x84 bytes.
+  Note the bucket covering this range was called "Config" and is now `PartyGilFlags`, because `conf`
+  is only 0x84 of its 448 bytes. The rest is `g_ffxGil` (+0x3D48), the party arrays
+  (`g_ffxFieldPartyChars01` +0x3D58, `g_ffxPartyMemberIds` +0x3D8C, `g_ffxPartyMemberFlags` +0x3D9C)
+  and **256 bytes of world event flags**: `g_ffxWorldFlagBits3DCC` and `g_ffxWorldFlagBits3E4C`, two
+  1,024-bit arrays. The first is the most script-written region in the save block. The second is dead
+  in this build, its only accessor `sub_785260` has zero callers. So a divergence reported in this
+  bucket is most likely a world event flag, not a setting.
 
 **Corrected.**
 
@@ -311,15 +318,37 @@ which must be below 0x80, and the id space observed at the call sites is 0xA000-
 The three blocks between the item masks and the key item flags are the Monster Arena and bestiary
 state, which is worth naming because the co-op model has to decide whether capture counts are shared.
 
-- `g_ffxMonsterCaptureCounts saveData+0x420C` = `0x1130C9C`, BYTE[512] indexed by
-  `(monsterId & 0xFFF)`, value clamped 0..10. That cap of 10 is exactly the Monster Arena's capture
-  requirement per species. `FFX_SaveData_GetCaptureCount 0x790AF0`,
-  `FFX_SaveData_AddCaptureCount 0x790B90`, and `FFX_SaveData_TryCapture 0x790B30` which picks
-  message id 0x300A (captured), 0x300B (already have ten) or 0x300C (cannot capture).
+- `g_ffxMonsterCaptureCounts saveData+0x420C` = `0x1130C9C`, BYTE[512], value clamped 0..10. That
+  cap of 10 is exactly the Monster Arena's capture requirement per species.
+  `FFX_SaveData_GetCaptureCount 0x790AF0`, `FFX_SaveData_AddCaptureCount 0x790B90`, and
+  `FFX_SaveData_TryCapture 0x790B30` which picks message id 0x300A (captured), 0x300B (already have
+  ten) or 0x300C (cannot capture).
+
+  **CORRECTED: the index is a capture species index 0..138, not a monster id.** This entry used to
+  say `(monsterId & 0xFFF)`. The mask is right and the name was not, which matters because the two
+  values live side by side on the battle unit and a patch that writes by monster id hits the wrong
+  byte for nearly every fiend. The accessors do mask with `& 0xFFF`, but look at what the only caller
+  passes, in `FFX_Btl_OnUnitDefeated`:
+
+  ```
+  movzx eax, word ptr [esi+0Eh]     ; the TYPE ID, for the bestiary bit
+  call  FFX_SaveData_MarkMonsterBit
+  movzx eax, word ptr [esi+6D6h]    ; the CAPTURE SPECIES INDEX, for the count
+  cmp   byte ptr [esi+0DD0h], 0     ; the per-monster "can be captured" flag
+  jz    short skip
+  push  eax
+  push  edi
+  call  FFX_SaveData_TryCapture
+  ```
+
+  Two different fields two instructions apart. The species index comes out of the monster's own
+  shipped file, and `reversing/MONSTER_ARENA.md` has the 139-row species table and the arena roster
+  at `[104..138]`.
 - `g_ffxMonsterSeenMask saveData+0x440C` = `0x1130E9C`, 512 bits. `FFX_Btl_SetupUnitRoster` sets a
   bit here for every enemy type it spawns, so this is the bestiary "encountered" list.
-- `g_ffxMonsterMask2 saveData+0x444C` = `0x1130EDC`, a second 512-bit mask with the same bit math.
-  Which of the two is "seen" and which is "defeated" I did not establish.
+- `g_ffxMonsterDefeatedMask saveData+0x444C` = `0x1130EDC`, 512 bits, same bit math. **Settled:**
+  this is the defeated list. `FFX_Btl_OnUnitDefeated` marks the victim's type id here at `0x78C80C`,
+  when a monster actually dies. The earlier text said which was which had not been established.
 
 ### The chest reward path
 
@@ -458,7 +487,7 @@ equipment array changed". The buckets the header implements, each one contiguous
 | Header | +0x0000 .. +0x00B8 | 184 |
 | MapId | +0x00B8 .. +0x00BC | 4 |
 | Progress | +0x00C0 .. +0x3D0C | 15,436 |
-| Config | +0x3D0C .. +0x3ECC | 448 |
+| PartyGilFlags | +0x3D0C .. +0x3ECC | 448 |
 | Inventory | +0x3ECC .. +0x41CC | 768 |
 | ItemMasks | +0x41CC .. +0x420C | 64 |
 | Monsters | +0x420C .. +0x448C | 640 |

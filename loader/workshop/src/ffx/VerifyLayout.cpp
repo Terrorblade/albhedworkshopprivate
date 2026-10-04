@@ -39,6 +39,8 @@ namespace ffx
 			{ "encounter", &Rva::EncounterRvaList },
 			{ "world state", &Rva::WorldStateRvaList },
 			{ "battle", &Rva::BattleRvaList },
+			{ "minigames", &Rva::MinigamesRvaList },
+			{ "magic dll", &Rva::MagicDllRvaList },
 			// Add new areas here, one line each, after adding the include to
 			// include/ffx/Addresses.h.
 		};
@@ -72,6 +74,12 @@ namespace ffx
 			{ "ChGetPlayerChr", Rva::ChGetPlayerChr },
 			{ "ChWalkmeshMove", Rva::ChWalkmeshMove },
 			{ "ChSetGroundMode", Rva::ChSetGroundMode },
+			// The player driver and the camera read it anchors to, both called through a
+			// pointer by ffx::StepPlayerControlFor. The driver's CALL SITE and the four
+			// camera call sites are deliberately NOT here: they are mid-function
+			// addresses and would fail a prologue check for being exactly right.
+			{ "PlayerStepControl", Rva::PlayerStepControl },
+			{ "PlayerCameGetYawThunk", Rva::PlayerCameGetYawThunk },
 			{ "InputGet", Rva::InputGet },
 			{ "InputPoll", Rva::InputPoll },
 			{ "InputSetPollOverride", Rva::InputSetPollOverride },

@@ -227,6 +227,10 @@ namespace workshop
 		void SendHeartbeat();
 		void SendReject(int transportPeer, uint8_t reason, uint32_t hostValue);
 
+		// Raises EventSessionStarted / Stopped and EventPeerJoined / Left on the
+		// workshop event bus. Edge triggered, so calling it twice costs nothing.
+		void PublishLifecycle();
+
 		void TrackSequence(uint8_t sender, uint32_t sequence);
 		void DropQuietPeers();
 		int ClaimPeerSlot(int transportPeer);
@@ -242,6 +246,10 @@ namespace workshop
 		char localName[24];
 
 		PeerInfo peers[MaxPlayers];
+
+		// What the event bus has been told so far, so PublishLifecycle can diff.
+		bool lifecycleActive;
+		unsigned lifecyclePeerMask;
 
 		// Maps a session peer id to the transport peer index it is reachable on.
 		// They are not the same thing: the host is session peer 0 but, from a

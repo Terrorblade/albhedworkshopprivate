@@ -12,8 +12,8 @@
 #include "diag/HashProbe.h"
 #include "diag/InteractProbe.h"
 #include "diag/SpawnWatch.h"
-#include "ffx/AnimateHook.h"
 #include "ffx/Character.h"
+#include "ffx/Hub.h"
 #include "ffx/Layout.h"
 #include "ffx/MainLoop.h"
 #include "ffx/RenderProbe.h"
@@ -25,11 +25,18 @@
 #include "menu/PauseSync.h"
 #include "net/LockstepLink.h"
 #include "net/NetLink.h"
+#include "workshop/Events.h"
 #include "workshop/Log.h"
+#include "workshop/Overlay.h"
 #include "world/TriggerPass.h"
 #include "battle/BattleSync.h"
 #include "world/BoosterSync.h"
 #include "world/DialogueSync.h"
+#include "world/FmvSync.h"
+#include "world/HeldObjects.h"
+#include "world/MinigameSync.h"
+#include "world/PlayerDrive.h"
+#include "world/RemotePlayers.h"
 #include "world/WorldSync.h"
 
 namespace pilgrimage
@@ -155,9 +162,19 @@ namespace pilgrimage
 				LogBoosterSync();
 				LogBattleSync();
 				LogDialogueSync();
+				LogFmvSync();
+				LogHeldObjects();
 				LogMenuSync();
 				LogCoopConfig();
 				LogPauseSync();
+
+				// The driver and the bodies it drives, last, because they are the thing
+				// every line above is ultimately trying to keep in agreement.
+				LogPlayerDrive();
+				LogMinigameSync();
+				LogRemotePlayers();
+				workshop::LogOverlay();
+				LogHub();
 			}
 
 			// The host's menu control override. Refused with a log line on a client and
@@ -201,14 +218,18 @@ namespace pilgrimage
 			}
 		}
 
-		int __fastcall AnimateHook(void* self, void* unusedEdx)
+		void OnFrame(const workshop::Event& event, void*)
 		{
-			// Run the game first, so we are writing into characters the engine has already
-			// stepped this frame, and so a fault in our code cannot stop the game from
-			// having run. The result is returned unchanged, which is not optional.
-			const int result = OriginalAnimate()(self, unusedEdx);
+			void* const self = event.pointer; // the FFXApplication, see ffx/Hub.h
 
+			// The hub has already run the engine's own animate by the time this is
+			// raised, so we are writing into characters the engine stepped this frame.
 			const LONG frame = InterlockedIncrement(&counters.frames);
+
+			// Records which thread the game steps on. The overlay draws on whoever
+			// calls Present, and this is how a panel can tell whether that is the same
+			// thread before it calls an engine function.
+			workshop::NoteOverlayGameThread();
 
 			if (GameHasFocus())
 				PollHotkeys();
@@ -239,6 +260,30 @@ namespace pilgrimage
 			// game's own Config row table back when a session ends can only happen
 			// here. See the note in menu/CoopConfig.h.
 			ServiceCoopConfigStep();
+
+			// Housekeeping and the readout only. Every decision the FMV barrier makes is
+			// made on the simulation step, inside the gate the kit's wait shim calls, for
+			// the same reason the held-object command half lives there: the step is the
+			// only place an ordered command can be consumed on the exact step it was
+			// stamped for.
+			//
+			// This half exists because a session can go away while a script is parked,
+			// and the thing that would normally release it is a command from a peer that
+			// is no longer there. The frame path still runs then, so this is where the
+			// state gets dropped. It also keeps the control panel line current.
+			StepFmvSync();
+
+			// SOLO ONLY. The gate in net/LockstepLink.cpp owns this during a session,
+			// because the command half has to be consumed on the exact step it was
+			// stamped for and a frame-path consumer drops one on every catch-up step.
+			//
+			// But the gate returns early when the clock is not running, so with no
+			// session nothing would keep the census, the hash and the readout alive, and
+			// the whole thing would stop being testable solo. The census half only reads,
+			// so running it per frame is fine. Same split as ServiceCoopConfigStep above,
+			// for the same reason.
+			if (!LockstepRunning())
+				ServiceHeldObjectStep();
 
 			// The Esc menu's pages are built once when its singleton is constructed, so
 			// the row test has to watch for that rather than being able to act when the
@@ -271,15 +316,17 @@ namespace pilgrimage
 				Log("animate #%ld  %ld clones live, driving #%ld  pool %ld/%ld",
 				    frame, LiveCloneCount(), ActiveEntry() + 1,
 				    telemetry.poolLive, telemetry.poolTotal);
-
-			return result;
 		}
 
 	} // namespace
 
 	bool InstallFrameHook()
 	{
-		return HookAnimate(&AnimateHook);
+		// The hub owns the animate slot so that any number of plugins can take the
+		// frame, rather than the last one to hook winning. See ffx/Hub.h.
+		if (!StartHub())
+			return false;
+		return workshop::Subscribe(workshop::EventFrame, &OnFrame) != 0;
 	}
 
 } // namespace pilgrimage

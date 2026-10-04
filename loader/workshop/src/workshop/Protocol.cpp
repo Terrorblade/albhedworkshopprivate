@@ -31,6 +31,8 @@ namespace workshop
 			return "world snapshot";
 		case MessageWorldApplied:
 			return "world applied";
+		case MessageRandomState:
+			return "RandomState";
 		case MessageWorldAnchor:
 			return "world anchor";
 		default:

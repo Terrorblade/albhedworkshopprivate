@@ -31,7 +31,7 @@
 //   clones/     which clones exist, how one is made, and how input drives it
 //   diag/       dumps and watches, for when a spawn looks wrong
 //   hooks/      the per-frame body and the hotkeys
-//   ui/         the control panel, on its own thread
+//   ui/         the control panel, an ImGui panel on the workshop overlay
 //   ModState.h  the state those share, split by which thread owns it
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -53,13 +53,17 @@
 #include "net/LockstepLink.h"
 #include "world/EncounterSync.h"
 #include "world/RemotePlayers.h"
+#include "world/MinigameSync.h"
+#include "world/PlayerDrive.h"
 #include "world/DialogueSync.h"
+#include "world/FmvSync.h"
+#include "world/HeldObjects.h"
 #include "world/TriggerPass.h"
 #include "hooks/Hotkeys.h"
 #include "hooks/VisibilityDetour.h"
 #include "workshop/HostModule.h"
 #include "workshop/Log.h"
-#include "ui/ControlPanel.h"
+#include "ui/OverlayPanel.h"
 
 #if !defined(_M_IX86)
 #error "AlBhedWorkshop plugins must be 32-bit x86."
@@ -141,6 +145,27 @@ namespace pilgrimage
 			ResetRemotePlayers();
 			ResetTriggerPass();
 
+			// The RNG state and the three bytecode swap flags, neither of which the save
+			// block carries. Not fatal: without it a joiner draws different numbers from
+			// the host until something reseeds.
+			if (!InstallMinigameSync())
+				Log("minigame sync is off, so the RNG state will not be sent to a joiner "
+				    "and the bytecode swap flags will not be checked");
+
+			// Takes over the engine's single player driver so that every player
+			// character, this machine's own included, is moved by that same function from
+			// replicated bytes. Installed unconditionally and it passes straight through
+			// with no clock, so a solo game runs the shipped code path.
+			//
+			// Not fatal, and this is the one failure that costs the most. Without it the
+			// character this machine owns is computed here by the engine and on the other
+			// machine by the mod, which is a position disagreement that grows the whole
+			// time anybody is walking. RemotePlayers keeps its old approximate drive for
+			// exactly this case.
+			if (!InstallPlayerDrive())
+				Log("the player this machine owns will be driven differently from how the "
+				    "other machine drives it, so positions will drift while walking");
+
 			// Not fatal. Without it a remote player's walking does not count toward a
 			// random battle, and the engine behaves exactly as the shipped game does.
 			if (!InstallEncounterSync())
@@ -153,6 +178,37 @@ namespace pilgrimage
 			if (!InstallDialogueSync())
 				Log("message boxes will not be driven by replicated input, so talking to "
 				    "anything in a session is a divergence");
+
+			// The FMV barrier, on the four ATEL Movie wait handlers. Installed
+			// unconditionally and invisible with no session, because the gate lets every
+			// wait complete the way the shipped game does until a session starts.
+			//
+			// Not fatal, and the consequence is specific. A movie ends when each
+			// machine's own decode thread finishes, which is a wall clock event on
+			// hardware the other machine knows nothing about, so without this the two
+			// scripts resume on different simulation steps and stay that far apart for
+			// the rest of the session. That is a permanent divergence on every FMV in
+			// the game, not a hitch, and a skip by one player would only skip their own
+			// copy.
+			if (!InstallFmvSync())
+				Log("FMVs will end on a different simulation step on each machine, which "
+				    "leaves the two scripts permanently out of step, and skipping one "
+				    "will only skip it for the player who pressed the button");
+
+			// The carry census, installed unconditionally because it is read-only and
+			// useful with no session: it is how the "a carried object is a bone parent"
+			// finding can be re-checked in a solo game.
+			//
+			// Not fatal, and the consequence is narrower than it looks. The carry itself
+			// does not need us at all, because the engine derives a held object's
+			// transform from its carrier on both machines for free. What is lost is the
+			// hash that would notice the two machines disagreeing about who is holding
+			// what, and the ability to hand an object to the character the player who
+			// picked it up is actually driving.
+			if (!InstallHeldObjects())
+				Log("nothing will be watching who is carrying what, and a carried object "
+				    "will always end up on the game's single bound-player character "
+				    "rather than on whoever picked it up");
 
 			// Installed unconditionally, same reasoning as the dialogue hook: both
 			// callbacks pass straight through until a session starts, so a solo game is
@@ -199,7 +255,13 @@ namespace pilgrimage
 			if (!InstallVisibilityDetour())
 				Log("the force-visible diagnostic (F5) is unavailable without that detour");
 
-			StartControlPanel();
+			// The control panel, drawn in game through the workshop's ImGui overlay.
+			// The swapchain hook goes in on a worker thread, so this returning true
+			// only means it started, not that it worked. Watch for the "overlay:" lines.
+			if (!StartOverlayPanel())
+				Log("the control panel is unavailable, so the co-op settings on the game's "
+				    "own Config screen are the only way to change anything");
+
 			LogPadSlots();
 
 			// The input research left one unknown that only a running game can settle,

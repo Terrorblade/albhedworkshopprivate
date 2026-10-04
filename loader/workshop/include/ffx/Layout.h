@@ -53,9 +53,89 @@ namespace ffx
 		const DWORD GroundMode = 0x182; // byte, m_groundMode. Allocate sets 1.
 		const DWORD Byte183 = 0x183;    // byte, set by category
 		const DWORD PartyIndex = 0x18C; // int
-		const DWORD Flags1 = 0x194;     // dword
-		const DWORD Flags2 = 0x198;     // dword
-		const DWORD Mode19C = 0x19C;    // dword, UpdateRenderJob branches on it
+
+		// m_objId. For a CHR an event script spawned this IS ITS ATEL ACTOR ID, not an
+		// arbitrary group number. FFX_AtelOp_SetActorModel 0x85D000 calls
+		// FFX_Ch_SpawnWithObjId(typeId, actor+0x2E) and actor+0x2E is the actor id every
+		// FFX_Atel_* call takes. FFX_Ch_Allocate sets -1, so a CHR with no actor behind
+		// it reads -1.
+		//
+		// That makes this the only identity on a CHR that means the same thing on two
+		// machines, which is why the carry sync is built on it. See the Carry block below.
+		const DWORD ObjId = 0x190; // int, the ATEL actor id or -1
+
+		const DWORD Flags1 = 0x194; // dword
+		const DWORD Flags2 = 0x198; // dword
+
+		// ---------------------------------------------------------------------------
+		// THE CARRY LINK. How FFX attaches a held or carried object to its carrier, and
+		// the answer is a plain bone parent with no physics and no per-frame script
+		// write. Proved in FFX_Ch_BuildSkinMatrices 0x832760: when m_parent is set, that
+		// function derives the child's world matrix at m_rootJoint[8] from the PARENT's
+		// world matrix, the parent's joint palette, m_parentJoint and m_attachOffset, and
+		// reads neither the child's position nor its rotation.
+		//
+		// Two consequences worth stating here rather than in a design doc.
+		//
+		// One, a carried object needs NO transform replication at all. Both machines hold
+		// the same carrier and the same four fields below, so both derive the same child
+		// transform for free.
+		//
+		// Two, m_pos of a carried object GOES STALE. Nothing writes it while the object
+		// is parented, so it keeps the position it had when it was picked up. Anything
+		// that wants where a held object actually is has to read the bone world position,
+		// not m_pos. See ffx::BoneWorldPosition.
+		//
+		// Written by the three attachers, FFX_Ch_AttachToParentBone 0x832630,
+		// FFX_Ch_AttachToParentJoint 0x832680 and FFX_Ch_AttachToParentOffset 0x8326E0.
+		// ---------------------------------------------------------------------------
+
+		// m_parent. A RAW CHR POINTER, so it is not stable across a map transition and
+		// must never go on a wire. FFX_Ch_OrphanChildren 0x826150 clears it on every
+		// child when a carrier is disposed, and does NOT clear ParentUid.
+		//
+		// An older note in this file called this Mode19C and said UpdateRenderJob
+		// branches on it. It does branch on it, but what it is branching on is "do I
+		// have a parent", so the name was hiding the field.
+		const DWORD Parent = 0x19C; // Character *, NULL when not carried
+
+		// Joint node index on the PARENT's skeleton. Meaningless on any other skeleton,
+		// so a re-parent across two different characters has to translate through the
+		// logical bone id rather than copying this. See ffx::BoneIdForJoint.
+		const DWORD ParentJoint = 0x1A0; // int
+
+		// float[4], the offset in the parent joint's frame. The w slot is always 1.0.
+		const DWORD AttachOffset = 0x1A4;
+
+		// The ATTACH SCALE, and it is the fifth field of the carry block rather than
+		// general purpose. Its ONLY reader anywhere in the Ch family is the parented
+		// branch of FFX_Ch_BuildSkinMatrices, where it becomes the diagonal of the
+		// scale matrix applied to the parent joint before the child's world matrix is
+		// composed. On an unparented character it does nothing.
+		//
+		// FFX_Ch_Allocate sets 1.0, so the default is neutral. Written otherwise by the
+		// battle unit setup and by one script command, both replicated, so a mod has
+		// nothing to do about it. Named FFX_Ch_SetAttachScale 0x832610 in the IDB.
+		const DWORD AttachScale = 0x1B4; // float
+
+		// The carrier's ObjId, which is to say the carrier's ATEL ACTOR ID. -1 when
+		// unparented. THE ONE READER in the whole Ch family is the tail of
+		// FFX_Ch_CopyState 0x828620, which rebuilds m_parent from it through
+		// FFX_Atel_GetActorChrById. So the engine's own durable name for "who is
+		// carrying this" is an actor id, and that is what the mod puts on the wire.
+		const DWORD ParentUid = 0x1B8; // int
+
+		// CHRDATA *, the loaded character data. The bone point table hangs off it, and
+		// FFX_Ch_LookupBonePoint dereferences it with NO null check, so anything calling
+		// an attach has to test this first.
+		const DWORD CharacterData = 0x1C4; // CHRDATA *
+
+		// m_boneWorldPos, 22 float4s at stride 16. The w slot of each entry is the valid
+		// marker. This is where the real world position of a carried object comes from,
+		// since m_pos is stale while it is held.
+		const DWORD BoneWorldPos = 0x524;
+		const DWORD BoneWorldPosStride = 16;
+		const DWORD BoneWorldPosCount = 22;
 		const DWORD ClipZ = 0x174;      // float, m_clipZ. Allocate sets 50*100.
 		const DWORD CameLength = 0x178; // float, m_cameLen, distance to the camera
 
@@ -74,6 +154,41 @@ namespace ffx
 		const DWORD PartBoneFlag = 0x83C;   // dword, 1 when part bone buffers exist
 
 	} // namespace Chr
+
+	// ---------------------------------------------------------------------------
+	// CHRDATA, the 300 byte loaded character data. Only the bone point table is here,
+	// because that is the only part the carry layer needs.
+	//
+	// Read out of FFX_Ch_LookupBonePoint 0x833A70, which does
+	//     table = *(CHRDATA + 108);  if (!table) return 0;
+	//     count = *(int *)(table + 36);  records = *(void **)(table + 32);
+	// and then walks 16 byte records looking for one whose low 14 bits match the
+	// logical bone id it was asked for.
+	// ---------------------------------------------------------------------------
+	namespace ChrData
+	{
+
+		const DWORD BonePointTable = 108; // void *, NULL on a character with no table
+
+		namespace BonePoint
+		{
+			const DWORD Records = 32; // void *, the record array
+			const DWORD Count = 36;   // int
+
+			const DWORD RecordStride = 16;
+
+			// word. Low 14 bits are the logical bone id, high 2 bits are the kind:
+			// 0x0000 a plain joint position, 0x4000 a joint plus a local offset,
+			// 0x8000 a plain node.
+			const DWORD KindAndBoneId = 0;
+			const DWORD BoneIdMask = 0x3FFF;
+			const DWORD KindMask = 0xC000;
+
+			const DWORD JointIndex = 2;  // word, the joint node index
+			const DWORD LocalOffset = 4; // float[3], scaled on the way out
+		} // namespace BonePoint
+
+	} // namespace ChrData
 
 	// ---------------------------------------------------------------------------
 	// m_flags1 bits, the ones that have been identified. The dword is at Chr::Flags1.

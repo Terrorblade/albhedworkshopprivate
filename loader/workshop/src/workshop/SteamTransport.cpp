@@ -28,6 +28,60 @@ namespace workshop
 			return (ISteamNetworking005*)raw;
 		}
 
+		// ---------------------------------------------------------------------------
+		// The callback plumbing.
+		//
+		// One transport exists at a time, so the handlers reach it through a file
+		// static rather than Steam carrying a context pointer for us, which it does
+		// not. Cleared by Stop, so a callback arriving after a disconnect is a null
+		// check and not a crash.
+		//
+		// The shims are file statics rather than members because steam_api.dll keeps
+		// the pointer we register until we unregister it, and a static outliving a
+		// mistake is a dangling pointer that never fires instead of one that does.
+		// ---------------------------------------------------------------------------
+		SteamTransport* g_owner = NULL;
+		SteamCallbackShim g_onSessionRequest;
+		SteamCallbackShim g_onConnectFail;
+		FnSteamAPI_RegisterCallback g_registerCallback = NULL;
+		FnSteamAPI_UnregisterCallback g_unregisterCallback = NULL;
+
+		void OnSessionRequest(void* param)
+		{
+			if (!param || !g_owner)
+				return;
+			const P2PSessionRequest_t* request = (const P2PSessionRequest_t*)param;
+			g_owner->NoteSessionRequest(request->m_steamIDRemote.m_unAll64Bits);
+		}
+
+		void OnConnectFail(void* param)
+		{
+			if (!param || !g_owner)
+				return;
+			const P2PSessionConnectFail_t* fail = (const P2PSessionConnectFail_t*)param;
+			g_owner->NoteConnectFail(fail->m_steamIDRemote.m_unAll64Bits,
+			    (int)fail->m_eP2PSessionError);
+		}
+
+		const char* SessionErrorText(int error)
+		{
+			switch (error)
+			{
+				case k_EP2PSessionErrorNotRunningApp:
+					return "they are not running the same game";
+				case k_EP2PSessionErrorNoRightsToApp:
+					return "this account does not own the app";
+				case k_EP2PSessionErrorDestinationNotLoggedIn:
+					return "they are not signed in to Steam";
+				case k_EP2PSessionErrorTimeout:
+					return "they never answered, which usually means their end did not "
+					       "accept the session, or UDP 3478, 4379 and 4380 are blocked "
+					       "outbound";
+				default:
+					return "no reason given";
+			}
+		}
+
 	} // namespace
 
 	SteamTransport::SteamTransport()
@@ -35,11 +89,13 @@ namespace workshop
 	      running(false),
 	      acceptUnknown(false),
 	      frameCounter(0),
+	      incomingCount(0),
 	      sent(0),
 	      received(0),
 	      dropped(0)
 	{
 		memset(peers, 0, sizeof(peers));
+		memset(incoming, 0, sizeof(incoming));
 	}
 
 	SteamTransport::~SteamTransport()
@@ -112,9 +168,108 @@ namespace workshop
 		// the difference between working and not.
 		Interface(networking)->AllowP2PPacketRelay(true);
 
+		// ---------------------------------------------------------------------------
+		// THE SESSION REQUEST CALLBACK, WITHOUT WHICH A HOST CANNOT BE JOINED.
+		//
+		// Steam will not deliver a packet from a peer we have no session with, so a
+		// host that waits to learn a joiner's SteamID from ReadP2PPacket waits
+		// forever. This callback is the only place Steam tells us who is trying.
+		//
+		// Registration failing is not fatal for a client, which already knows the
+		// host's SteamID and accepts it directly, so this logs and carries on rather
+		// than refusing to start. For a host it is fatal in practice and the log says
+		// so, because a silent inability to be joined is what this whole block exists
+		// to stop happening twice.
+		// ---------------------------------------------------------------------------
+		g_registerCallback =
+		    (FnSteamAPI_RegisterCallback)GetProcAddress(steamApi, "SteamAPI_RegisterCallback");
+		g_unregisterCallback =
+		    (FnSteamAPI_UnregisterCallback)GetProcAddress(steamApi, "SteamAPI_UnregisterCallback");
+
+		if (g_registerCallback && g_unregisterCallback)
+		{
+			g_owner = this;
+
+			g_onSessionRequest.Init(P2PSessionRequest_t::k_iCallback,
+			    (int)sizeof(P2PSessionRequest_t), &OnSessionRequest);
+			g_registerCallback((void*)&g_onSessionRequest, P2PSessionRequest_t::k_iCallback);
+
+			g_onConnectFail.Init(P2PSessionConnectFail_t::k_iCallback,
+			    (int)sizeof(P2PSessionConnectFail_t), &OnConnectFail);
+			g_registerCallback((void*)&g_onConnectFail, P2PSessionConnectFail_t::k_iCallback);
+
+			// ---------------------------------------------------------------------------
+			// A FREE ABI CHECK, AND IT IS WORTH TAKING.
+			//
+			// SteamAPI_RegisterCallback ORs k_ECallbackFlagsRegistered into
+			// m_nCallbackFlags, which it reaches at +4 of the object we just handed it.
+			// So if IsRegistered now reads true, the DLL and our hand-rolled
+			// CCallbackBase agree about where that field lives. That is the one thing
+			// about this object that could not be checked without running it.
+			//
+			// If it reads false the layout is wrong, and the next thing that would
+			// happen is steam_api.dll calling through a vtable it has mislocated. So
+			// take it back rather than find out.
+			// ---------------------------------------------------------------------------
+			if (g_onSessionRequest.IsRegistered() && g_onConnectFail.IsRegistered())
+			{
+				Log("steam: listening for session requests and connect failures, and "
+				    "steam_api.dll set the registered flag on both, which confirms it "
+				    "agrees with our CCallbackBase layout. FFX pumps Steam callbacks "
+				    "from animate, so these arrive once a frame.");
+			}
+			else
+			{
+				g_unregisterCallback((void*)&g_onSessionRequest);
+				g_unregisterCallback((void*)&g_onConnectFail);
+				g_owner = NULL;
+				Log("steam: REFUSING THE CALLBACKS. steam_api.dll did not set the "
+				    "registered flag where we expect it at +4, so our CCallbackBase "
+				    "layout does not match this DLL and letting it call us would be a "
+				    "crash. Registration has been taken back. A client can still join "
+				    "a host. THIS MACHINE CANNOT BE JOINED. Re-derive "
+				    "SteamCallbackShim against this steam_api.dll.");
+			}
+		}
+		else
+		{
+			Log("steam: steam_api.dll is missing SteamAPI_RegisterCallback or "
+			    "SteamAPI_UnregisterCallback, so nothing can tell us who is trying to "
+			    "reach us. A client can still join a host. THIS MACHINE CANNOT BE "
+			    "JOINED, because accepting a joiner needs their SteamID and that only "
+			    "arrives on a callback.");
+		}
+
 		Log("steam: ISteamNetworking005 at %p, %s", iface,
 		    acceptUnknown ? "accepting new SteamIDs as peers" : "only talking to peers we added");
 		return true;
+	}
+
+	void SteamTransport::NoteSessionRequest(uint64 steamId)
+	{
+		if (steamId == 0)
+			return;
+
+		// Interlocked because this is the one function in the file that is not called
+		// from our own tick. FFX pumps callbacks from animate, which is the thread we
+		// run on, so in practice there is no race. In practice is not a guarantee, and
+		// the cost of being right here is one instruction.
+		const long slot = InterlockedIncrement(&incomingCount) - 1;
+		if (slot >= TransportMaxPeers)
+		{
+			InterlockedDecrement(&incomingCount);
+			return;
+		}
+		incoming[slot] = steamId;
+	}
+
+	void SteamTransport::NoteConnectFail(uint64 steamId, int sessionError)
+	{
+		// Logging from inside a Steam callback is the one thing worth doing here. The
+		// log is its own lock and touches no game state, and a join that cannot get
+		// through is exactly the moment someone is reading the log.
+		Log("steam: cannot reach SteamID %llu, error %d, %s", steamId, sessionError,
+		    SessionErrorText(sessionError));
 	}
 
 	int SteamTransport::AddPeer(uint64 steamId)
@@ -217,8 +372,23 @@ namespace workshop
 					Interface(networking)->CloseP2PSessionWithUser(peers[i].steamId);
 			Log("steam: stopped, sent %lu received %lu dropped %lu", sent, received, dropped);
 		}
+
+		// UNREGISTER BEFORE ANYTHING ELSE GOES AWAY. steam_api.dll holds the pointer we
+		// gave it until we take it back, and it will call through it on the next
+		// SteamAPI_RunCallbacks whether or not we are still interested.
+		if (g_unregisterCallback)
+		{
+			if (g_onSessionRequest.IsRegistered())
+				g_unregisterCallback((void*)&g_onSessionRequest);
+			if (g_onConnectFail.IsRegistered())
+				g_unregisterCallback((void*)&g_onConnectFail);
+		}
+		g_owner = NULL;
+
 		running = false;
 		networking = NULL;
+		incomingCount = 0;
+		memset(incoming, 0, sizeof(incoming));
 		memset(peers, 0, sizeof(peers));
 	}
 
@@ -228,9 +398,45 @@ namespace workshop
 			return;
 		++frameCounter;
 
-		// Standing in for the P2PSessionRequest_t callback we deliberately do not
-		// use. Re-accepting a peer we already have is documented as harmless, and it
-		// is what lets a session recover when one side restarts.
+		// ---------------------------------------------------------------------------
+		// Session requests Steam handed us since the last tick.
+		//
+		// This is where a host gains a joiner. Taking the count once and zeroing it
+		// means a request arriving mid-drain is simply picked up next tick rather than
+		// read half written.
+		// ---------------------------------------------------------------------------
+		const long waiting = InterlockedExchange(&incomingCount, 0);
+		const long count = (waiting > TransportMaxPeers) ? TransportMaxPeers : waiting;
+		for (long i = 0; i < count; ++i)
+		{
+			const uint64 steamId = incoming[i];
+			if (steamId == 0)
+				continue;
+
+			if (!acceptUnknown && PeerForSteamId(steamId) == InvalidPeer)
+			{
+				// A client only ever talks to peers it was told about. Accepting
+				// anyone who asks would let a stranger hold a peer slot.
+				Log("steam: SteamID %llu asked to talk to us and is not a peer we "
+				    "added, so it is being ignored.",
+				    steamId);
+				continue;
+			}
+
+			// Accept first, then record. Accepting is what releases the packet Steam
+			// is already holding, and AddPeer accepts again, which is harmless.
+			Interface(networking)->AcceptP2PSessionWithUser(steamId);
+			const int peer = AddPeer(steamId);
+			if (peer == InvalidPeer)
+				Log("steam: SteamID %llu wanted in but there is no peer slot free", steamId);
+			else
+				Log("steam: accepted a session request from SteamID %llu as peer %d",
+				    steamId, peer);
+		}
+
+		// Re-accepting every known peer on a timer. Documented as harmless, and it is
+		// what lets a session recover when one side restarts: the far end's request
+		// after a restart may land before we notice the old session died.
 		if ((frameCounter % AcceptEveryFrames) == 0)
 		{
 			for (int i = 0; i < TransportMaxPeers; ++i)
@@ -346,8 +552,13 @@ namespace workshop
 		if (!acceptUnknown || steamId == 0)
 			return InvalidPeer;
 
-		// The host learning a joiner's SteamID from its first message. This is what
-		// replaces the P2PSessionRequest_t callback.
+		// The host learning a joiner's SteamID from its first message.
+		//
+		// THIS IS A BACKSTOP, NOT THE WAY IN. It only runs after ReadP2PPacket already
+		// succeeded, and that cannot happen until the session is accepted, so a join
+		// gets here through P2PSessionRequest_t and Pump. Reaching this line means the
+		// session was accepted and then the peer slot was lost, which a reconnect can
+		// do, so it stays.
 		for (int i = 0; i < TransportMaxPeers; ++i)
 		{
 			if (peers[i].inUse)

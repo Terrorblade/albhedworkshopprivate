@@ -1079,20 +1079,34 @@ namespace workshop
 	// consistent with the header it was built from, but it is an inference until someone
 	// runs it.
 	//
-	// *** RECOMMENDED ALTERNATIVE: DO NOT USE CALLBACKS AT ALL ***
+	// *** A HOST GENUINELY REQUIRES THE CALLBACK. THIS USED TO SAY OTHERWISE. ***
 	//
-	// For Al Bhed Workshop specifically, we do not need any of this. We already know every
-	// peer's SteamID before the session starts, because that is how we set the session up.
-	// The SDK header for AcceptP2PSessionWithUser states that calling SendP2PPacket to a
-	// peer implicitly accepts that peer's pending session request, and that
-	// AcceptP2PSessionWithUser may be called more than once for the same user harmlessly.
-	// So have every peer proactively call AcceptP2PSessionWithUser on every other peer at
-	// session start, and then just poll IsP2PPacketAvailable / ReadP2PPacket on our own
-	// tick. That needs zero callback registration, no hand-rolled vtable, no lifetime
-	// problem and no thread question, and it removes the single most fragile thing in this
-	// header from our attack surface. With at most 3 players it costs 2 extra calls per
-	// peer. Take this route. Use the struct below only if something later genuinely
-	// requires a real callback.
+	// What this block used to recommend: skip callbacks entirely, because "we already know
+	// every peer's SteamID before the session starts, because that is how we set the
+	// session up", so every peer can just call AcceptP2PSessionWithUser on every other
+	// peer and poll ReadP2PPacket.
+	//
+	// The premise is half true and the half that is false is the half that matters. A
+	// CLIENT does know the SteamID it needs, because a player typed it in. A HOST knows
+	// nothing. It is handed no SteamIDs at all, and it cannot learn one by reading,
+	// because ISteamNetworking will not hand you a packet from a peer you have no session
+	// with: it holds the packet, posts P2PSessionRequest_t, and drops the packet if you
+	// never accept. So the host sits in a circle. Accept needs the SteamID, the SteamID
+	// comes from a packet, the packet needs the session accepted.
+	//
+	// SteamTransport shipped that way and a real join hung with the host logging nothing
+	// whatsoever while the client sent. P2PSessionRequest_t is the only thing that breaks
+	// the circle, because it is the only place Steam volunteers the SteamID of someone you
+	// have never talked to.
+	//
+	// The two SDK facts that block quoted are both true and both still used: accepting
+	// repeatedly is harmless, and sending implicitly accepts a pending request. They are
+	// just not a substitute for being told who is calling.
+	//
+	// So the shim below is live code now, registered by SteamTransport::Start for
+	// P2PSessionRequest_t and P2PSessionConnectFail_t. The layout notes above are what it
+	// rests on, and the one thing they called unverified, that the shipped DLL really does
+	// dispatch through these slots, is now exercised every time anyone hosts.
 	// ---------------------------------------------------------------------------
 
 	// Flags from [S1] steam_api.h line 173.

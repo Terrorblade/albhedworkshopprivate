@@ -34,6 +34,7 @@ namespace ffx
 			{ "game state", &Rva::GameStateRvaList },
 			{ "atel", &Rva::AtelRvaList },
 			{ "esc menu", &Rva::EscMenuRvaList },
+			{ "event places", &Rva::EventPlacesRvaList },
 			{ "menu system", &Rva::MenuSystemRvaList },
 			{ "cutscene", &Rva::CutsceneRvaList },
 			{ "encounter", &Rva::EncounterRvaList },
@@ -76,6 +77,7 @@ namespace ffx
 			{ "ChSetFlags1Bit400", Rva::ChSetFlags1Bit400 },
 			{ "ChGetPlayerChr", Rva::ChGetPlayerChr },
 			{ "ChWalkmeshMove", Rva::ChWalkmeshMove },
+			{ "MapIsTriBlockedForChr", Rva::MapIsTriBlockedForChr },
 			{ "ChSetGroundMode", Rva::ChSetGroundMode },
 			// The player driver and the camera read it anchors to, both called through a
 			// pointer by ffx::StepPlayerControlFor. The driver's CALL SITE and the four

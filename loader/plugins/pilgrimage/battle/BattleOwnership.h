@@ -25,14 +25,23 @@
 // answer was in flight. That is worth more than it sounds, because the one thing
 // that cannot be fixed later is two machines acting on different ownership.
 //
-// THE SEAM, and it is the whole reason this is a module rather than two lines inside
-// BattleSync. The eventual design is each player PICKING their character, not being
-// given a slot number. SetBattleOwner is that: an explicit peer to character binding
-// that beats the default. When that day comes, the binding has to be ORDERED like
-// any other state change, which means a command kind of its own and both machines
-// applying it on the same step. Setting it locally on one machine only is exactly
-// the "both machines think they own it" failure above. So SetBattleOwner is wired up
-// and ready, and deliberately has no caller yet.
+// THE EXPLICIT BINDING IS LIVE, and this note used to say it had no caller. It does.
+//
+// The table itself moved to coop/Ownership.h, because "who drives this character" is
+// not a battle question: the sphere grid and the equipment screen ask the same thing,
+// and two tables meant to agree are a bug waiting for a quiet afternoon. So the co-op
+// Config rows the player sets (menu/CoopConfig.cpp, through SetCharacterOwner) are the
+// SAME binding this file's rule 1 reads. Assign a character to a peer there and that
+// peer's machine is the only one that opens a battle menu for them.
+//
+// WHAT IS STILL OUTSTANDING is the ordering. A binding that is set on one machine and
+// not the other is the worst failure this subsystem has, and today the Config path sets
+// it locally rather than through an ordered command. The cost is bounded: the two
+// machines can disagree for the turns between one player changing the setting and the
+// other doing the same, and in that window either both suppress the menu or neither
+// does. Neither is a divergence in simulated state, but both are confusing to play.
+// The fix is a command kind of its own, applied on the same step on both machines, not
+// a cleverer predicate.
 //
 // ONE MORE THING THE DEFAULT HAS TO HANDLE. With two players there are three active
 // slots, so somebody has to drive slot 2, and anything that is not an active party

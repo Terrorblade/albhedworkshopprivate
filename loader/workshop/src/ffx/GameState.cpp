@@ -12,6 +12,10 @@
 // change show up on the map that is already loaded.
 #include "ffx/addresses/Atel.h"
 
+// For DecodeKernelText. Every name this file hands back goes through it, see
+// DecodeEngineName below.
+#include "ffx/KernelTables.h"
+
 #include <string.h>
 
 // Implementation notes worth reading before changing anything here.
@@ -127,8 +131,17 @@ namespace ffx
 		};
 
 		const BucketRange kBuckets[kBucketCount] = {
-			{ 0x0000, 0x00B8, "Header", true },
-			{ 0x00B8, 0x00BC, "MapId", false },   // diverges for a frame on a warp
+			// See the long note on kBucketLiveLocation in GameState.h before changing
+			// any of these four. The short version: the first 0x14 bytes are recomputed
+			// every step from the player's walkmesh triangle, 0x2A is set by a world
+			// transplant and never by the host, and 0xB4 is rewritten by the map entry
+			// script. None of the three can agree across a join, and all three used to
+			// sit in bucket zero and mask everything behind them.
+			{ 0x0000, 0x0014, "LiveLocation", false },
+			{ 0x0014, 0x002A, "HeaderFlags", true },
+			{ 0x002B, 0x00B4, "ScriptParams", true }, // 0x2A is the just-loaded flag
+			{ 0x00B4, 0x00B8, "MapEntryPair", false },
+			{ 0x00B8, 0x00BC, "Checkpoint", false }, // diverges for a frame on a warp
 			{ 0x00C0, 0x3D0C, "Progress", true }, // 0xBC..0xC0 is playtime, skipped
 			// Was "Config", which sent a reader to the wrong place: the kernel "conf"
 			// block is only 0x84 of these 448 bytes. The rest is gil, the party arrays,
@@ -214,6 +227,28 @@ namespace ffx
 		BYTE* base = Block();
 		if (!base)
 			return (BYTE)kCharNone;
+
+		// ---------------------------------------------------------------------------
+		// NO GAME, NO PARTY. The header has always said this returns kCharNone when
+		// there is no game. Until now it did not, and the consequences were quiet.
+		//
+		// The block is static .data, so it is readable and all zero before a game
+		// exists. A zeroed slot therefore read back as character 0, which is Tidus.
+		// So at the title screen every caller saw a party of three Tiduses and
+		// believed it: the co-op ownership table handed each peer a character, a
+		// joining client decided it owned the host's Tidus, and nothing logged a
+		// word because every answer was in range and looked sane.
+		//
+		// This is the cheap half of GameLoaded's test, done on the base that is
+		// already in hand. Record 0's base max HP is non-zero from the moment
+		// ply_save has been read and can never be zero in a playable state, so one
+		// DWORD read settles it with no second Readable call. That matters: Block
+		// goes through Readable, which is a VirtualQuery, and this function is
+		// called in loops.
+		// ---------------------------------------------------------------------------
+		if (Rd32(base + SaveBlock::CharRecords + CharRecord::BaseMaxHp) == 0)
+			return (BYTE)kCharNone;
+
 		return Rd8(base + SaveBlock::FieldParty + (DWORD)slot);
 	}
 
@@ -370,6 +405,76 @@ namespace ffx
 		return true;
 	}
 
+	// ---------------------------------------------------------------------------
+	// THE ENGINE'S NAME TABLES ARE NOT ASCII, AND THIS IS WHERE THAT GETS FIXED.
+	//
+	// FFX stores text in its own glyph set: ASCII with the digits pulled to the front
+	// and everything else shifted, so 'T' is 0x63 and Tidus is 63 78 73 84 82. Hand
+	// those bytes to a UI and you get line noise.
+	//
+	// It is worse than just being the wrong letters. 0x7F through 0x89 is every letter
+	// from p to z, and those are invalid UTF-8 lead bytes, so ImGui draws them as
+	// replacement boxes. Wakka is the one party name with no letter above o, so it
+	// encodes to fpzzp and is the only one that used to come out readable, as the
+	// wrong word.
+	//
+	// Three readers in this file used to skip the decode, and they were exactly the
+	// three feeding the character, equipment and model pickers. ffx::LoadKernelTables
+	// has always decoded, which is why weapon names read out of w_name.bin looked
+	// right while the same bytes read live looked like garbage. Same data, one path
+	// decoded and the other did not.
+	// ---------------------------------------------------------------------------
+	namespace
+	{
+		// Longest name in the game is well inside this, and it bounds the walk below.
+		const int kNameScanBytes = 64;
+
+		// True for a string that is nothing but question marks, which is what a blanked
+		// engine record decodes to. Empty is not question marks, callers test that
+		// separately.
+		bool AllQuestionMarks(const char* text)
+		{
+			if (!text || !text[0])
+				return false;
+			for (int i = 0; text[i]; ++i)
+				if (text[i] != '?')
+					return false;
+			return true;
+		}
+
+		// Decodes a zero terminated engine glyph string that lives in engine memory.
+		//
+		// The span is validated once rather than per byte, because workshop::Readable
+		// is a VirtualQuery syscall and a per byte loop here would be the same mistake
+		// that once cost this project a ten second freeze.
+		bool DecodeEngineName(const char* raw, char* out, int outBytes)
+		{
+			if (!out || outBytes <= 0)
+				return false;
+			out[0] = 0;
+			if (!raw)
+				return false;
+
+			int span = kNameScanBytes;
+			while (span > 0 && !Readable(raw, (size_t)span))
+				span /= 2;
+			if (span <= 0)
+				return false;
+
+			// DecodeKernelText stops at the first zero on its own, so span is only a
+			// ceiling on how far it may look.
+			if (DecodeKernelText((const unsigned char*)raw, span, out, outBytes) <= 0)
+				return false;
+
+			// A RECORD THE GAME BLANKED IS NOT A NAME. Rikku's model record holds
+			// 4F 4F 4F 4F, which decodes to "????", because the game substitutes chr id
+			// 41 for 7 and never fills the original. Handing "????" back counts as a
+			// name to every caller's emptiness test, so the English fallback never got
+			// a chance and the model list showed question marks.
+			return !AllQuestionMarks(out);
+		}
+	} // namespace
+
 	const char* UnitDisplayName(BYTE charIndex)
 	{
 		// The engine's guard is index <= 30, which is the ally test, not the record
@@ -381,7 +486,16 @@ namespace ffx
 			return nullptr;
 
 		char* name = Resolve<GetUnitNameFn>(Rva::GetUnitDisplayName)((int)charIndex);
-		return Readable(name, 1) ? name : nullptr;
+		if (!Readable(name, 1))
+			return nullptr;
+
+		// Decoded into a buffer of ours rather than returned raw. The engine's pointer
+		// was never usable as a display string, and the header already told callers
+		// not to hold the pointer across a call, so this costs them nothing.
+		static char decoded[kNameScanBytes];
+		if (!DecodeEngineName(name, decoded, (int)sizeof(decoded)))
+			return nullptr;
+		return decoded;
 	}
 
 	BYTE BattlePartyMember(int slot)
@@ -485,19 +599,32 @@ namespace ffx
 			return false;
 
 		const BYTE* entry = base + SaveBlock::CharNames + CharName::Size * (DWORD)charIndex;
-		int room = outBytes - 1;
-		if (room > (int)CharName::Language)
-			room = (int)CharName::Language;
 
-		int i = 0;
-		for (; i < room; ++i)
+		// Lifted a byte at a time through Rd8, because the game thread writes this
+		// field behind us, then decoded. CharName::Language is where the text field
+		// ends, so it doubles as the text length.
+		unsigned char raw[CharName::Language];
+		int have = 0;
+		for (; have < (int)CharName::Language; ++have)
 		{
-			char c = (char)Rd8(entry + (DWORD)i);
+			const unsigned char c = Rd8(entry + (DWORD)have);
 			if (c == 0)
 				break;
-			out[i] = c;
+			raw[have] = c;
 		}
-		out[i] = 0;
+
+		out[0] = 0;
+		if (have > 0)
+			DecodeKernelText(raw, have, out, outBytes);
+
+		// Same as DecodeEngineName: a blanked record is not a name, and leaving it
+		// empty is what lets the caller fall back to the built in English one.
+		if (AllQuestionMarks(out))
+			out[0] = 0;
+
+		// True even for an empty result, which is what it has always returned. A blank
+		// name means no save has filled the record yet, and every caller already falls
+		// back on out[0] being zero.
 		return true;
 	}
 
@@ -976,7 +1103,13 @@ namespace ffx
 		char* name = Resolve<GetEquipNameStringFn>(Rva::SaveDataGetEquipNameString)((int)slotId);
 		if (!Readable(name, 1))
 			return NULL;
-		return name;
+
+		// Same story as UnitDisplayName. This is w_name.bin text, the very same bytes
+		// ffx::LoadKernelTables decodes correctly, so returning it raw was the bug.
+		static char decoded[kNameScanBytes];
+		if (!DecodeEngineName(name, decoded, (int)sizeof(decoded)))
+			return NULL;
+		return decoded;
 	}
 
 	bool RefreshEquipEntryName(EquipEntryData* e)

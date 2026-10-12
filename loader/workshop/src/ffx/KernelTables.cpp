@@ -22,9 +22,56 @@ namespace ffx
 		const int kOffRecordBytes = 0x0C;
 		const int kOffRecordStart = 0x10;
 
-		// A record's name offset is its first word, and its description offset is at +4.
-		// Both are relative to the string blob.
+		// A record's name offset is its first word, relative to the string blob.
 		const int kOffRecordName = 0x00;
+
+		// ---------------------------------------------------------------------------
+		// w_name.bin's record is a grid. Measured off the shipped file, stride 72.
+		//
+		//   +0x00  seven pairs of (name offset, small number), so the name for
+		//          character c is the u16 at +4*c. The odd word of each pair is a small
+		//          integer, not an offset, it lands mid string if you follow it.
+		//   +0x1C  seven more string offsets, two bytes apart, every one of them "-".
+		//          An abbreviated name the remaster never filled in.
+		//   +0x38  seven u16 chr ids, the model each character uses for this row.
+		//   +0x46  zero.
+		//
+		// Seven because that is how many characters carry equipment. The order is the
+		// kit's character index, which row 0 proves: Caladbolg, Nirvana, Masamune,
+		// Spirit Lance, World Champion, Onion Knight, Godhand.
+		const int kWeaponColumnStride = 4;
+		const int kOffWeaponChrIds = 0x38;
+
+		// Enough for 170 rows of seven names. The whole string blob in the shipped file
+		// is 16818 bytes including the descriptions, and the names alone measure 14438,
+		// so this has room to spare for a longer localisation.
+		const int kWeaponRows = 192;
+		const int kWeaponArenaBytes = 24 * 1024;
+
+		struct WeaponGrid
+		{
+			const char* name[kWeaponNameColumns];
+			WORD chrId[kWeaponNameColumns];
+		};
+
+		WeaponGrid g_weaponGrid[kWeaponRows];
+		char g_weaponArena[kWeaponArenaBytes];
+		int g_weaponArenaUsed = 0;
+		int g_weaponRowsRead = 0;
+
+		// Copies one name into the grid's own arena. Returns null when it will not fit,
+		// which leaves that cell empty rather than truncating a name.
+		const char* KeepWeaponName(const char* text)
+		{
+			const int need = (int)strlen(text) + 1;
+			if (g_weaponArenaUsed + need > kWeaponArenaBytes)
+				return nullptr;
+
+			char* at = g_weaponArena + g_weaponArenaUsed;
+			memcpy(at, text, (size_t)need);
+			g_weaponArenaUsed += need;
+			return at;
+		}
 
 		struct Source
 		{
@@ -70,6 +117,98 @@ namespace ffx
 			return (WORD)(p[0] | ((WORD)p[1] << 8));
 		}
 
+		// ONE BIT PER ROW, SET ONLY WHERE THE GAME SUPPLIED A NAME.
+		//
+		// The alternative was for callers to test the label against the "unnamed "
+		// prefix, which works right up until a real name in some language starts with
+		// it. The loader is the only place that actually knows, so it is the only place
+		// that should be deciding.
+		//
+		// Indexed by row, which is id minus the table's id base, so the key is the same
+		// number the synthesized label prints. 366 rows is the largest table, monsters.
+		const int kMaxRows = 384;
+		unsigned char g_hasRealName[KernelTableCount][kMaxRows / 8];
+
+		void MarkRealName(KernelTable which, int row)
+		{
+			if (row < 0 || row >= kMaxRows)
+				return;
+			g_hasRealName[which][row >> 3] |= (unsigned char)(1u << (row & 7));
+		}
+
+		bool HasRealName(KernelTable which, int row)
+		{
+			if (row < 0 || row >= kMaxRows)
+				return false;
+			return (g_hasRealName[which][row >> 3] & (unsigned char)(1u << (row & 7))) != 0;
+		}
+
+		// Reads one w_name.bin row into the grid and writes its label.
+		//
+		// The label is the distinct names in column order joined by " / ", so row 0 is
+		// seven names and row 70 is seven again, while a row where several characters
+		// share a name only says it once. Four rows can carry the identical seven names,
+		// which is correct: rows 70 to 73 really are the same weapons with different
+		// ability sets, and the row number is what tells them apart.
+		bool ReadWeaponRow(const BYTE* rec, int stride, const BYTE* file, int bytes,
+		    int blobStart, int row, char* label, int labelBytes)
+		{
+			label[0] = 0;
+			if (stride < kOffWeaponChrIds + 2 * kWeaponNameColumns)
+				return false;
+
+			WeaponGrid* grid = (row >= 0 && row < kWeaponRows) ? &g_weaponGrid[row] : nullptr;
+			if (grid && row >= g_weaponRowsRead)
+				g_weaponRowsRead = row + 1;
+
+			int used = 0;
+			int found = 0;
+			for (int c = 0; c < kWeaponNameColumns; ++c)
+			{
+				const int at = blobStart + (int)Rd16(rec + kWeaponColumnStride * c);
+
+				char text[96];
+				int written = 0;
+				if (at < bytes)
+					written = DecodeKernelText(file + at, bytes - at, text,
+					    (int)sizeof(text));
+
+				if (grid)
+				{
+					grid->chrId[c] = Rd16(rec + kOffWeaponChrIds + 2 * c);
+					grid->name[c] = (written > 0) ? KeepWeaponName(text) : nullptr;
+				}
+				if (written <= 0)
+					continue;
+				++found;
+
+				// Only the names not already in the label, compared against what has
+				// been written rather than against the other columns, which keeps this
+				// to one pass and handles three columns agreeing just as well as two.
+				bool seen = false;
+				for (int prev = 0; prev < c && !seen; ++prev)
+				{
+					const char* other = grid ? grid->name[prev] : nullptr;
+					seen = other && strcmp(other, text) == 0;
+				}
+				if (seen)
+					continue;
+
+				const int need = written + (used > 0 ? 3 : 0);
+				if (used + need + 1 > labelBytes)
+					break;
+				if (used > 0)
+				{
+					memcpy(label + used, " / ", 3);
+					used += 3;
+				}
+				memcpy(label + used, text, (size_t)written);
+				used += written;
+				label[used] = 0;
+			}
+			return found > 0;
+		}
+
 		// Adds every row of one kernel file to a list. Returns how many were added.
 		//
 		// EVERY DECLARED ROW GETS A ROW, including the ones whose name does not decode.
@@ -77,7 +216,7 @@ namespace ffx
 		// blank name is still a real id the game can hold: an unused slot, a placeholder
 		// the developers left in, or something a mod is free to fill. Dropping those was
 		// hiding real ids, and an editor needs to see the gap it is filling.
-		int AddFile(PickerList& list, const BYTE* file, int bytes, int idBase)
+		int AddFile(KernelTable which, PickerList& list, const BYTE* file, int bytes, int idBase)
 		{
 			if (!file || bytes < kHeaderBytes)
 				return 0;
@@ -113,6 +252,26 @@ namespace ffx
 				if (stride < 2)
 					break;
 
+				// Seven names, and a label carrying all of the distinct ones so that
+				// typing any character's weapon finds the row it lives on.
+				if (which == KernelWeaponNames)
+				{
+					char label[256];
+					const int id = idBase + firstId + row;
+					if (ReadWeaponRow(rec, stride, file, bytes, blobStart, row, label,
+					        (int)sizeof(label)))
+					{
+						if (list.Add(id, label))
+						{
+							MarkRealName(which, id - idBase);
+							++added;
+						}
+					}
+					else if (list.AddFormatted(id, "unnamed %d", id - idBase))
+						++added;
+					continue;
+				}
+
 				// Offset 0 is a VALID name, it is the first string in the blob, so it
 				// must not be read as "no name". Dropping it cost every table its id 0,
 				// which is Potion, Caladbolg, Sensor and Attack. The real emptiness test
@@ -131,7 +290,10 @@ namespace ffx
 				if (written > 0)
 				{
 					if (list.Add(id, text))
+					{
+						MarkRealName(which, id - idBase);
 						++added;
+					}
 				}
 				// A blank name, or a name offset past the end of the file. Both mean the
 				// record is there and nothing named it, so the id goes in with the only
@@ -164,7 +326,7 @@ namespace ffx
 					continue;
 				}
 
-				total += AddFile(g_lists[which], (const BYTE*)file, bytes,
+				total += AddFile(which, g_lists[which], (const BYTE*)file, bytes,
 				    spec.sources[i].idBase);
 				FreeDataFile(file);
 			}
@@ -212,7 +374,14 @@ namespace ffx
 			else if (c <= 0x89)
 				decoded = (char)(c - 0x0F); // A through z
 			else
-				continue; // nothing above 0x89 is a character
+				// 0x8A AND UP IS THE EXTENDED BLOCK, not padding to throw away.
+				// name_txt.bin rows 36..46 enumerate 0xA3..0xCF as the accented
+				// letters, and 0x9C is the arrow in "Overdrive -> AP". Dropping them
+				// silently shortens a French or German name and turns that arrow into
+				// nothing, which reads as a different name rather than an unreadable
+				// one. A question mark is the honest answer until there is a real
+				// mapping for them.
+				decoded = '?';
 
 			out[written++] = decoded;
 		}
@@ -287,6 +456,31 @@ namespace ffx
 			if (list.Items()[i].id == id)
 				return list.Items()[i].label;
 		return nullptr;
+	}
+
+	const char* KernelWeaponNameFor(int row, int forCharacter)
+	{
+		if (row < 0 || row >= g_weaponRowsRead)
+			return nullptr;
+		if (forCharacter < 0 || forCharacter >= kWeaponNameColumns)
+			return nullptr;
+		return g_weaponGrid[row].name[forCharacter];
+	}
+
+	int KernelWeaponChrId(int row, int forCharacter)
+	{
+		if (row < 0 || row >= g_weaponRowsRead)
+			return 0;
+		if (forCharacter < 0 || forCharacter >= kWeaponNameColumns)
+			return 0;
+		return (int)g_weaponGrid[row].chrId[forCharacter];
+	}
+
+	bool KernelNameIsReal(KernelTable which, int id)
+	{
+		if (which < 0 || which >= KernelTableCount)
+			return false;
+		return HasRealName(which, KernelIdFromTagged(id));
 	}
 
 	int KernelIdFromTagged(int taggedId)

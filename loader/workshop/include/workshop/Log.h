@@ -12,8 +12,22 @@
 namespace workshop
 {
 
-	// Must be called before any other Log call. Sets up the file lock and picks the
-	// file name, for example L"pilgrimage_together.log".
+	// Must be called before any other Log call. Sets up the file lock, picks the file
+	// name, for example L"pilgrimage_together.log", and TRUNCATES that file.
+	//
+	// ONE BOOT, ONE LOG. Log appends, so without this every run piled on top of the
+	// last one and the first question about any log became "which run am I reading".
+	// Timestamps are wall clock with no date, so two runs an hour apart are genuinely
+	// ambiguous.
+	//
+	// Each module passes its own file name, so each clears only its own file and the
+	// three never race. Two modules passing the SAME name would have the second wipe
+	// the first, so do not do that.
+	//
+	// THE CRASH LOG IS NOT THIS FILE and is deliberately handled differently: the
+	// loader renames it to albhed_crash.prev.log instead of truncating it, because you
+	// restart the game specifically to read a crash report and clearing it on the way
+	// in would destroy the thing you came back for. See RollCrashLog.
 	void OpenLog(const wchar_t* fileName);
 
 	void Log(const char* format, ...);

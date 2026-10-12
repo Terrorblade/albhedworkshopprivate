@@ -58,10 +58,50 @@ namespace pilgrimage
 		// account and a second machine.
 		volatile LONG useSteam;
 
+		// A TEST SETTING, not something a player wants. Starts hosting on its own a
+		// couple of seconds in, retrying until Steam is up. It exists because hosting is
+		// the only thing that registers the Steam callbacks, and an automated boot test
+		// that never hosts never touches them, which is how a host that could not be
+		// joined shipped. A settings entry rather than an environment variable because a
+		// steam:// launch is started by Steam and does not inherit our environment.
+		volatile LONG hostOnBoot;
+
 		// The host's SteamID as text, 17 digits off their profile page. Not volatile
 		// and not touched on the frame path: the UI thread sets it, and the game
 		// thread reads it once when a connection starts.
 		char hostSteamId[24];
+
+		// THE ADDRESS A UDP JOINER DIALS, and the reason this exists is a wasted
+		// evening. It used to be the literal "127.0.0.1" in StartJoining with no way to
+		// change it, so the UDP backend could only ever reach another copy on the SAME
+		// PC. Two people on two machines switched to UDP to see whether it would work
+		// when Steam was giving them trouble, and it could not have worked: one of them
+		// dialled their own loopback and sent 36 hellos into it.
+		//
+		// Still defaults to 127.0.0.1, because the overwhelmingly common use is two
+		// instances on one desk for testing. But it is a field now, and StartJoining
+		// says out loud when the address it is about to dial is this machine.
+		char hostAddress[64];
+
+		// WHETHER THE STEP GATE ACTUALLY HOLDS A STEP, and the reason it has a setting
+		// is that it spent its first weeks not holding one.
+		//
+		// The gate was written to measure first: count how often a real gate would have
+		// refused a step, read the number, then switch it on. The number came in on
+		// 2026-10-06 and it was not a tuning figure, it was a diagnosis. Two machines
+		// ran two and a half minutes of co-op and their clocks ended 1559 steps apart,
+		// around 52 seconds of game time. Every ordered command the host stamped arrived
+		// at the client for a step the client had already run, including the ownership
+		// change, which applied on the host and nowhere else.
+		//
+		// So it defaults ON. This stays a setting because an enforcing gate is also the
+		// first suspect for "the game stutters", and being able to turn it off in the
+		// panel and see whether the stutter goes with it is worth one row.
+		//
+		// LOCAL, NOT SHARED, deliberately. It only decides whether THIS machine waits,
+		// so a mismatch is one side drifting rather than a refused handshake, and the
+		// shared hash is reserved for settings that change what a step DOES.
+		volatile LONG enforceLockstep;
 	};
 
 	// Raised by the UI thread or a hotkey, drained by the game thread. Everything

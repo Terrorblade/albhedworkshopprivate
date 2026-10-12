@@ -23,6 +23,9 @@ import time
 
 GAME_DIR = r"G:\Steam\steamapps\common\FINAL FANTASY FFX&FFX-2 HD Remaster"
 EXE = os.path.join(GAME_DIR, "FFX.exe")
+
+# FINAL FANTASY X/X-2 HD Remaster. Needed by --steam, see launch_via_steam.
+STEAM_APPID = "359870"
 WORKSHOP = os.path.join(GAME_DIR, "AlBhedWorkshop")
 
 LOGS = ["workshop_loader.log", "albhed_cheats.log", "pilgrimage_together.log",
@@ -113,17 +116,61 @@ def ffx_alive():
     return "FFX.exe" in out
 
 
-def run(seconds):
+def run(seconds, via_steam=False):
     """Returns the second at which every FFX.exe went away, or None if it survived.
 
     This is the only failure signal in a control run with no plugins, because
     without a plugin there is no crash handler and nothing writes a log.
     """
-    print("starting %s" % EXE)
-    proc = subprocess.Popen([EXE], cwd=GAME_DIR)
+    if via_steam:
+        # ---------------------------------------------------------------------------
+        # WHY THIS MODE EXISTS.
+        #
+        # Starting FFX.exe directly means SteamAPI_Init fails, there is no
+        # steam_appid.txt in the install and the game asks Steam for nothing, so
+        # SteamNetworking() returns null and every Steam code path in the kit is
+        # unreachable. A direct run can never test hosting or joining over Steam.
+        #
+        # Going through the steam:// handler makes Steam launch it with the app id
+        # set, which is the only way SteamAPI_Init succeeds.
+        #
+        # NOT UNATTENDED, and it cannot be made so from here. App 359870 does not
+        # start FFX.exe, it starts FFX&X-2_LAUNCHER.exe, which sits there until a
+        # human picks FFX or FFX-2. So this mode waits up to a minute for FFX.exe to
+        # turn up and somebody has to click the launcher inside that window. Steam
+        # then takes about another ten seconds to reach a signed in user.
+        #
+        # Nothing in the install is modified to make this work. Adding a
+        # steam_appid.txt would also do it and is not worth leaving behind in
+        # somebody's game folder.
+        # ---------------------------------------------------------------------------
+        url = "steam://rungameid/" + STEAM_APPID
+        print("starting through Steam: %s" % url)
+        proc = None
+        subprocess.call(["cmd", "/c", "start", "", url],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        print("starting %s" % EXE)
+        proc = subprocess.Popen([EXE], cwd=GAME_DIR)
 
     # The game relaunches itself through Steam sometimes, so the pid we started is
     # not necessarily the one that lives. Watch for any FFX.exe instead.
+    #
+    # A steam:// launch is asynchronous and Steam takes its time, so the death watch
+    # below has to wait for the process to turn up first or it calls a slow start a
+    # crash. Measured about 5 to 15 seconds on this machine.
+    if via_steam:
+        appeared = False
+        for i in range(60):
+            if ffx_alive():
+                appeared = True
+                print("  FFX.exe appeared after %ds" % (i + 1))
+                break
+            time.sleep(1)
+        if not appeared:
+            print("  FFX.exe never started. Is Steam signed in and the app installed?")
+            return 0
+
     died_at = None
     for i in range(seconds):
         time.sleep(1)
@@ -139,7 +186,8 @@ def run(seconds):
     subprocess.call(["taskkill", "/F", "/IM", "FFX.exe"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        proc.wait(timeout=10)
+        if proc is not None:
+            proc.wait(timeout=10)
     except Exception:
         pass
     time.sleep(1)
@@ -282,6 +330,11 @@ def main(argv):
     ap.add_argument("--runs", type=int, default=1,
                     help="repeat the boot this many times. The crash being chased "
                          "is intermittent, so one run proves nothing.")
+    ap.add_argument("--steam", action="store_true",
+                    help="launch through Steam so SteamAPI_Init succeeds, which is the "
+                         "only way to reach any Steam code path. NEEDS ONE CLICK FROM "
+                         "YOU: app 359870 starts FFX&X-2_LAUNCHER.exe, which waits for "
+                         "someone to pick FFX or FFX-2, so this is not unattended.")
     ap.add_argument("--no-plugins", action="store_true",
                     help="control run: move the plugins aside so nothing of ours "
                          "loads. The only signal is whether the game stays alive, "
@@ -320,7 +373,7 @@ def main(argv):
                 if a.clean_cache:
                     clean_cache()
                 truncate_logs()
-                d = run(a.seconds)
+                d = run(a.seconds, a.steam)
                 if d is not None:
                     deaths.append((i + 1, d))
                     # Keep the report of the run that died, it is the evidence.
@@ -341,7 +394,7 @@ def main(argv):
     try:
         if not a.no_run:
             truncate_logs()
-            died_at = run(a.seconds)
+            died_at = run(a.seconds, a.steam)
     finally:
         if restore:
             restore()

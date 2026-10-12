@@ -660,18 +660,49 @@ namespace workshop
 			if (commands[i].id == payload.id && payload.id != 0)
 				return;
 
-		if (payload.effectiveStep <= currentStep)
+		// Which step this machine will actually run it on. Normally the one it was
+		// stamped with, see just below for the one case where it is not.
+		uint32_t applyStep = payload.effectiveStep;
+
+		if (applyStep <= currentStep)
 		{
-			// The step it was meant for has already been run here. There is no way to
-			// apply it correctly now, so count it and be loud, because this is the
-			// beginning of a divergence rather than a cosmetic miss.
+			// ---------------------------------------------------------------------------
+			// LATE, SO IT RUNS ON THE NEXT STEP RATHER THAN NEVER.
+			//
+			// This used to return, on the reasoning that a command cannot be applied
+			// correctly once its step has gone past. That much is true. The conclusion
+			// was still wrong, because dropping it is not the neutral option: it means
+			// one machine ran the command and this one never will, and there is nothing
+			// afterwards that can put that right.
+			//
+			// Measured 2026-10-06. The gate was not enforcing, so the client's clock had
+			// run 1559 steps ahead of the host's. The host stamped an ownership change
+			// for step 7165, the client was already at 7190, dropped it, and from then on
+			// the two machines disagreed about which character each player drives. That
+			// is the one failure coop/Ownership.h calls unpatchable, and it arrived
+			// through this return statement.
+			//
+			// A few steps late and agreeing beats on time and absent. So it is re-stamped
+			// for the next step this machine has not run yet, which the other machine also
+			// reaches, and the miss is still counted and still loud.
+			//
+			// It does NOT fix the cause. The cause is the gate not holding the clocks
+			// together, which is what net.enforce_lockstep is for. This is the floor
+			// under that, for the hitch that gets through anyway.
+			// ---------------------------------------------------------------------------
 			++lateCommands;
 			Log("lockstep: command kind %u from peer %u arrived for step %lu but we are "
-			    "already at %lu. Raise the command lead above %d steps.",
+			    "already at %lu, so it is %lu steps late. RUNNING IT ON STEP %lu rather "
+			    "than dropping it, because one machine running a command the other never "
+			    "runs cannot be repaired later. Lots of these means the clocks are "
+			    "drifting, so check the gate is enforcing and raise the command lead "
+			    "above %d steps.",
 			    (unsigned)payload.kind, (unsigned)payload.issuer,
 			    (unsigned long)payload.effectiveStep, (unsigned long)currentStep,
-			    commandLead);
-			return;
+			    (unsigned long)(currentStep - payload.effectiveStep + 1),
+			    (unsigned long)(currentStep + 1), commandLead);
+
+			applyStep = currentStep + 1;
 		}
 
 		if (commandCount >= MaxQueuedCommands)
@@ -683,7 +714,11 @@ namespace workshop
 		}
 
 		Command& slot = commands[commandCount++];
-		slot.step = payload.effectiveStep;
+
+		// applyStep, not payload.effectiveStep. They are the same number except for a
+		// command that arrived late, which is re-stamped above so it runs rather than
+		// sitting in the queue for a step that will never come round again.
+		slot.step = applyStep;
 		slot.id = payload.id;
 		slot.issuer = payload.issuer;
 		slot.kind = payload.kind;
@@ -763,7 +798,10 @@ namespace workshop
 		const uint32_t shared =
 		    (theirs.partCount < lastChecksumPartCount) ? theirs.partCount
 		                                               : lastChecksumPartCount;
-		for (uint32_t i = 0; i < shared && i < 16; ++i)
+		// Every region both ends sent, not the first 16. That 16 was a literal from
+		// when there were fewer buckets, and it meant the held object and minigame
+		// regions could never be named as the first difference.
+		for (uint32_t i = 0; i < shared && i < (uint32_t)ChecksumRegionCount; ++i)
 		{
 			if (theirs.parts[i] != lastChecksumParts[i])
 			{

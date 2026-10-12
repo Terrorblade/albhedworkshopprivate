@@ -50,6 +50,20 @@
 // out as kCommandCharOwner, the host stamps a step, and both machines apply it on that
 // step or neither does.
 //
+// ONLY THE HOST CHANGES WHO PLAYS WHOM. A client's press on one of the three slot rows
+// is refused with a log line, and the row snaps back the way it does for any ask that
+// does not land. It is refused rather than made unselectable, because the selectable flag
+// drives replicated navigation and a row that is selectable on one machine only puts the
+// two cursors on different rows. Same reasoning as the host override row below.
+//
+// AND THE HOST PUBLISHES THE WHOLE TABLE ONCE PER JOINER, as kCommandCharOwnerTable.
+// A single binding cannot reach somebody who was not in the session when it was ordered,
+// because workshop::Lockstep only registers as a message sink inside Start(): until a
+// joiner's clock runs it is not listening to the command channel at all. So the host
+// sends the table the moment it sees that peer's clock running, and then never again.
+// With one writer there is no copy that can drift, so there is nothing to resend. See
+// PublishOwnerTable.
+//
 // Two consequences worth knowing before reading the code:
 //
 //   ONLY THE MENU DRIVER ASKS. The setter runs on every machine, so if every machine

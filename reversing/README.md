@@ -226,4 +226,13 @@ functions named, plus the recovered struct layouts, enums and build configuratio
 section even if you do not care about Lua, because that technique applies to every statically linked
 library in this binary.
 
+## The sibling binary
+
+`FFX2_RECON.md` is the recon pass on `FFX-2.exe`, which ships in the same install directory. Short
+version: it is a sibling out of the same Perforce depot, built the same day, same PhyreEngine
+3.9.0.0, and **every naming vector in this document is present there too at the same magnitude** -
+the `__FUNCTION__` assert triple (781 functions, zero conflicts), the embedded PS2 source tree, the
+`rc*` and `yi*` and `op_*` libraries, full RTTI, Lua 5.2.1. One warning carried in that doc: FFX-2's
+`CHR` is `0x910`, not `0x880`, so `ffx_types.h` does not transfer wholesale.
+
 A name prefixed `maybe_` is a guess. Everything in the Exact table above is not.

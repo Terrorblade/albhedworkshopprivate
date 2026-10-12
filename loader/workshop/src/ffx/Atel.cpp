@@ -944,6 +944,15 @@ namespace ffx
 		return IdInRange(id) ? id : -1;
 	}
 
+	void* ChrForPartyCharacter(int charIndex)
+	{
+		const int actor = ActorIdForPartyCharacter(charIndex);
+		if (actor < 0)
+			return NULL;
+
+		return ChrForActor(actor);
+	}
+
 	// ---------------------------------------------------------------------------
 	// The player position cache
 	// ---------------------------------------------------------------------------

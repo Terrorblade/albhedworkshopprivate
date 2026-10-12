@@ -16,26 +16,51 @@
 // vendored SDK headers and against the compiler that builds this. Read the
 // provenance comments there before changing anything in this file.
 //
-// ## No callbacks, deliberately
+// ## One callback, and it is not optional
 //
-// Steam would normally tell us about an incoming session with a
-// P2PSessionRequest_t callback, which means handing Steam a hand-rolled
-// CCallbackBase for it to call into. That object's layout is verified but its
-// dispatch is the one thing never actually exercised, and it is the only place we
-// give Steam something to call rather than calling Steam ourselves.
+// P2PSessionRequest_t is registered. An earlier version of this file skipped it
+// on the theory that we always know every peer's SteamID up front and so could
+// just accept everyone on a timer. That is true of a CLIENT, which is handed the
+// host's SteamID by the player. IT IS FALSE OF A HOST, which is given nothing and
+// has to learn a joiner's SteamID from the joiner.
 //
-// So we skip it. Two facts from the SDK make that work: AcceptP2PSessionWithUser
-// is safe to call repeatedly, and SendP2PPacket implicitly accepts a peer's
-// pending request. So each end accepts the other on a timer and sends anyway.
-// At three players that is a handful of extra calls and it retires the only
-// unverified item on the list.
+// Skipping it deadlocks a real join, and this is what that looked like:
+//
+//   client   steam: peer 0 is SteamID 765...079
+//   client   net: joining SteamID 765...079
+//   host     (nothing, for two solid minutes)
+//
+// ISteamNetworking will not hand you a packet from a peer you have no session
+// with. It holds the packet, posts P2PSessionRequest_t, and drops the packet if
+// you never accept. So the host's "learn the sender from ReadP2PPacket" path sits
+// downstream of the very thing that is blocking it:
+//
+//   accept needs the SteamID -> the SteamID comes from a packet -> the packet
+//   needs the session accepted
+//
+// The callback is the only thing that breaks that circle, because it is the only
+// place Steam volunteers the SteamID of someone you have never talked to.
+//
+// P2PSessionConnectFail_t is registered too, so a join that cannot get through
+// says so instead of looking like a hang. Error 4 is a timeout, which in practice
+// means the far end never accepted.
+//
+// ## The dispatch, which we checked rather than assumed
+//
+// FFX.exe calls SteamAPI_RunCallbacks in exactly one place, FFXApplication
+// ::animate at RVA 0x0042F52C, gated on a byte set when SteamAPI_Init succeeds.
+// So the game pumps callbacks once per frame and we must not pump them too.
+//
+// That call is INSIDE animate, and a mod's animate hook wraps animate, so a
+// handler can re-enter us while we are mid-hook. Handlers therefore do nothing
+// but push a SteamID onto a queue, and Pump drains it on our own tick.
 //
 // ## Who dials whom
 //
 // A client needs the host's SteamID up front, since it has to send the first
-// packet. The host needs nothing: ReadP2PPacket reports the sender, so the host
-// learns a client's SteamID from its first message, exactly like the UDP
-// backend's accept-unknown-senders mode.
+// packet. The host needs nothing in advance: it learns a joiner from
+// P2PSessionRequest_t, accepts the session, and the joiner's next send arrives
+// normally.
 //
 // ## The thing that will bite you
 //
@@ -88,6 +113,17 @@ namespace workshop
 		// control flow. Returns false when there is no session with that peer.
 		bool DescribeLink(int peer, char* out, int count) const;
 
+		// ---------------------------------------------------------------------------
+		// CALLED BY STEAM, NOT BY YOU.
+		//
+		// These two are what the registered callbacks funnel into. They run inside
+		// SteamAPI_RunCallbacks, which FFX calls from animate, so they can land in the
+		// middle of a mod that hooks animate. They do the least possible: record and
+		// return. Pump does the real work.
+		// ---------------------------------------------------------------------------
+		void NoteSessionRequest(uint64 steamId);
+		void NoteConnectFail(uint64 steamId, int sessionError);
+
 	private:
 		struct PeerEntry
 		{
@@ -109,6 +145,12 @@ namespace workshop
 		// documented as safe but it is still an IPC round trip to the Steam client,
 		// and once every couple of seconds is plenty for a handshake.
 		unsigned long frameCounter;
+
+		// Session requests handed to us by Steam and not yet turned into peers. Written
+		// only by NoteSessionRequest, drained only by Pump. Small on purpose: a request
+		// we have no room for is a peer we could not have accepted anyway.
+		uint64 incoming[TransportMaxPeers];
+		volatile long incomingCount;
 
 		unsigned long sent;
 		unsigned long received;

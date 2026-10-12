@@ -18,7 +18,25 @@ namespace ffx
 	namespace
 	{
 
-		const int kFormatVersion = 1;
+		// BUMP THIS WHENEVER THE CONTENT OF A LIST CHANGES, not just its file format.
+		// A mismatch makes every cache on disk unusable and forces a rebuild from the
+		// game, which is the only way a fix to a label reaches a machine that already
+		// has a cache. The key only covers the archive, so it cannot notice that our
+		// own reader got better.
+		//
+		// 2: the character, equipment and model names are decoded now. Version 1 wrote
+		// FFX's raw glyph bytes into models.tsv, so Tidus was stored as 63 78 73 84 82
+		// and drawn as line noise.
+		// 3: a blanked engine record decodes to "????" rather than to nothing, so
+		// version 2 stored Rikku's model as question marks instead of falling back.
+		// 4: monster models carry their bestiary name now, so 347 rows of models.tsv
+		// changed from "m120  (mon)" to "m120  Evrae Altana (mon)".
+		// 5: a w_name.bin row holds seven names, one per character, and version 4 wrote
+		// only the first. Every one of its 170 rows said Tidus gear, so Nirvana and
+		// World Champion were nowhere in the file.
+		// 6: npc and object models carry the places they are used in now, because FFX
+		// ships no npc names at all. Version 5 wrote 239 rows of bare "n030  (npc)".
+		const int kFormatVersion = 6;
 
 		// Six game lists, one model list, five kernel tables.
 		const int kMaxLists = 24;

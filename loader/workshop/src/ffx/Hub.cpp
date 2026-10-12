@@ -172,10 +172,25 @@ namespace ffx
 			const DWORD expect = (DWORD)(UINT_PTR)ModuleAddress(Rva::ExitApplicationExpected);
 			if (held != expect)
 			{
-				Log("hub: the exitApplication slot holds 0x%08X, not 0x%08X, so it is left "
-				    "alone and EventShutdown will not be raised",
-				    held, expect);
-				return false;
+				// Inside the game and not the function we named means a different build,
+				// and overwriting the slot then would be writing a hook onto the wrong
+				// function.
+				if (InsideImage((const void*)(UINT_PTR)held))
+				{
+					Log("hub: the exitApplication slot holds 0x%08X, not 0x%08X, and that "
+					    "is inside the game, so these addresses are for a different "
+					    "build. Left alone, EventShutdown will not be raised.",
+					    held, expect);
+					return false;
+				}
+
+				// Outside the image, so another plugin hooked it first. A vtable slot
+				// chains naturally: we save what is in it and call that. Nothing below
+				// needs to change, the whole function already works that way.
+				Log("hub: the exitApplication slot is already hooked at 0x%08X by another "
+				    "plugin, so we are chaining in front of it. EventShutdown works and "
+				    "so does theirs.",
+				    held);
 			}
 
 			DWORD previous = 0;
@@ -208,8 +223,24 @@ namespace ffx
 		// FFX_Player__stepControl, the first call in FFX_MainStep's inner sub-step loop.
 		// It returns a CHR* and takes nothing.
 		typedef void*(__cdecl* StepControlFn)(void);
-		CallSitePatch g_subStepSite = { 0, false };
+		CallSitePatch g_subStepSite = { 0, false, NULL, false };
 
+		// NOT GUARANTEED TO RUN EVERY SUB STEP, and the reason is structural rather
+		// than a bug to fix here.
+		//
+		// This is a call site patch, so it composes as a chain and the plugin that
+		// patched the site LAST runs FIRST. Pilgrimage Together's player drive patches
+		// the same site after the hub does, and when it has somebody to drive it
+		// deliberately does not call through, because replacing the engine's movement
+		// driver is the whole point of it. A swallowed call means this function does not
+		// run, so g_subSteps does not advance and EventSubStep is not published for that
+		// sub step.
+		//
+		// Nothing subscribes to EventSubStep today. If something does, this needs a way
+		// for a hook in front to say "a sub step happened, I just did not want the
+		// engine's driver", which is about ten lines and is not worth writing for zero
+		// subscribers. It is written down here because the symptom would otherwise be a
+		// plugin whose sub step handler mysteriously stops while anybody is walking.
 		void* __cdecl HubStepControl()
 		{
 			// BEFORE the original, because the whole point of a sub-step event is to let a
@@ -218,8 +249,11 @@ namespace ffx
 			++g_subSteps;
 			Publish(EventSubStep, CurrentStep(), (uint32_t)g_subSteps);
 
-			StepControlFn original = (StepControlFn)ModuleAddress(Rva::PlayerStepControl);
-			if (!Readable((void*)original, 1))
+			// site.previous, NOT the function by address. Another plugin may have
+			// patched this site before we loaded, in which case we are in front of its
+			// hook and reaching for the real function would skip it.
+			StepControlFn original = (StepControlFn)g_subStepSite.previous;
+			if (!original || !Readable((void*)original, 1))
 				return NULL;
 			return original();
 		}

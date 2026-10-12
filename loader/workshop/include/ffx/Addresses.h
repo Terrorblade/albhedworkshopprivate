@@ -70,6 +70,7 @@
 #include "ffx/addresses/Debug.h"
 #include "ffx/addresses/Encounter.h"
 #include "ffx/addresses/EscMenu.h"
+#include "ffx/addresses/EventPlaces.h"
 #include "ffx/addresses/Input.h"
 #include "ffx/addresses/GameState.h"
 #include "ffx/addresses/MagicDll.h"

@@ -184,12 +184,16 @@ namespace pilgrimage
 		}
 		if (pressed[KeyF11])
 		{
+			// BARE F11 IS THE OVERLAY'S, NOT OURS. The overlay owner watches for it in
+			// the window procedure and ignores it when a modifier is held, which is
+			// why ctrl and shift still belong to us. This used to call
+			// ToggleOverlayPanel and the overlay used to be told to give the key up,
+			// but the toggle key is one setting for the whole process now, so a plugin
+			// taking it would be taking it from every other plugin too.
 			if (CtrlHeld())
 				InterlockedExchange(&requests.logWorldSync, 1);
 			else if (ShiftHeld())
 				InterlockedExchange(&requests.logTriggerPass, 1);
-			else
-				ToggleOverlayPanel();
 		}
 	}
 

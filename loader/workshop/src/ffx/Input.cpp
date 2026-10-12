@@ -72,6 +72,12 @@ namespace ffx
 		typedef double(__fastcall* CameGetYawFn)(int);
 
 		workshop::CallSitePatch g_yawSites[4];
+
+		// What the four sites called before we patched them, which is normally the
+		// engine's own yaw thunk and is another plugin's hook when one got here first.
+		// ONE value for all four, because the hook body cannot tell which site called
+		// it. InstallPlayerCameraOverride refuses if the four do not agree.
+		void* g_yawPrevious = NULL;
 		bool g_yawPatched = false;
 
 
@@ -97,8 +103,8 @@ namespace ffx
 			// Not driving anybody, so this is the shipped game asking the shipped
 			// question. Pass it through, with the ecx argument the site set up, which
 			// means doing it in assembly rather than calling a typed pointer.
-			CameGetYawFn fn = (CameGetYawFn)ModuleAddress(Rva::PlayerCameGetYawThunk);
-			if (!Readable((void*)fn, 1))
+			CameGetYawFn fn = (CameGetYawFn)g_yawPrevious;
+			if (!fn || !Readable((void*)fn, 1))
 				return 0.0;
 
 			// The real function writes through its ecx argument and reads it back, so it
@@ -136,11 +142,18 @@ namespace ffx
 
 			INT32 relative = 0;
 			memcpy(&relative, call + 1, sizeof(relative));
-			if (call + 5 + relative != (const BYTE*)ModuleAddress(Rva::PlayerCameGetYawThunk))
+			const BYTE* target = call + 5 + relative;
+
+			// Another plugin patching these sites first is allowed, and PatchCallSite
+			// chains behind it. What is not allowed is a target inside the game that is
+			// not the yaw thunk, because that means a different build.
+			if (target != (const BYTE*)ModuleAddress(Rva::PlayerCameGetYawThunk)
+			    && workshop::InsideImage(target))
 			{
-				Log("player camera override: site %d at RVA 0x%08X does not call the camera "
-				    "yaw thunk, refusing to patch any of the four",
-				    i, sites[i]);
+				Log("player camera override: site %d at RVA 0x%08X calls 0x%08X inside the "
+				    "game rather than the camera yaw thunk, so these addresses are for a "
+				    "different build. Refusing to patch any of the four.",
+				    i, sites[i], (unsigned)(UINT_PTR)target);
 				return false;
 			}
 		}
@@ -156,6 +169,26 @@ namespace ffx
 				Log("player camera override: site %d refused AFTER verifying. The driver is "
 				    "now half patched, which will diverge. Restart the game.",
 				    i);
+				return false;
+			}
+
+			// All four have to have been calling the SAME thing, because the hook body
+			// has no way to tell which site invoked it and so has one route back to the
+			// original. Four sites that were pointing at different places would mean
+			// another plugin patched a subset, and passing through to the wrong one of
+			// them is worse than not installing.
+			if (i == 0)
+			{
+				g_yawPrevious = g_yawSites[0].previous;
+			}
+			else if (g_yawSites[i].previous != g_yawPrevious)
+			{
+				Log("player camera override: site %d was calling 0x%08X but site 0 was "
+				    "calling 0x%08X, so another plugin patched some of the four and not "
+				    "the others. There is one route back to the original, so refusing. "
+				    "The driver is now half patched, restart the game.",
+				    i, (unsigned)(UINT_PTR)g_yawSites[i].previous,
+				    (unsigned)(UINT_PTR)g_yawPrevious);
 				return false;
 			}
 		}

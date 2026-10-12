@@ -17,6 +17,12 @@ namespace pilgrimage
 		volatile LONG entrySlots[MaxClones];
 		volatile LONG activeEntry = 0;
 
+		// peer -> roster entry, -1 for unbound. See the header for why it lives here.
+		// Spelled out as three initialisers rather than left to zero init, because a
+		// zero here would read as "peer 0's body is entry 0" and entry 0 is a real
+		// entry. ResetRoster clears it again at plugin start.
+		volatile LONG entryForPeer[workshop::MaxPlayers] = { -1, -1, -1 };
+
 	} // namespace
 
 	void ResetRoster()
@@ -24,6 +30,7 @@ namespace pilgrimage
 		for (LONG i = 0; i < MaxClones; ++i)
 			entrySlots[i] = -1;
 		activeEntry = 0;
+		ClearPeerBodies();
 	}
 
 	LONG FirstFreeEntry()
@@ -62,6 +69,106 @@ namespace pilgrimage
 		if (entry < 0 || entry >= MaxClones)
 			return;
 		InterlockedExchange(&entrySlots[entry], -1);
+
+		// UNBIND ANYBODY POINTING AT IT, in the same breath as releasing it. An entry
+		// is reused by the next spawn, so a peer left pointing at a released entry
+		// would silently acquire whatever body got that entry next. That is the same
+		// class of bug as the reused-pool-slot one PruneDeadClones guards against,
+		// one level up.
+		for (int peer = 0; peer < workshop::MaxPlayers; ++peer)
+		{
+			if (entryForPeer[peer] != entry)
+				continue;
+			InterlockedExchange(&entryForPeer[peer], -1);
+			Log("clone roster: peer %d's body was entry %ld, which has just been "
+			    "released, so that peer has no body now",
+			    peer, entry);
+		}
+	}
+
+	// ---------------------------------------------------------------------------
+	// The peer -> body map. See the header.
+	// ---------------------------------------------------------------------------
+
+	void BindPeerBody(int peer, LONG rosterEntry)
+	{
+		if (peer < 0 || peer >= workshop::MaxPlayers)
+		{
+			Log("clone roster: refusing to bind peer %d, the session only has peers 0 "
+			    "to %d",
+			    peer, workshop::MaxPlayers - 1);
+			return;
+		}
+
+		if (rosterEntry < -1 || rosterEntry >= MaxClones)
+		{
+			Log("clone roster: refusing to bind peer %d to entry %ld, which is not an "
+			    "entry",
+			    peer, rosterEntry);
+			return;
+		}
+
+		const LONG previous = entryForPeer[peer];
+		if (previous == rosterEntry)
+			return;
+
+		InterlockedExchange(&entryForPeer[peer], rosterEntry);
+
+		if (rosterEntry < 0)
+			Log("clone roster: peer %d has no body now (was entry %ld)", peer, previous);
+		else if (previous >= 0)
+			Log("clone roster: peer %d's body moved from entry %ld to entry %ld, pool "
+			    "slot %ld",
+			    peer, previous, rosterEntry, SlotOfEntry(rosterEntry));
+		else
+			Log("clone roster: peer %d's body is entry %ld, pool slot %ld", peer,
+			    rosterEntry, SlotOfEntry(rosterEntry));
+	}
+
+	LONG PeerBodyEntry(int peer)
+	{
+		if (peer < 0 || peer >= workshop::MaxPlayers)
+			return -1;
+		return entryForPeer[peer];
+	}
+
+	Character* PeerBodyCharacter(int peer)
+	{
+		const LONG entry = PeerBodyEntry(peer);
+		if (entry < 0)
+			return NULL;
+
+		const LONG slot = SlotOfEntry(entry);
+		if (slot < 0)
+			return NULL;
+
+		Character* chr = CharacterFromSlot(slot);
+		return IsLive(chr) ? chr : NULL;
+	}
+
+	int PeerOfBody(Character* chr)
+	{
+		if (!chr)
+			return -1;
+		for (int peer = 0; peer < workshop::MaxPlayers; ++peer)
+			if (PeerBodyCharacter(peer) == chr)
+				return peer;
+		return -1;
+	}
+
+	int PeerBodyCount()
+	{
+		int count = 0;
+		for (int peer = 0; peer < workshop::MaxPlayers; ++peer)
+			if (PeerBodyCharacter(peer))
+				++count;
+		return count;
+	}
+
+	void ClearPeerBodies()
+	{
+		for (int peer = 0; peer < workshop::MaxPlayers; ++peer)
+			InterlockedExchange(&entryForPeer[peer], -1);
 	}
 
 	LONG ActiveEntry()

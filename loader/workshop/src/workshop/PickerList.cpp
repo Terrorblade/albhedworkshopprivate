@@ -1,5 +1,6 @@
 #include "workshop/PickerList.h"
 
+#include <intrin.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -38,9 +39,34 @@ namespace workshop
 		description[0] = 0;
 	}
 
+	// ---------------------------------------------------------------------------
+	// A LIST IS FILLED ON ONE THREAD AND READ ON ANOTHER, so the order these fields
+	// are published in matters.
+	//
+	// The save derived lists are rebuilt from the game's step thread, because the
+	// rebuild calls engine code and that is the only thread it is safe on, while the
+	// panel reads them from whichever thread calls Present. Those are genuinely
+	// different threads in FFX: one run measured the step on 31392 and Present on
+	// 20640.
+	//
+	// count is therefore the gate. A reader walks items[0..count), so as long as an
+	// entry is complete before count admits it, and as long as count drops to zero
+	// before the arena behind it is reused, the worst a reader can see is a list that
+	// is shorter than it will be a frame later. Get the order wrong and it sees an
+	// item whose label points at bytes being overwritten.
+	//
+	// _WriteBarrier is a compiler barrier and nothing more, which is all that is
+	// needed: x86 does not reorder one store ahead of another, so the only risk was
+	// the optimiser hoisting the count update. It costs nothing at runtime, which
+	// matters because the model list runs this 892 times.
+	// ---------------------------------------------------------------------------
 	void PickerList::Reset(const char* newSource)
 	{
+		// FIRST, AND BEHIND A BARRIER, so a reader has stopped walking items before
+		// the arena those items point into is handed out again.
 		count = 0;
+		_WriteBarrier();
+
 		arenaUsed = 0;
 		overflowed = false;
 		live = false;
@@ -72,6 +98,9 @@ namespace workshop
 
 		items[count].id = id;
 		items[count].label = stored;
+
+		// LAST, so the entry is whole before count says it exists.
+		_WriteBarrier();
 		++count;
 		return true;
 	}

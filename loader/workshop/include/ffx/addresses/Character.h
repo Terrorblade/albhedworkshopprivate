@@ -219,6 +219,40 @@ namespace ffx
 		// even with debug mode on. Use ChrRomIndexTables.
 
 		// ---------------------------------------------------------------------------
+		// DEBUG MODE BREAKS EVERY MODEL LOAD, AND THIS BYTE IS THE FIX.
+		//
+		// ChLoadChrData opens with "cmp g_ffxDebugMode, dl" then "jz" to the retail
+		// path. With the flag set the jump is not taken and it instead looks the chrId
+		// up in that dead per-category table:
+		//
+		//   00425D25  mov  ecx, g_ffxChrDebugTableCountByCat[eax*4]
+		//   00425D34  jle  short loc_425D55          ; count <= 0
+		//   00425D56  push offset "chrdata %x is not exist\n"
+		//   00425D65  xor  eax, eax                  ; RETURNS NULL
+		//
+		// The count is always 0, because ChInit only fills it when debug mode is
+		// already set at boot AND /ffx/proj2/chr/common/<dir>.tbl reads back, and that
+		// file does not ship. So with debug mode on, ChLoadChrData returns null for
+		// every chrId in the game. ChAllocate then does
+		//
+		//   00424FFA  push 1
+		//   00424FFC  call ChLoadChrData              ; null
+		//   00425006  mov  byte ptr [esi+0F8h], 1     ; null store, instant crash
+		//
+		// which is a guaranteed fault on the next character spawn or map load.
+		//
+		// WHAT THE PATCH COSTS: nothing. Compare the two paths. The debug side ends at
+		// "lea ebx, [edx+30h]" and the retail side at "mov ebx, offset byte_B8FBEB",
+		// and then both fall into the same code at 0x00425D7B. The only difference is
+		// ebx, which becomes CHRDATA.m_sourceTag, a name string for a debug print. In
+		// retail that string can never be reached, so forcing the jump is lossless and
+		// the function behaves exactly as it does with debug mode off.
+		//
+		// ffx::RestoreModelLoadUnderDebug() in ffx/DebugMenu.h writes it, after
+		// checking the two bytes really are 74 58.
+		const DWORD ChLoadChrDataDebugBranch = 0x00425D1C;
+
+		// ---------------------------------------------------------------------------
 		// Per-character setters
 		// ---------------------------------------------------------------------------
 		const DWORD ChSetByte184 = 0x00435B50;    // int (Character *, char)
@@ -331,6 +365,52 @@ namespace ffx
 		const DWORD WalkmeshTriCount = 0x00F01A88; // int
 		const DWORD WalkmeshScale = 0x00F01A90;    // float
 
+		// ---------------------------------------------------------------------------
+		// THE PLAYER-ONLY SURFACES, which are a co-op problem rather than a placement
+		// one.
+		//
+		// MapIsTriBlockedForChr is BOOL __cdecl (Character *chr, int tri) and returns
+		// true when that triangle is a WALL FOR THAT CHARACTER. Most of its surface
+		// codes do not care who the character is. Two of them do:
+		//
+		//   code 2    a wall for every character that is NOT the player, so a
+		//             player-only passage
+		//   code 14   a wall ONLY for the player
+		//
+		// and both ask it as `chr == FFX_Ch_GetPlayerChr()`, which is the single
+		// global ControlledChr below. In co-op each machine points that global at the
+		// body its own player drives, so the two machines give opposite answers for
+		// the same character on the same triangle. 6087 code-14 triangles ship. One
+		// player walks through a wall the other is stopped by, and no checksum region
+		// contains a position, so nothing notices.
+		//
+		// ffx::InstallPlayerBodyWalkmesh swaps the identity test for "is this ANY
+		// player's body", which both machines can answer the same way.
+		//
+		// IT HAS EXACTLY ONE CALLER in the binary, inside
+		// FFX_Ch_WalkmeshTestEdgeCrossing, checked rather than assumed. So the call
+		// site is patched and the function is left byte for byte intact, which is what
+		// lets the replacement fall back to it for every code it does not handle.
+		// ---------------------------------------------------------------------------
+		const DWORD MapIsTriBlockedForChr = 0x0043E4E0;
+
+		// That one call site. It holds E8 95 07 00 00, and PatchCallSite resolves the
+		// displacement against MapIsTriBlockedForChr before it writes anything.
+		const DWORD MapIsTriBlockedCallSite = 0x0043DD46;
+
+		// int[], the surface code indirection table, and THE BASE IS BIASED. The
+		// engine reads base[code] for code 48..63 and for no other index, which lands
+		// at 0x1301A98..0x1301AD8 in memory. The label itself sits 0xAC before
+		// WalkmeshTris above, so index 43 would read WalkmeshTris and index 47 would
+		// read WalkmeshScale. Nothing does that, because the engine never indexes
+		// outside 48..63, but do not treat this as an array you may read from 0.
+		//
+		// An ATEL script writes it through FFX_Map_SetGroundTypeRemap 0x43E9E0 with no
+		// bounds check, so which surface classes are walls is decided at run time and
+		// is not in the map file. A script can also point two entries at each other,
+		// which makes the engine's own resolve loop spin forever.
+		const DWORD GroundTypeRemapBiasedBase = 0x00F019D8;
+
 		// Byte. Non-zero disables FFX_Ch_UpdateMotionAll for every character, so it is
 		// worth logging at spawn time to rule out "motion is globally off".
 		const DWORD MotionKillSwitch = 0x00EFBBBB;
@@ -415,6 +495,72 @@ namespace ffx
 		const DWORD CameSlots = 0x00D37540;      // 3 slots of 0xDA0
 
 		// ---------------------------------------------------------------------------
+		// THE CAMERA'S PRIORITY SYSTEM, and the one thing worth knowing about it is
+		// that the camera that follows the player is the LOWEST priority thing in it.
+		//
+		// A camera is driven through a HANDLE, packed as: bits 0-7 screen, 8-15 the
+		// priority slot, 16-19 a class, 24-31 an owner id. Four priority slots per
+		// screen, three screens. Class 1 is map, 3 event, 5 battle, 7 viewer, and
+		// FFX_Came_OpenHandle REJECTS class 0 outright at the `a3 & 0xF` test.
+		//
+		// FFX_PlayerCam_Publish asks for class 0. So it always gets handle 0, and
+		// handle 0 takes the other branch of FindPrioSlotForHandle, which proceeds
+		// ONLY when no priority slot on that screen has a class with a clear flag
+		// byte. Checked against FFX_Came_SetPos, which writes nothing at all when
+		// FindPrioSlotForHandle returns 0.
+		//
+		// What that means in practice: the free-follow camera that reads
+		// g_ffxControlledChr publishes only while nothing else holds a camera. Any map
+		// or event script camera silently outranks it. So "the camera follows the
+		// player binding" is true and conditional, and FollowCameraIsDriving is how to
+		// tell which of the two situations you are in rather than guessing.
+		// ---------------------------------------------------------------------------
+
+		// int (int handle). -1 means the caller may write, 0 means it may not. The
+		// sense is backwards from everything else in this file, and it is the engine's
+		// own, verified against both of its callers.
+		const DWORD CameFindPrioSlotForHandle = 0x003BD560;
+
+		// int (BYTE screen). The handle currently winning on that screen, or 0.
+		const DWORD CameGetActiveHandle = 0x003BD300;
+
+		// int (BYTE screen). Which of the four priority slots is winning, 0 to 3.
+		const DWORD CameGetActivePrioSlot = 0x003BD340;
+
+		// int (int owner, unsigned screen, char classCode). Returns a packed handle, or
+		// 0 when the class nibble is zero or the screen is above 2.
+		const DWORD CameOpenHandle = 0x003BD110;
+		const DWORD CameCloseHandle = 0x003BD040;
+
+		// void (int handle, char refOrCam, float *outVec3). refOrCam 0 is the look-at
+		// point, 1 is the eye.
+		const DWORD CameGetPos = 0x003BD470;
+
+		// int (int handle, char refOrCam, short actorId0, short actorId1,
+		//      const int *offsetVec4).
+		//
+		// THE ONLY ENGINE FUNCTION THAT EXPLICITLY SETS A FOLLOW TARGET. Sets mode 3,
+		// "act", whose step handler averages the two actors' positions and adds the
+		// offset, so a two-target midpoint camera is already supported. 0xFFFF for an
+		// unused id. The game reaches it through ATEL syscalls came:009 and came:039.
+		//
+		// THE TARGET IS AN ATEL ACTOR ID, NOT A CHR. That matters a lot here: a
+		// character this mod allocated itself has no ATEL actor, so
+		// FFX_Atel_FindActorIdByChr returns -1 for it and it CANNOT be a camera target
+		// this way. A co-op body is exactly that case. For those, move the player
+		// binding instead and let the free-follow camera do the work.
+		const DWORD CameSetTargetActors = 0x003BEEB0;
+		const DWORD CameSetTargetActorHeight = 0x003BEFC0; // the mode 10 sibling
+
+		// AtelFindActorIdByChr lives in addresses/Atel.h, where the rest of the actor
+		// lookups are, and CameOverrideFlag in addresses/Cutscene.h, because the FMV
+		// path is what sets it. Both are needed here and neither is redefined, since
+		// one address defined twice is one address that can disagree with itself.
+
+		// const char *[], the mode names the engine prints. Indexed by the mode byte.
+		const DWORD CameModeNames = 0x00844640;
+
+		// ---------------------------------------------------------------------------
 		// The graphics context. Only used for the cull override experiment, and see the
 		// warning on it in diag/RenderProbe.cpp before trusting that experiment.
 		// ---------------------------------------------------------------------------
@@ -460,6 +606,7 @@ namespace ffx
 				ChCategoryToLetter,
 				ChLetterToCategory,
 				ChLoadChrData,
+				ChLoadChrDataDebugBranch,
 				ChFindChrData,
 				ChBindChrData,
 				ChBuildSkeletonInstance,
@@ -500,6 +647,9 @@ namespace ffx
 				WalkmeshTris,
 				WalkmeshTriCount,
 				WalkmeshScale,
+				MapIsTriBlockedForChr,
+				MapIsTriBlockedCallSite,
+				GroundTypeRemapBiasedBase,
 				MotionKillSwitch,
 				ChrArray,
 				ChrCount,
@@ -513,6 +663,15 @@ namespace ffx
 				Application,
 				CameActiveSlot,
 				CameSlots,
+				CameFindPrioSlotForHandle,
+				CameGetActiveHandle,
+				CameGetActivePrioSlot,
+				CameOpenHandle,
+				CameCloseHandle,
+				CameGetPos,
+				CameSetTargetActors,
+				CameSetTargetActorHeight,
+				CameModeNames,
 				GfxContext,
 			};
 			if (count)

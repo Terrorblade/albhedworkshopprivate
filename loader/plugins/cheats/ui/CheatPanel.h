@@ -23,6 +23,22 @@ namespace cheats
 	// UI calls. Cheap, idempotent, and safe from any thread.
 	void RequestCheatListRefresh();
 
+	// Asks for the npc place sweep: 397 event packages, about 58 MB, half a minute.
+	//
+	// FFX ships no npc names, so the only label available for a model like n030 is the
+	// places the game puts it. Working that out means reading every event package, and
+	// that cannot be done at boot: four different ways of scheduling it there all made
+	// the game stop stepping for long enough to trip the hang watchdog, including one
+	// that slept for 80% of its life. So it is a button.
+	//
+	// Starts a worker thread and returns at once. When it finishes, the next simulation
+	// step rebuilds the model list and rewrites the export cache, so this is a one time
+	// cost per archive and not per boot.
+	void RequestPlaceSweep();
+
+	// True between the request and the sweep finishing, for a panel's status line.
+	bool PlaceSweepRunning();
+
 	// Tries the export cache, once per process. True when every list came off disk
 	// and the engine was never asked for any of them.
 	//

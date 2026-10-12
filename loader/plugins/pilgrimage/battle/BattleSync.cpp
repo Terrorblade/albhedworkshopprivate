@@ -142,9 +142,27 @@ namespace pilgrimage
 			if (LocalOwnsUnit(unitIndex))
 				return true;
 
-			// No log here. This is the common case, once per enemy-side and remote-side
-			// turn for the whole battle, and a log line per turn would bury everything
-			// else. The count is in the status line and ffx::BattleMenuOpensSuppressed.
+			// ---------------------------------------------------------------------------
+			// ONE LINE PER TURN, which this used to refuse to write.
+			//
+			// The old reasoning was that a line per turn would bury everything else. It
+			// is the wrong trade. FFX_Btl_SendMenu claims the turn queue entry before it
+			// calls FFX_BtlMenu_Open and its loop returns the moment the head is already
+			// claimed, so this runs AT MOST ONCE PER TURN, not once per frame. That is
+			// the same rate as a turn, which is exactly the granularity worth having.
+			//
+			// And without it the mechanism leaves no trace at all. A suppressed menu
+			// looks identical to a menu that was never going to open, so "did the
+			// suppression fire or is my ownership table wrong" was a question the log
+			// could not answer. Those two have completely different fixes.
+			// ---------------------------------------------------------------------------
+			const int owner = BattleOwnerOfUnit(unitIndex);
+			Log("battle: unit %d's turn came up and peer %d drives them, not us, so the "
+			    "command menu stayed shut here. Waiting for their action to come over.",
+			    unitIndex, owner);
+
+			_snprintf_s(g_status, sizeof(g_status), _TRUNCATE,
+			    "battle: unit %d is peer %d's turn, menu shut here", unitIndex, owner);
 			return false;
 		}
 

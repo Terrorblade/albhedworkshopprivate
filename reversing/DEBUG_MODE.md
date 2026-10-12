@@ -57,6 +57,12 @@ There are exactly three instructions in the whole binary that store to it.
    0x641952. I did not verify that the `argv` reaching it is the real process command line
    rather than a synthesised one, so treat "launch with the argument debug" as plausible but
    untested. Writing the byte is the sure thing.
+   Resolved 2026-10-11 (Zanarkand command line pass): it is the real command line. `WinMain 0x62EE50`
+   -> `GetCommandLineW` -> `CommandLineToArgvW` -> `WideCharToMultiByte(CP_ACP)` narrow argv ->
+   `Phyre__PApplication__run(argv, argc)` -> `sub_629AB0` -> `Phyre__PApplication__onInit` ->
+   `FFXApplication__initApplication` stores argv at app+0x3A4 and argc at app+0x3A8 -> `FFX_BootSequence
+   0x6416C0` -> `sub_633670(FFX_ParseCommandLineAndInitDebug_tramp, &result, argc, argv)`. So launching
+   FFX.exe with `debug` as the first argument is as sure as writing the byte.
 3. `0x887C98`, inside an unnamed function I created and named `FFX_SetDebugMode_ORPHAN` at
    `0x887C80`:
 
@@ -901,8 +907,8 @@ RVA. Kind is fn, global or table. Everything below was read out of the IDB in th
 
 * Which of modes 0 to 4 is which page. Five enable functions and three drawn page objects are
   unmatched. Five short decompiles away.
-* Whether `FFX_ParseCommandLineAndInitDebug` is handed the real process `argv`. The parse is
-  certain, the plumbing above it is not.
+* Resolved 2026-10-11: `FFX_ParseCommandLineAndInitDebug` is handed the real process `argv`, the chain
+  is written out beside the argv check above.
 * Whether `SG_DebugGui_DrawAll`'s display list actually reaches the Phyre renderer on PC. Every
   function on the path is full-body real code and the gates open, but I stopped before the final
   vertex submission.
@@ -941,7 +947,8 @@ Verified by reading instructions or raw bytes, not by trusting Hex-Rays or an xr
 
 Inferred, not instruction-verified:
 
-* That `FFX_ParseCommandLineAndInitDebug` is handed the real process `argv`.
+* That `FFX_ParseCommandLineAndInitDebug` is handed the real process `argv` (verified 2026-10-11, see the
+  chain beside the argv check above).
 * That `SG_DebugGui_DrawAll`'s display list reaches the screen on PC. Every function on the path
   is full-body code and the gates open, but I did not follow the submission to the renderer.
 * The mode-to-page mapping for modes 0 to 4.

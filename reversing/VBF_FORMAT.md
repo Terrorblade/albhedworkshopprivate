@@ -30,7 +30,8 @@ All little endian. Offsets inside the header are absolute file offsets.
 0x0C  u32  0
 0x10       md5Key[entryCount]        16 bytes each, sorted
 +          entry[entryCount]         32 bytes each, see below
-+     u32  nameBlobSize
++     u32  nameBlobSize              counts ITSELF plus the blob, so the chunk table is at
++                                    (offset of this field) + nameBlobSize
 +          nameBlob                  NUL terminated lowercased paths
 +          u16 chunkStoredSize[]     one per 64 KiB chunk, runs to headerSize
 headerSize data, chunks stored back to back per entry
@@ -39,6 +40,11 @@ EOF-16     md5 of bytes [0, headerSize)
 
 `headerSize` doubles as the absolute offset of the first entry's data, so there is no padding
 between the header and the payload.
+
+On `nameBlobSize`: the value includes its own four bytes. In `metamenu.vbf` the field holds 7618
+and the names occupy 7614 bytes, and the chunk table starts exactly at the field's offset plus 7618
+(checked 2026-10-11, the byte before it is the final NUL and the remaining header length is even).
+`tools/vbf.py` has always computed it this way, the text above used to leave it implicit.
 
 ### Entry, 32 bytes
 

@@ -45,10 +45,40 @@ namespace pilgrimage
 
 	void ResetRemotePlayers();
 
-	// Bind a peer to a clone roster entry, so that peer's input drives that character.
-	// Pass -1 as the entry to unbind. Peer 0 is rejected: the host's own character is the
-	// bound player and the engine drives it.
-	void BindRemotePlayer(int peer, LONG rosterEntry);
+	// Stop driving every remote body and let go of their trigger slots, without
+	// tearing the session down. Called when a BATTLE starts, because the field relay
+	// has nothing to say in a battle and a stale trigger slot would keep describing a
+	// character standing somewhere that no longer exists.
+	//
+	// Separate from ResetRemotePlayers because this one also clears the trigger slots.
+	// A reset only forgets the per-peer edge and coast state.
+	void ParkRemotePlayers();
+
+	// ---------------------------------------------------------------------------
+	// THIS IS NOT HOW A REMOTE PLAYER GETS A BODY. READ THIS BEFORE USING IT.
+	//
+	// A remote player's body is the PARTY CHARACTER that peer owns, resolved through
+	// coop/Ownership.h and ffx::ChrForPartyCharacter. world/PlayerDrive.cpp does that
+	// for every peer, the local one included, because the ownership table is the only
+	// answer both machines can compute identically. clones/ is the solo test harness
+	// that proved a second body could be driven at all, and it is not the shipped
+	// shape.
+	//
+	// This function binds a peer to a CLONE ROSTER ENTRY. Nothing calls it. It is the
+	// survivor of the refactor described above, which moved the drive out of this file,
+	// and it is kept only because the clone harness still exists behind F9.
+	//
+	// Its old comment claimed "peer 0 is rejected: the host's own character is the
+	// bound player and the engine drives it", which was wrong twice over. On a CLIENT
+	// peer 0 is the host and is remote. And the function rejects the LOCAL peer, not
+	// peer 0. RemotePlayers.cpp already fixed that for the trigger slots and this
+	// header was not updated, which is the sort of thing that costs an afternoon.
+	//
+	// Pass -1 as the entry to unbind.
+	// ---------------------------------------------------------------------------
+	// BindRemotePlayer used to live here and is gone. Binding a peer to a body is
+	// BindPeerBody in clones/CloneRoster.h now, because three places have to agree
+	// about whose body is which and the table belongs where all three can see it.
 
 	LONG RemotePlayerEntry(int peer);
 

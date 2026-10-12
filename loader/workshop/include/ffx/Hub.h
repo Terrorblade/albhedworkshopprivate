@@ -12,7 +12,8 @@
 //   EventFrame        every rendered frame, step = the engine's step counter,
 //                     pointer = the FFXApplication the engine passed animate
 //   EventStep         every simulation step the gates allowed
-//   EventSubStep      every inner sub step, BEFORE the movement driver reads the
+//   EventSubStep      CAN BE SWALLOWED, see below. Every inner sub step, BEFORE the
+//                     movement driver reads the
 //                     latched pad, value = the running total. This is the ATEL
 //                     script clock, so it is the one that scales script timers
 //   EventMapChanged   value = the new live map id

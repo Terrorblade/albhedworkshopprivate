@@ -75,11 +75,16 @@ while (Msg.message != WM_QUIT) {
             if (Phyre__PInput__updateAndCheck() != 0
                 || *(BYTE *)(g_ffxApplication + 0x39) != 0
                 || (*(int (__thiscall **)(int))(g_ffxApplication + 0x268))(g_ffxApplication) != 0)
-                PostMessageA(hwnd, WM_QUIT, 0, 0);
+                PostMessageA(hwnd, WM_CLOSE, 0, 0);   // 0x10, not WM_QUIT: the WndProc WM_DESTROY posts the quit
         }
     }
 }
 ```
+
+Correction 2026-10-11 (Zanarkand window pass): the quit path posts `WM_CLOSE` (0x10) at 0x62F378, an earlier
+version of this listing said `WM_QUIT`. `WM_QUIT` only arrives through the WndProc, `WM_DESTROY` ->
+`PostQuitMessage`, and the device notification registered at window creation uses `GUID_DEVCLASS_HIDCLASS`
+with `DEVICE_NOTIFY_ALL_INTERFACE_CLASSES`, so the GUID is ignored.
 
 `g_phyreFrameRateDivider 0xC30E88` is **2** in `.data`, so the game targets 29.97 Hz.
 `Phyre__PApplication__setFrameRateDivider 0x625090` clamps it to 1 or 2 and maps 0 to 1. The call
@@ -368,10 +373,33 @@ return g_boosterSpeedMultipliers[g_boosterSpeedIndex] * dt;
 | `g_boosterSpeedApplied` | `0xCE82B8` | edge latch, so the audio notify fires on transitions |
 | `g_boosterSpeedIggyIcon` | `0xCE82C0` | drives the Iggy "OnEnable"/"OnDisable" overlay |
 
-Eligibility rules out: battle phase 1 with `sub_6F6FF0` set, `g_ffxMenuSysRunning` non-zero,
-`dword_CE7310` non-zero, `sub_641060()` non-zero, `byte_C5A068` zero, `dword_112A008` non-zero, and
-`sub_6F6FA0(maybe_g_ffxGameModeId)`. The hotkey and UI side is in
-`FFX_Frame_UpdateBoostersAndOverlays 0x657140` and is another agent's area.
+Eligibility, every gate named (2026-10-11, the Zanarkand booster pass, names written into the IDB):
+
+- the scene must be a bound field player (`FFX_Atel_IsPlayerBound 0x822460`, bit 0x02 of the Atel
+  context flags) or battle phase 1 (`FFX_Btl_GetPhase() == 1`), with no FMV script running
+  (`g_ffxFmvScriptRunning 0x112A008`) and not one of the blocked events
+  (`FFX_Booster_IsSpeedUpBlockedEvent 0x6F6FA0`: 62 `bl/bltz0000`, 355 `bl/bltz0005`, 385
+  `op/open0200`, and 280 `az/azit0300` while `g_ffxStoryProgress` is 1820..1825 outside battle),
+- not battle phase 1 with a pad-driven effect DLL up (`FFX_Btl_IsPadDrivenMagicPlaying 0x6F6FF0`:
+  magic ids 347, 390..397, 411..414, 425, 439..445, 447..450, 491..495, 500, 697, 698, the overdrive
+  and summon sequences that read the pad, with the command menu not at its root),
+- `g_ffxBtlResultScreenClosed 0xC5A068` non-zero (1 in `.data`, menu module 17, the battle results
+  screen, clears it on entry and sets it back when its fade is done),
+- no save-file operation in flight (`g_ffxSaveFileOpInFlight 0xCE7310`, set by the three
+  `FFX_SaveFile` starters at 0x6EFEB0, 0x6F01D0 and 0x6F07A0, cleared by the state machine at
+  0x6F0950, also read by the Esc menu on resume),
+- no menu texture load in flight (`FFX_MenuSys_IsTexLoadInFlight 0x641060`, `g_ffxMenuSysTexLoad`
+  present with its phase below 2),
+- `g_ffxMenuSysRunning` zero, and `g_boosterSpeedIndex` non-zero.
+
+The edge latch `g_boosterSpeedApplied` fires `FFX_Snd_SetFastForward 0x821C60` (was
+`maybe_FFX_Snd_SetBoosterSpeed`) and the HUD icon's `OnEnable` / `OnDisable` once per transition.
+`FFX_Booster_IsSpeedUpActive 0x6F7330` also makes `FFX_StepPacing_AllowCatchUp` return 1 before its
+own whitelist, so the booster is what lets the multiplied dt become extra steps. The hotkey side is
+`FFX_Booster_UpdateSpeedHotkey 0x6F7470` (cycle 0, 1, 2, 0 on action mask 0x10000, then the battle
+latch `g_boosterSpeedBattleFfwdLatch` mirrored into `g_boosterSpeedBattleFfwdExported 0x1133354`
+for battle script Btl222), inside `FFX_Frame_UpdateBoostersAndOverlays 0x657140`. Recreated in
+Project Zanarkand as `zan::app::Booster` with these gates as its environment.
 
 **So fast forward is not a separate code path.** It multiplies dt, `FFX_StepPacing` turns the bigger
 dt into a bigger `g_ffxPendingSteps`, `FFX_MainStepLoop` runs `FFX_MainStep` that many times, and the
@@ -459,8 +487,11 @@ own "waiting for peer" overlay, because the game is not drawing anything new und
 **Audio.** I did not trace audio to its thread. The argument that audio survives a stall is that the
 shipped pause menu produces exactly this state and audio is fine in the retail game. That is
 inference from shipped behaviour, not from reading a sound thread, and
-`maybe_FFX_Snd_SetBoosterSpeed 0x821C60` going through `sub_6FA280(57)` / `sub_6FA2A0(58, x)` /
-`sub_6FA2C0(0, x, 2)` is where to start if someone wants to settle it.
+`FFX_Snd_SetFastForward 0x821C60` (was `maybe_FFX_Snd_SetBoosterSpeed`) is where to start if someone
+wants to settle it: it shares the latch `g_ffxSndModeLatch 0x12FB8EC` (0 normal, 1 fast forward, 2
+paused) with `FFX_Snd_SetPausedForOverlay 0x821CC0`, and both go through the 150-entry FMOD command
+ring `FfxFmod_QueueCommand 0x6FA300` (commands 57, 58 and 0 for fast forward, 8 and 58 for pause),
+drained on the FMOD thread by `FfxFmod_DrainCommandQueue 0x6FA7E0` through the table at 0xC3A368.
 
 ### 6c. The narrower gate, and the one configuration the game never produces
 
@@ -540,6 +571,9 @@ actual menu UI on both machines, which is a different and worse thing. The recip
   `sub_58E170 0x58E170` stores one byte at `device+0x131C`, so **the chain from the setting to the
   swap interval is only half proven here**: I confirmed which setting feeds it and where the byte
   lands, not what reads the byte. The settings screen is another agent's area.
+  - 2026-10-12: the reader is `Phyre_RenderD3D11_Present 0x593760`, which passes `byte != 0` as the
+    `IDXGISwapChain::Present` sync interval with flags 0. The chain is complete, see `RENDER_DEVICE.md`
+    sections 3 and 4, which also cover the swap chain desc and both resize paths.
 - The `WinMain` usage string names `-vsync` alongside `-resolution`, `-msaa`, `-host` and `-script`.
 
 ## 8. Verdict
@@ -585,10 +619,17 @@ the FMV path.
   never produces that configuration.
 - **Whether audio is really independent of `FFX_MainStep`.** Argued from the shipped pause rather
   than traced to a sound thread.
-- **`sub_648FF0`'s early-out in animate.** It reads a byte at `sub_67AC90() + 1` and returning 1 makes
-  animate return 0 immediately, skipping even the Steam callbacks. Probably a shutdown or focus-loss
-  state. It is the one other thing that can silently skip a whole frame, and a gate living in animate
-  should log it.
+- **`sub_648FF0`'s early-out in animate.** SETTLED 2026-10-11, it is dead on PC. The function is now
+  `FFX_SaveUtil_FrameHeld`: it returns nonzero when the 3-byte block `g_ffxSaveUtilState` (allocated by
+  `FFX_SaveSys_Init 0x647FE0`, byte 0 set by `FFX_SaveFile_RegisterStagingBuffer`) has its byte 1 set.
+  The only setter of byte 1, `FFX_SaveUtil_SetFrameHeld 0x67ACE0`, has no callers, and the PS3 save
+  utility poll stubs around it (`0x67AC80` returns 0, `0x67ACC0` returns 1) are compiled out. So the
+  early-out never fires and no gate needs to log it. Also settled from the same read: the title or
+  boot one-shot `sub_67D550(16)` is `FFX_SysTex_Request(16)`, which queues the copyright texture
+  (`copyright_nagi(_NEA).dds.phyre`) while a boot scene event 393..399 is current, and
+  `FFX_Quit_DrawCopyrightScreen 0x904A70` draws it when the quit pseudo map 399 is requested. The hold
+  path's `sub_642CE0` is `FFX_Gfx_ResizeMainTargetToView`, which applies a resolution change made in
+  the esc menu while the step is held.
 - **Whether `g_ffxIsCatchUpStep` can be forced on for a non-catch-up step without visual artefacts.**
   All sixty-odd readers are shaped `if (flag == 0) do the work`, which looks safe, and `sub_A54660`
   saves, clears and restores it specifically so the Iggy menu always draws. That nesting is the thing

@@ -43,6 +43,25 @@ namespace workshop
 			wcsncpy_s(logFileName, _countof(logFileName), fileName, _TRUNCATE);
 		InitializeCriticalSection(&fileLock);
 		fileLockReady = true;
+
+		// Fresh file for this boot. CREATE_ALWAYS rather than TRUNCATE_EXISTING so a
+		// first run with no file is not an error.
+		//
+		// Safe to touch the disk here because every caller is off the loader lock: the
+		// loader's is on its bootstrap thread and each plugin's is in its Startup, which
+		// the loader calls after DllMain. Doing this from a DllMain would be a different
+		// question.
+		//
+		// A failure is ignored on purpose. The old content staying is a worse log, not a
+		// broken game, and there is nowhere to report it to yet.
+		wchar_t path[MAX_PATH];
+		if (!LogFilePath(path, MAX_PATH))
+			return;
+
+		HANDLE file = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+		    NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (file != INVALID_HANDLE_VALUE)
+			CloseHandle(file);
 	}
 
 	void Log(const char* format, ...)

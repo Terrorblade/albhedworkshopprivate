@@ -41,7 +41,18 @@ namespace pilgrimage
 
 	void ResetBattleOwnership()
 	{
-		ResetOwnership();
+		// DOES NOT TOUCH THE TABLE ANY MORE, and that was a real bug rather than tidying.
+		//
+		// This used to call ResetOwnership. StartBattleSync calls this at session start,
+		// a few lines after net/NetLink.cpp has already decided whether to clear the
+		// table, so on the host it undid that decision and wiped the bindings the host
+		// had set up before anybody joined. Two functions clearing one table is exactly
+		// the "two tables meant to agree" smell that moved the table out of this file in
+		// the first place.
+		//
+		// Clearing is the session layer's call now: a client clears and is then sent the
+		// host's table as kCommandCharOwnerTable. All that is left here is this file's
+		// own status line.
 		strcpy_s(g_status, sizeof(g_status), "battle: ownership on the default, peer N drives slot N");
 	}
 

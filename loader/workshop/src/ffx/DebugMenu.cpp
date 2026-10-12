@@ -2,6 +2,7 @@
 
 #include "ffx/GameState.h"
 #include "ffx/WorldState.h"
+#include "ffx/addresses/Character.h"
 #include "ffx/addresses/Debug.h"
 #include "ffx/addresses/WorldState.h"
 #include "workshop/HostModule.h"
@@ -137,9 +138,76 @@ namespace ffx
 		return ValidPage(page) ? g_pages[page].mode : -1;
 	}
 
+	namespace
+	{
+		// The branch that chooses between the dead debug table lookup and the retail
+		// path in ChLoadChrData. 0x58 is the distance to the retail side, and it is
+		// checked as well as the opcode because it is the cheapest way to know the two
+		// bytes really are the branch and not something that merely starts with 0x74.
+		const BYTE kJzShort = 0x74;
+		const BYTE kJmpShort = 0xEB;
+		const BYTE kBranchDistance = 0x58;
+	}
+
 	bool DebugPageNeedsDebugFlag(DebugPage page)
 	{
 		return ValidPage(page) ? g_pages[page].needsDebugFlag : false;
+	}
+
+	bool ModelLoadUnderDebugRestored()
+	{
+		const BYTE* at = (const BYTE*)ModuleAddress(Rva::ChLoadChrDataDebugBranch);
+		return Readable(at, 1) && *at == kJmpShort;
+	}
+
+	bool RestoreModelLoadUnderDebug()
+	{
+		BYTE* at = (BYTE*)ModuleAddress(Rva::ChLoadChrDataDebugBranch);
+		if (!Readable(at, 2))
+		{
+			Log("debug menu: the ChLoadChrData branch at RVA 0x%08X is not readable, so "
+			    "model loading stays broken under debug mode.",
+			    Rva::ChLoadChrDataDebugBranch);
+			return false;
+		}
+
+		if (at[0] == kJmpShort && at[1] == kBranchDistance)
+			return true; // already done, and this is the only way to be sure
+
+		// REFUSE RATHER THAN GUESS. Two bytes is a small enough target that a wrong
+		// build would still land on something, and writing 0xEB over the wrong opcode
+		// is a jump to the middle of an instruction.
+		if (at[0] != kJzShort || at[1] != kBranchDistance)
+		{
+			Log("debug menu: RVA 0x%08X holds %02X %02X, not the %02X %02X this build "
+			    "should have. Refusing to patch, so model loading stays broken under "
+			    "debug mode rather than this writing a jump into the wrong place.",
+			    Rva::ChLoadChrDataDebugBranch, at[0], at[1], kJzShort, kBranchDistance);
+			return false;
+		}
+
+		// PAGE_EXECUTE_READWRITE, not PAGE_READWRITE. Dropping execute off a .text page
+		// faults any thread already running through it, same reasoning as Battle.cpp's
+		// call site patcher and workshop::InstallDetour.
+		DWORD previousProtect = 0;
+		if (!VirtualProtect(at, 1, PAGE_EXECUTE_READWRITE, &previousProtect))
+		{
+			Log("debug menu: RVA 0x%08X could not be made writable, GetLastError=%lu",
+			    Rva::ChLoadChrDataDebugBranch, GetLastError());
+			return false;
+		}
+
+		at[0] = kJmpShort;
+
+		DWORD ignored = 0;
+		VirtualProtect(at, 1, previousProtect, &ignored);
+		FlushInstructionCache(GetCurrentProcess(), at, 1);
+
+		Log("debug menu: patched the ChLoadChrData debug branch at RVA 0x%08X from jz to "
+		    "jmp, so models load under debug mode. Without this the engine returns null "
+		    "for every chrId and the next spawn stores through it.",
+		    Rva::ChLoadChrDataDebugBranch);
+		return true;
 	}
 
 	bool SetDebugMode(bool on)
@@ -147,6 +215,13 @@ namespace ffx
 		BYTE* flag = (BYTE*)ModuleAddress(Rva::DebugMode);
 		if (!Readable(flag, 1))
 			return false;
+
+		// BEFORE the flag goes up, never after. Between the write and the patch every
+		// model load returns null, and a map change or a spawn in that window is a
+		// crash. Left in place when the flag goes down too, because with debug mode off
+		// the branch is taken anyway, so a jmp and a jz do the same thing there.
+		if (on)
+			RestoreModelLoadUnderDebug();
 
 		// Written directly rather than through SetDebugModeOrphan, which is equivalent
 		// but refuses when its own gate byte is clear. Three instructions in the binary

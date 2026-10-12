@@ -145,7 +145,7 @@ Instance-side setters: `FFX_ChrInstance_SetShadeColor 0x63D050`,
 
 ```
 WinMain 0x62EE50
-  FFX_GameSettings__loadIni 0x401880
+  FFX_Config_Construct 0x401880 (was FFX_GameSettings__loadIni until 2026-10-11)
       %DOCUMENTS%\Square Enix\FINAL FANTASY X&X-2 HD Remaster\GameSetting.ini
       -> g_ffxGameSettings 0x22FB504
   Phyre__PApplication__run 0x629A40

@@ -1065,6 +1065,46 @@ namespace workshop
 		SnapshotModules(true);
 	}
 
+	bool RollCrashLog()
+	{
+		wchar_t path[MAX_PATH];
+		if (!CrashFilePath(path, MAX_PATH))
+			return false;
+
+		// Nothing there is the normal case, and is not a failure.
+		WIN32_FILE_ATTRIBUTE_DATA info;
+		if (!GetFileAttributesExW(path, GetFileExInfoStandard, &info))
+			return false;
+
+		// An EMPTY file is also nothing, and skipping it keeps the caller's log line
+		// honest. tools/boottest.py truncates this file before every run, so without
+		// this check every boot test would roll a zero byte file aside and announce
+		// that it had saved last boot's report.
+		if (info.nFileSizeHigh == 0 && info.nFileSizeLow == 0)
+			return false;
+
+		// Same directory, same stem, so it sits next to the live one in a listing.
+		// Built by hand because this file deliberately avoids the CRT's wide string
+		// helpers on the crash path and there is no reason to make an exception here.
+		wchar_t previous[MAX_PATH];
+		int n = 0;
+		for (; path[n] && n < MAX_PATH - 1; ++n)
+			previous[n] = path[n];
+
+		// Step back over ".log" and append ".prev.log" in its place.
+		if (n >= 4)
+			n -= 4;
+		const wchar_t* tail = L".prev.log";
+		for (int i = 0; tail[i] && n < MAX_PATH - 1; ++i, ++n)
+			previous[n] = tail[i];
+		previous[n] = 0;
+
+		// MOVEFILE_REPLACE_EXISTING, so the boot before last is the one that gets lost
+		// rather than this one failing to move. Two generations is as much history as
+		// anybody has wanted.
+		return MoveFileExW(path, previous, MOVEFILE_REPLACE_EXISTING) != 0;
+	}
+
 	void ReassertCrashHandler()
 	{
 		Shared* s = State();

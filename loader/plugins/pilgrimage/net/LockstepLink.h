@@ -80,6 +80,11 @@ namespace pilgrimage
 	void SetLockstepEnforced(bool enforced);
 	bool LockstepEnforced();
 
+	// How many times this session gave up waiting for a peer's input and ran the step
+	// anyway. Non-zero means the two worlds have been allowed to differ, so a desync
+	// report afterwards has an obvious cause.
+	DWORD LockstepAbandonedWaits();
+
 	// A line for the control panel and the log.
 	const char* LockstepSummary();
 

@@ -1,6 +1,7 @@
 #include "ui/CheatPanel.h"
 #include "ui/Tabs.h"
 
+#include "ffx/EventPlaces.h"
 #include "ffx/GameLists.h"
 #include "ffx/ListExport.h"
 #include "ffx/GameState.h"
@@ -28,6 +29,10 @@ namespace cheats
 		// rebuild landing a step later than it could have, and on x86 a naturally
 		// aligned bool neither tears nor gets reordered past the step boundary.
 		volatile bool g_refreshWanted = false;
+
+		// The npc place sweep, which only ever runs because someone asked. Set by the
+		// Models tab, cleared on the step that finds the sweep finished.
+		volatile bool g_placeSweepWanted = false;
 		volatile bool g_reprobeWanted = false;
 
 		void Draw(void*)
@@ -95,7 +100,18 @@ namespace cheats
 		// the archive stores of its own header, so a changed archive rebuilds by
 		// itself. See ffx/ListExport.h.
 		// ---------------------------------------------------------------------------
-		if (ffx::LoadExportedLists())
+		// ONCE, NOT ON EVERY REFRESH. Nothing that happens while the game is running
+		// can change those twelve lists, because the key is the archive's own header
+		// MD5. Without this latch every refresh re-read all twelve TSV files and
+		// rebuilt 3778 rows to arrive at byte for byte the same answer. A refresh fires
+		// on a map change, on the end of a battle and on a menu closing, none of which
+		// the player has to do anything to trigger, so one session logged the same two
+		// cache lines dozens of times over.
+		static bool cachedListsLoaded = false;
+		if (!cachedListsLoaded)
+			cachedListsLoaded = ffx::LoadExportedLists();
+
+		if (cachedListsLoaded)
 		{
 			// The five save derived lists are deliberately not cached, because they
 			// change as the player plays. They are small and they read the save block,
@@ -151,8 +167,75 @@ namespace cheats
 		g_reprobeWanted = true;
 	}
 
+	void RequestPlaceSweep()
+	{
+		g_placeSweepWanted = true;
+	}
+
+	bool PlaceSweepRunning()
+	{
+		return g_placeSweepWanted && !ffx::EventPlacesReady();
+	}
+
 	void PumpCheatListRefresh()
 	{
+		// A DIAGNOSTIC, so the sweep and the relabel can be exercised without a human
+		// clicking the button. It really does do it at boot, which is the one place the
+		// sweep is known to upset the game, so A HANG WATCHDOG REPORT IS THE EXPECTED
+		// RESULT and not a regression. Last measured run: a 10016 ms report and a
+		// 30031 ms one, 60875 ms of sweep, and a correct models.tsv at the end of it.
+		// Judge this run by models.tsv, never by the PASS line.
+		static bool forcedOnce = false;
+		if (!forcedOnce)
+		{
+			forcedOnce = true;
+			if (GetEnvironmentVariableA("ALBHED_PLACE_SWEEP_NOW", nullptr, 0) != 0)
+			{
+				Log("cheats: ALBHED_PLACE_SWEEP_NOW is set, so the npc place sweep is "
+				    "being requested now instead of from the Models tab button.");
+				RequestPlaceSweep();
+			}
+		}
+
+		// ---------------------------------------------------------------------------
+		// THE NPC PLACE SWEEP, ON REQUEST ONLY.
+		//
+		// StartEventPlaces is idempotent so calling it every step is a flag read. When
+		// it finishes, the model list is rebuilt, which is the only consumer of the
+		// labels, and the cache is rewritten so no later boot has to do any of this.
+		//
+		// On this thread rather than in the tab's draw, because RefreshModelList calls
+		// engine code and a panel draws inside Present, which in FFX is NOT the step
+		// thread.
+		// ---------------------------------------------------------------------------
+		if (g_placeSweepWanted)
+		{
+			ffx::StartEventPlaces();
+			if (ffx::EventPlacesReady())
+			{
+				g_placeSweepWanted = false;
+
+				// THE KERNEL TABLES FIRST, AND THIS IS NOT OPTIONAL ON A WARM BOOT.
+				//
+				// A monster model is labelled from the bestiary name table, and
+				// KernelNameIsReal, which decides whether a row was named by the game or
+				// by us, is a bitset filled only by a real read of the archive. A boot
+				// that hit the list cache never did that read, so the bitset is empty and
+				// every MonsterName comes back null. Rebuilding the model list in that
+				// state would relabel the npcs and strip all 341 monster names doing it.
+				//
+				// Reading them costs five files. LoadOne resets each list before filling
+				// it, so this replaces the cached rows rather than appending to them, and
+				// on a cold boot it has already run and returns for free.
+				ffx::LoadKernelTables();
+				ffx::RefreshModelList();
+				ffx::WriteExportedLists();
+				Log("cheats: the npc place sweep finished, the model list was rebuilt "
+				    "with it, and the cache now holds the labels so this never has to "
+				    "run again for this archive.");
+			}
+		}
+
 		// FIRST, BEFORE THE PROBE. A cache hit means the 402 engine file opens never
 		// happen, so this cannot go after the block below.
 		if (TryExportedCheatLists())
@@ -183,6 +266,9 @@ namespace cheats
 			// the whole boot and title sequence, and it is retried on every step until it
 			// is. Arming the rebuild unconditionally here would rebuild every picker,
 			// the 863-row battle list included, on every one of those steps.
+			// The place sweep is deliberately NOT started here. CheatsMod.cpp starts
+			// it after the plugin's whole startup is finished, because everything in
+			// that startup reads files too. See the comment there.
 			if (ffx::EventPackagesProbed())
 				g_refreshWanted = true;
 		}
@@ -222,11 +308,23 @@ namespace cheats
 		// stack is gone.
 		ffx::PointOverlayAtSwapChain();
 
-		if (!InstallOverlay())
-		{
-			Log("cheats: the overlay would not install, so there is no panel");
-			return false;
-		}
+		// SHARE THE LOADER'S ImGui, do not start one. This used to call
+		// InstallOverlay, and so did Pilgrimage Together, and because
+		// AlBhedWorkshop.lib is a static library each of them got its own ImGui
+		// context, its own panel table and its own Present hook. One session logged
+		// this plugin chaining its hook to PilgrimageTogether.dll while that plugin
+		// chained to the real dxgi, and the order flipped between boots. Two contexts
+		// on one device survived on luck.
+		//
+		// A false here is not a failure to handle. The loader owns the overlay but has
+		// no context to share until the game's first frame, which is long after this
+		// runs, so the normal answer at this point is "not yet". Registering a panel
+		// works anyway and the host adopts this module's ImGui immediately before it
+		// draws. The only real refusal is a version mismatch, and
+		// RegisterOverlayPanel reports that one itself.
+		if (!AdoptOverlayHost())
+			Log("cheats: the overlay is not up yet, which is normal this early. %s",
+			    OverlayHostAdoptStatus());
 
 		// NO LIST BUILDING HERE. This runs from DllMain, under the loader lock, long
 		// before the engine's file system exists, and every list reads either the

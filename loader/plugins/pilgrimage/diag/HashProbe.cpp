@@ -17,9 +17,20 @@ namespace pilgrimage
 
 		// The bucket names, in the same order as ffx::GameStateBucket. Kept next to the
 		// only code that prints them, so a report is readable without the header open.
-		const char* const BucketNames[kBucketCount] = {
-			"mapId",
-			"playtime",
+		// NO EXPLICIT SIZE. With [kBucketCount] here the count check below compares
+		// kBucketCount against itself and passes while the missing entries are quietly
+		// null, which is a null pointer handed to a %s. Leaving the size off makes the
+		// array as big as this list and the check mean something.
+		//
+		// The first two used to read "mapId" and "playtime", which was wrong and sent a
+		// reader to the wrong bytes: index 0 is the live location block and index 4 is
+		// the CHECKPOINT at 0xB8, not playtime. Playtime is in no bucket at all.
+		const char* const BucketNames[] = {
+			"liveLocation",
+			"headerFlags",
+			"scriptParams",
+			"mapEntryPair",
+			"checkpoint",
 			"progress",
 			"partyGilFlags",
 			"inventory",

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "ffx/Character.h"
 #include "ffx/GameState.h"
 #include "ffx/WorldState.h"
 #include "world/Arrival.h"
@@ -109,6 +110,46 @@ namespace pilgrimage
 		// the two worlds already agree, and a refresh is a correction, not a cold start.
 		bool g_worldInstalled = false;
 
+		// ---------------------------------------------------------------------------
+		// PEOPLE WAITING FOR A GAME THE HOST HAS NOT STARTED YET.
+		//
+		// Connecting from the TITLE SCREEN is allowed, and it has to be. Sitting in the
+		// main menu together and then picking New Game or a save is the obvious way to
+		// start a co-op session, and it was the one way that did not work.
+		//
+		// What it used to do was worse than refusing. The save block is static .data, so
+		// it is readable and ALL ZERO before a game exists, and every check on this path
+		// was a readable check. A host at the title screen cheerfully snapshotted the
+		// whole block of zeroes and sent it, and the joiner transplanted those zeroes
+		// over its own save block. Nothing refused and nothing logged, because as far as
+		// every test here was concerned that was a perfectly good world.
+		//
+		// So a request that arrives too early is REMEMBERED rather than answered. The
+		// moment the host actually has a game, everybody on this list gets it.
+		// ---------------------------------------------------------------------------
+		bool g_wantsWorld[MaxPlayers];
+
+		// Was this host playable last frame? The edge is what triggers the push, so New
+		// Game and Load Game both work without either of them needing to know this file
+		// exists.
+		bool g_hostWasPlayable = false;
+
+		// A client's own retry clock. The host pushing is the reliable half of this and
+		// the retry is the belt to its braces, covering a request lost before the
+		// session settled and a host that was restarted while we sat here.
+		DWORD g_lastAskMs = 0;
+		const DWORD AskAgainMs = 4000;
+
+		// Asks without an answer, counted only to keep the log readable. A lobby wait
+		// re-asks every few seconds and nobody needs fifteen lines a minute saying so.
+		DWORD g_askCount = 0;
+
+		// Has the current stall already been reported? The state reset underneath the
+		// report has to happen every time, but the sentence only needs saying once per
+		// episode, or a client that keeps politely re-asking turns the log into a wall
+		// of the same complaint.
+		bool g_stallReported = false;
+
 		char g_status[224] = "world sync: idle";
 
 		// Freeze or unfreeze the game for the duration of a transfer.
@@ -182,9 +223,16 @@ namespace pilgrimage
 				return;
 			}
 
-			Log("world sync: installed %u bytes, derived stats %s, just-loaded flag %s",
+			// The option flags are named here because they are the easiest thing in a
+			// transplant to be silently wrong about: the bits arrive inside the block
+			// either way, so nothing looks missing, and what differs is only the
+			// engine's cached reading of them. The movie bit in particular gates FMV
+			// playback, so a peer that skipped this disagrees about every cutscene.
+			Log("world sync: installed %u bytes, derived stats %s, just-loaded flag %s, "
+			    "option flags %s",
 			    (unsigned)result.bytesCopied, result.recomputedDerived ? "rebuilt" : "SKIPPED",
-			    result.setJustLoadedFlag ? "set" : "not set");
+			    result.setJustLoadedFlag ? "set" : "not set",
+			    result.appliedOptionFlags ? "pushed into the engine" : "NOT APPLIED");
 			Log("world sync: the block says map %d entry %d, checkpoint map %d entry %d",
 			    result.mapIdAfter, result.entryPointAfter, result.checkpointMapAfter,
 			    result.checkpointEntryAfter);
@@ -197,8 +245,27 @@ namespace pilgrimage
 			// land this machine at the host's last SAVE SPHERE rather than at the host. For
 			// loading a save that is right. For joining a game in progress it is not.
 			if (!RequestLoadLiveLocation())
-				Log("world sync: the world state is installed and correct, but there is no "
-				    "map to load, so this machine has not moved");
+			{
+				// ---------------------------------------------------------------------------
+				// A WORLD WITH NOWHERE TO BE. This used to log and carry on into the
+				// arrival, which then waited out its whole timeout for a map load that
+				// was never going to be asked for.
+				//
+				// The host is not supposed to send one of these any more, because
+				// SendWorldToPeer now waits for its CHR pool. So reaching here means
+				// either an old host build or something genuinely unexpected, and in
+				// both cases the useful thing is to say so plainly, let go of the hold,
+				// and leave the re-ask to try again rather than pretend to be joining.
+				// ---------------------------------------------------------------------------
+				Log("world sync: the world state installed cleanly but the block names no "
+				    "map, so there is nowhere to go and this machine has not moved. The "
+				    "host probably sent it mid-load. Letting go and asking again.");
+				strcpy_s(g_status, sizeof(g_status),
+				    "world sync: the host's world had no map in it, asking again");
+				SetTransferHold(false);
+				ResetReceive();
+				return;
+			}
 
 			// Now get this machine to where the host is standing, not just to the map it
 			// is standing in. See world/Arrival.h for why that is a separate step and why
@@ -355,6 +422,8 @@ namespace pilgrimage
 					g_recvHostStep = chunk->hostStep;
 					g_recvStartedMs = GetTickCount();
 					g_awaitingRequest = false;
+					g_askCount = 0;
+					g_stallReported = false;
 					SetTransferHold(true);
 					Log("world sync: receiving snapshot %u, %d chunks, host step %u",
 					    (unsigned)chunk->snapshotId, count, (unsigned)chunk->hostStep);
@@ -472,6 +541,11 @@ namespace pilgrimage
 		g_worldInstalled = false;
 		g_appliedPending = false;
 		memset(g_outbound, 0, sizeof(g_outbound));
+		memset(g_wantsWorld, 0, sizeof(g_wantsWorld));
+		g_hostWasPlayable = false;
+		g_lastAskMs = 0;
+		g_askCount = 0;
+		g_stallReported = false;
 		g_sendBufferValid = false;
 		ResetReceive();
 		StartArrival();
@@ -480,15 +554,45 @@ namespace pilgrimage
 		// clock starts exchanging input against two different worlds.
 		if (!session->IsHost())
 		{
-			// Held from the moment we ask, not from the moment chunks arrive. There is
-			// nothing valid for a client to simulate in between.
-			SetTransferHold(true);
-			strcpy_s(g_status, sizeof(g_status), "world sync: joining, asking for the world");
+			// ---------------------------------------------------------------------------
+			// HELD ONLY IF THERE IS SOMETHING TO HOLD.
+			//
+			// This used to hold unconditionally from the moment we asked, reasoning that
+			// there is nothing valid for a client to simulate in between. That is right
+			// for a client with its own game already up. It IS simulating a world, that
+			// world is about to be replaced, and every step it takes in the meantime is a
+			// step the host never took.
+			//
+			// It is wrong for a client at the TITLE SCREEN, and badly so. There is no
+			// world there to diverge, and the wait is not a few hundred milliseconds of
+			// transfer, it is however long the host takes to pick a save. The hold stops
+			// FFX_MainStep, so that is a frozen title screen for an unbounded time, which
+			// is indistinguishable from a hang.
+			//
+			// GameLoaded is exactly the question "is there anything to stop". When the
+			// chunks do start arriving the hold goes on then, at the top of the chunk
+			// handler, so nothing is lost by waiting for them.
+			// ---------------------------------------------------------------------------
+			if (GameLoaded())
+			{
+				SetTransferHold(true);
+				strcpy_s(g_status, sizeof(g_status),
+				    "world sync: joining, asking for the world");
+			}
+			else
+			{
+				strcpy_s(g_status, sizeof(g_status),
+				    "world sync: joining from the main menu, waiting for the host's game");
+			}
+
+			g_lastAskMs = GetTickCount();
 			RequestWorldFromHost(kWorldRequestJoining);
 		}
 		else
 		{
-			strcpy_s(g_status, sizeof(g_status), "world sync: hosting, ready to send");
+			strcpy_s(g_status, sizeof(g_status),
+			    GameLoaded() ? "world sync: hosting, ready to send"
+			                 : "world sync: hosting, no game yet so nothing to send");
 		}
 	}
 
@@ -507,6 +611,10 @@ namespace pilgrimage
 		g_awaitingRequest = false;
 		g_appliedPending = false;
 		memset(g_outbound, 0, sizeof(g_outbound));
+		memset(g_wantsWorld, 0, sizeof(g_wantsWorld));
+		g_hostWasPlayable = false;
+		g_askCount = 0;
+		g_stallReported = false;
 		ResetReceive();
 		StopArrival();
 		strcpy_s(g_status, sizeof(g_status), "world sync: idle");
@@ -573,7 +681,18 @@ namespace pilgrimage
 		g_lastRequestReason = reason;
 		g_recvStartedMs = GetTickCount();
 		g_recvLastMs = g_recvStartedMs;
-		Log("world sync: asked the host for the world, reason %d", reason);
+
+		// A joining ask repeats on its own while we sit in the lobby, so the first two
+		// and then roughly one a minute is enough to follow what is happening. Anything
+		// a human asked for is always worth a line.
+		if (reason == workshop::kWorldRequestJoining)
+			++g_askCount;
+		else
+			g_askCount = 0;
+
+		if (g_askCount <= 2 || (g_askCount % 15) == 0)
+			Log("world sync: asked the host for the world, reason %d%s", reason,
+			    g_askCount > 1 ? " (asking again, nothing has come back yet)" : "");
 		return true;
 	}
 
@@ -590,6 +709,34 @@ namespace pilgrimage
 			return 0;
 		}
 
+		// ---------------------------------------------------------------------------
+		// A GAME FIRST, and this is the check that was missing.
+		//
+		// SnapshotSaveBlock below only asks whether the block is READABLE, and a static
+		// buffer in .data always is. So this used to send an all-zero world from the
+		// title screen, and the log line underneath it, which says exactly the right
+		// thing, was unreachable.
+		//
+		// GameLoaded is the honest test: record 0 has a non-zero base max HP and
+		// somebody is flagged into the party, neither of which a zeroed block can fake.
+		// See ffx/GameState.h.
+		//
+		// Not an error. Somebody joining from the main menu before the host has picked
+		// anything is the normal way to start, so the request is filed and answered
+		// later rather than refused. See g_wantsWorld.
+		// ---------------------------------------------------------------------------
+		if (!GameLoaded())
+		{
+			g_wantsWorld[peer] = true;
+			Log("world sync: peer %d wants the world but there is no game here yet, so "
+			    "they are on the list and get it the moment one is loaded. Start a new "
+			    "game or load a save.",
+			    peer);
+			strcpy_s(g_status, sizeof(g_status),
+			    "world sync: hosting, waiting for a game to start or load");
+			return 0;
+		}
+
 		// Snapshot ONCE per transfer. Re-reading per chunk would let the block move
 		// underneath the transfer and hand the client a mixture of several moments, which
 		// is a world that never existed on this machine.
@@ -599,6 +746,42 @@ namespace pilgrimage
 			    "letting anybody join");
 			return 0;
 		}
+
+		// ---------------------------------------------------------------------------
+		// AND THE MAP HAS TO BE UP, which is a different failure from the one above and
+		// not an obvious one.
+		//
+		// GameLoaded flips the moment the character records are in. During both a Load
+		// Game and a New Game that is BEFORE the map has come up, and the live map id at
+		// block offset 0 can still be zero in that window. A client that receives such a
+		// block transplants it perfectly, then calls RequestLoadLiveLocation, which
+		// refuses a zero, and ends up holding a complete and correct world with nowhere
+		// to be. It logs one line about not having moved and then waits out an arrival
+		// that can never complete.
+		//
+		// With the lobby re-ask running every few seconds that window is not a remote
+		// possibility, it is a near certainty on the first attempt after the host picks a
+		// save. So it has to be closed here rather than hoped past.
+		//
+		// PoolIsReady is the engine's own answer: a non-null CHR array with a non-zero
+		// count, which means a map is up with characters authored into it. It is also
+		// exactly the test the body layer uses before spawning, so host and client agree
+		// on what playable means.
+		// ---------------------------------------------------------------------------
+		if (!PoolIsReady())
+		{
+			g_wantsWorld[peer] = true;
+			Log("world sync: peer %d asked while a map is still loading here, so they are "
+			    "on the list and get the world once it is up. Sending now would hand them "
+			    "a world with no map in it.",
+			    peer);
+			strcpy_s(g_status, sizeof(g_status),
+			    "world sync: hosting, waiting for the map to finish loading");
+			return 0;
+		}
+
+		// Off the list, since they are getting it now.
+		g_wantsWorld[peer] = false;
 
 		g_sendBufferValid = true;
 		SetTransferHold(true);
@@ -678,19 +861,111 @@ namespace pilgrimage
 
 		// A stalled transfer, either direction. Reliable delivery means loss is not the
 		// cause, so say what the likely cause actually is instead of just timing out.
+		//
+		// WAITING IN THE LOBBY IS NOT A STALL, which is what lobbyWait is for. A client
+		// that connected from the main menu is waiting on a human deciding which save to
+		// load, and that takes as long as it takes. There is also nothing to rescue it
+		// from, because a client with no game of its own was never held. Calling that a
+		// timeout would report a fault that is not happening and, worse, would reset the
+		// receive state of a transfer that is about to start.
 		const DWORD now = GetTickCount();
-		if ((g_receiving || g_awaitingRequest) && now - g_recvLastMs > TransferTimeoutMs)
+		const bool lobbyWait = g_awaitingRequest && !g_receiving && !GameLoaded();
+		if (!lobbyWait && (g_receiving || g_awaitingRequest)
+		    && now - g_recvLastMs > TransferTimeoutMs)
 		{
-			Log("world sync: no progress for %u ms. %s", (unsigned)(now - g_recvLastMs),
-			    g_awaitingRequest
-			        ? "The host never started sending, so it probably has no save loaded."
-			        : "The transfer stopped part way, so the host likely went away.");
-			strcpy_s(g_status, sizeof(g_status), "world sync: transfer stalled");
+			// Said once per episode. The reset below runs every time regardless, since
+			// that is the part that actually lets the game go.
+			if (!g_stallReported)
+				Log("world sync: no progress for %u ms. %s",
+				    (unsigned)(now - g_recvLastMs),
+				    g_awaitingRequest
+				        ? "The host never started sending. If it is sitting in its main "
+				          "menu that is expected, and it pushes the world over as soon "
+				          "as it starts a game. We keep asking in the meantime."
+				        : "The transfer stopped part way, so the host likely went away.");
+			g_stallReported = true;
+			strcpy_s(g_status, sizeof(g_status),
+			    g_awaitingRequest ? "world sync: waiting for the host to load a game"
+			                      : "world sync: transfer stalled");
 			g_awaitingRequest = false;
 			g_appliedPending = false;
 			SetTransferHold(false);
 			StopArrival();
 			ResetReceive();
+		}
+
+		// ---------------------------------------------------------------------------
+		// THE HOST GETTING A GAME IS THE EVENT EVERYONE IN THE LOBBY IS WAITING FOR.
+		//
+		// Watched for as an edge rather than replicated as a command, deliberately.
+		// Starting a new game and loading a save are two entirely different paths
+		// through the engine, reached through menus this mod does not drive, and both
+		// end with the same observable fact: there is a game in the save block. Watching
+		// for the fact covers both, plus anything else that gets there, and needs no
+		// hook in either path.
+		//
+		// A client cannot be told to replay the host's menu input either, which is worth
+		// writing down since it is the obvious first idea. The two machines have
+		// different save files, so "load slot 3" means a different game on each one. The
+		// host's block is the only answer, and sending it is what this file already does.
+		// ---------------------------------------------------------------------------
+		if (session->IsHost())
+		{
+			// PLAYABLE, not merely loaded. Same two tests SendWorldToPeer makes, for the
+			// same two reasons, and sharing the definition is the point: the edge that
+			// triggers a push is the same moment that a push would be accepted.
+			//
+			// This edge is also crossed by an ordinary map change during play, since the
+			// CHR pool goes down and comes back. That is harmless and even useful, a peer
+			// whose earlier ask was deferred gets picked up at the next door. It does
+			// mean the list being empty is the normal case, so that says nothing.
+			const bool playable = GameLoaded() && PoolIsReady();
+			if (playable && !g_hostWasPlayable)
+			{
+				int waiting = 0;
+				int sent = 0;
+				for (int peer = 1; peer < MaxPlayers; ++peer)
+				{
+					if (!g_wantsWorld[peer])
+						continue;
+					if (!session->PeerReachable((uint8_t)peer))
+					{
+						g_wantsWorld[peer] = false;
+						continue;
+					}
+					++waiting;
+					sent += SendWorldToPeer(peer);
+				}
+
+				if (waiting > 0)
+					Log("world sync: this machine is playable now, so the %d peer(s) who "
+					    "were waiting get the world. %d transfer(s) started.",
+					    waiting, sent);
+			}
+			g_hostWasPlayable = playable;
+		}
+		else if (!g_worldInstalled && !g_receiving)
+		{
+			// ---------------------------------------------------------------------------
+			// ASK AGAIN. The host pushing is the reliable half, so this is the belt to
+			// its braces: a request lost before the session settled, or a host restarted
+			// while we sat here.
+			//
+			// Two different clients reach this, and the difference matters. One has no
+			// game of its own, joined from the main menu and was never held, so it can
+			// sit and ask all day at no cost. The other has a game and IS held, and for
+			// that one the stall timeout above has to stay reachable, because a held
+			// client with a frozen step is worse than a slow join. Each ask resets the
+			// stall clock, so that client only re-asks once the timeout has already
+			// given up and let it go, which is what the g_awaitingRequest test means
+			// here.
+			// ---------------------------------------------------------------------------
+			const bool wasHeld = GameLoaded();
+			if ((!wasHeld || !g_awaitingRequest) && now - g_lastAskMs >= AskAgainMs)
+			{
+				g_lastAskMs = now;
+				RequestWorldFromHost(kWorldRequestJoining);
+			}
 		}
 
 		// The host's paced chunk sends.

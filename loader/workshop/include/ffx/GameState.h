@@ -613,7 +613,44 @@ namespace ffx
 		// +0x0000 .. +0x00B8. This is the bucket that holds the LIVE location, the word
 		// at +0x00 and the byte at +0x0C, so "we are on different maps" does get caught
 		// here. It was not obvious, because the bucket below used to be called MapId.
-		kBucketHeader = 0,
+		// ---------------------------------------------------------------------------
+		// THE FIRST FOUR USED TO BE ONE BUCKET, "Header", 0x0000..0x00B8, folded into
+		// the combined hash. Splitting it is what stopped the desync detector crying
+		// wolf on every single join.
+		//
+		// The old single bucket mixed three completely different kinds of byte:
+		//
+		//   0x00..0x13  rewritten EVERY STEP and on every transition. The engine
+		//               recomputes the map name id at +0x0E and the encounter ground
+		//               attribute at +0x10 from the bound player's walkmesh triangle
+		//               inside FFX_Atel_PullActorPosFromChr, once per step, forever.
+		//   0x2A        the "came from a save file" flag, which a world transplant
+		//               SETS on the joiner and the host never has set. Guaranteed to
+		//               differ the instant the bytes land.
+		//   0xB4..0xB8  written once per map entry by ATEL Core syscall 366.
+		//
+		// So a joiner could not agree with a host on this bucket even in principle,
+		// and it is bucket zero, so it was always the "first difference" reported. The
+		// real divergences behind it were never reachable.
+		//
+		// The table already excluded the checkpoint at 0x00B8 as "diverges for a frame
+		// on a warp". This is the same judgement applied to the bytes next to it.
+		// ---------------------------------------------------------------------------
+
+		// +0x0000 .. +0x0014, live map, scene, entry point, map name id, ground
+		// attribute, fades and field flags. Per-step derived, NOT compared.
+		kBucketLiveLocation = 0,
+
+		// +0x0014 .. +0x002A. Real header state, compared.
+		kBucketHeaderFlags,
+
+		// +0x002B .. +0x00B4, LoveParam and the script bit arrays. Compared. Starts at
+		// 0x2B rather than 0x2A on purpose, to step over the just-loaded flag.
+		kBucketScriptParams,
+
+		// +0x00B4 .. +0x00B8, the per-map pair from syscall 366. One write per map
+		// entry, so a joiner replaying the entry lands here. NOT compared.
+		kBucketMapEntryPair,
 
 		// +0x00B8 .. +0x00BC, the CHECKPOINT, not the current map. Formerly kBucketMapId,
 		// which was a misreading of +0xB8. Kept as its own bucket and kept out of the
@@ -639,12 +676,12 @@ namespace ffx
 
 	struct GameStateHash
 	{
-		DWORD combined; // all buckets except ItemMasks and Checkpoint
+		DWORD combined; // the twelve inCombined buckets, not LiveLocation, MapEntryPair, Checkpoint or ItemMasks
 		DWORD bucket[kBucketCount];
 		bool valid; // false when there was nothing to read
 	};
 
-	// Hashes the save block. Cheap enough to call every frame: 13 FNV-1a passes
+	// Hashes the save block. Cheap enough to call every frame: 16 FNV-1a passes
 	// over 26 KB total.
 	bool HashGameState(GameStateHash* out);
 

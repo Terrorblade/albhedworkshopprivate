@@ -45,7 +45,12 @@ namespace pilgrimage
 		// Loopback by default, because that is the one that works with no setup at
 		// all. Steam is the shipping path but it needs a SteamID typed in first.
 		settings.useSteam = 0;
+		strcpy_s(settings.hostAddress, sizeof(settings.hostAddress), "127.0.0.1");
+		settings.hostOnBoot = 0;
 		settings.hostSteamId[0] = 0;
+
+		// On, because off was measured and off does not work. See the field.
+		settings.enforceLockstep = 1;
 
 		telemetry.spawnedChrId = 0;
 		SetStatus("not spawned");
@@ -116,10 +121,30 @@ namespace pilgrimage
 
 	void RegisterModSettings()
 	{
-		// Spawning. All of these decide what gets created and where, so all of them
-		// move the simulation.
-		SETTING_INT(spawnIdIndex, "spawn.chr_id_index", "character id",
-		    SettingShared, 0, SpawnableChrIdCount - 1, 1);
+		// Spawning. These decide what gets created and where, so they move the
+		// simulation, with the one exception called out below.
+		//
+		// ---------------------------------------------------------------------------
+		// WHICH CHARACTER YOU PLAY AS, and this one is LOCAL rather than shared on
+		// purpose, which is a change from how it started.
+		//
+		// It was shared, on the straightforward reasoning that what gets spawned
+		// changes the simulation. True for the F9 test harness this setting was
+		// written for, and wrong the moment it became the answer to "who am I in this
+		// session". Two players picking two different characters is the POINT, and a
+		// shared setting would have had the handshake refuse the connection over it.
+		//
+		// Local does not mean the other machine does not know. It means the value is
+		// not part of the hash both ends have to match. The choice is sent over the
+		// wire as part of the body spawn instead, which is the only way a per-player
+		// answer can work.
+		//
+		// The F9 harness loses nothing by this. DriveClone is gated on
+		// !NetworkingActive, so that harness only ever runs with nobody connected,
+		// and a shared setting was protecting a path that cannot be in a session.
+		// ---------------------------------------------------------------------------
+		SETTING_INT(spawnIdIndex, "spawn.chr_id_index", "the character I play as",
+		    SettingLocal, 0, SpawnableChrIdCount - 1, 1);
 		SETTING_INT(spawnPartyIndex, "spawn.party_index", "party slot, 255 for none",
 		    SettingShared, 0, 255, 1);
 		SETTING_FLOAT(spawnOffset, "spawn.offset", "spawn distance to the side",
@@ -163,7 +188,21 @@ namespace pilgrimage
 		// match would refuse the very connection it was set up to make.
 		SETTING_BOOL(useSteam, "net.use_steam", "use Steam P2P instead of loopback",
 		    SettingLocal);
+		SETTING_BOOL(hostOnBoot, "net.host_on_boot", "TEST: start hosting by itself",
+		    SettingLocal);
 		SETTING_TEXT(hostSteamId, "net.host_steam_id", "host SteamID", SettingLocal);
+
+		// Local, for the same reason as the port and the SteamID: each side stores how
+		// to reach the OTHER one, so requiring the two to match would refuse the very
+		// connection it was set up to make.
+		SETTING_TEXT(hostAddress, "net.host_address", "host address for UDP", SettingLocal);
+
+		// Local rather than shared even though it is a lockstep setting, because it
+		// only decides whether THIS machine waits for the other one. A mismatch costs
+		// one side some drift, which the desync check catches, and it does not deserve
+		// a refused connection. See Settings::enforceLockstep.
+		SETTING_BOOL(enforceLockstep, "net.enforce_lockstep",
+		    "the step gate holds a step when a peer is behind", SettingLocal);
 
 		Log("settings: registered %d settings, shared hash %08lX",
 		    SettingCount(), SharedSettingsHash());

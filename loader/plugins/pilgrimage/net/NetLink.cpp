@@ -1,6 +1,10 @@
 #include "net/NetLink.h"
 
+#include "coop/Ownership.h"
+
+#include "ffx/GameState.h"
 #include "net/LockstepLink.h"
+#include "net/SessionPhase.h"
 #include "battle/BattleSync.h"
 #include "menu/CoopConfig.h"
 #include "menu/MenuSync.h"
@@ -71,6 +75,23 @@ namespace pilgrimage
 			return settings.useSteam != 0;
 		}
 
+		// The address a UDP join will dial, never empty. An empty setting means the
+		// file was hand edited, and falling back to the default beats dialling "".
+		const char* HostAddress()
+		{
+			return settings.hostAddress[0] ? settings.hostAddress : "127.0.0.1";
+		}
+
+		// Is that address this machine. Deliberately a text match on the two spellings
+		// that actually turn up rather than a routing table lookup: the point is to
+		// warn a human who did not realise, not to be exhaustive.
+		bool HostAddressIsThisMachine()
+		{
+			const char* a = HostAddress();
+			return strcmp(a, "127.0.0.1") == 0 || strcmp(a, "localhost") == 0
+			    || strcmp(a, "::1") == 0;
+		}
+
 		void RefreshSharedHash()
 		{
 			// Rechecked every frame rather than only at startup, because a shared setting
@@ -101,7 +122,9 @@ namespace pilgrimage
 	{
 		if (NetworkingActive())
 		{
-			Log("net: already connected, disconnect first");
+			Log("net: a session is already open, so hosting was not started. "
+			    "Disconnect first with shift+F3.");
+			SetStatus("ALREADY IN A SESSION, not hosting. shift+F3 first.");
 			return false;
 		}
 
@@ -118,12 +141,22 @@ namespace pilgrimage
 		}
 
 		if (UsingSteam())
+		{
 			Log("net: hosting over Steam, build %08X. Clients need your SteamID, which "
 			    "is the 17 digit number on your Steam profile page.",
 			    BuildId());
+			SetStatus("HOSTING over Steam. They need your SteamID %s. They press Join, "
+			          "not Host.",
+			    telemetry.localSteamId[0] ? telemetry.localSteamId : "(not signed in yet)");
+		}
 		else
+		{
 			Log("net: hosting over UDP on port %ld, build %08X",
 			    settings.hostPort, BuildId());
+			SetStatus("HOSTING over UDP on port %ld. They need this machine's address "
+			          "and that port. They press Join, not Host.",
+			    settings.hostPort);
+		}
 		return true;
 	}
 
@@ -131,7 +164,20 @@ namespace pilgrimage
 	{
 		if (NetworkingActive())
 		{
-			Log("net: already connected, disconnect first");
+			// NOT NECESSARILY CONNECTED. This only says the transport is open, which it
+			// is from the moment a join starts, long before the host has answered. The
+			// old wording here read "already connected", which told someone whose join
+			// was stuck that they were connected when they plainly were not.
+			Log("net: a session is already open, so joining was not started. It may "
+			    "still be waiting for the host to answer. Disconnect first with "
+			    "shift+F3 to start over.");
+
+			// ON SCREEN, not only in the log. This refusal used to be log only, and two
+			// people hit it: one of them was hosting, pressed Join twice, saw absolutely
+			// nothing happen either time, and had no way to find out why. Exactly one of
+			// you hosts and the other joins.
+			SetStatus("ALREADY IN A SESSION, not joining. If you pressed Host, that IS "
+			          "the session. Only one of you hosts. shift+F3 first.");
 			return false;
 		}
 
@@ -141,6 +187,8 @@ namespace pilgrimage
 		{
 			Log("net: no host SteamID set. Put the host's 17 digit SteamID in the "
 			    "control panel before joining.");
+			SetStatus("NO HOST STEAMID. Put the host's 17 digit id in the field below "
+			          "before joining.");
 			return false;
 		}
 
@@ -155,11 +203,13 @@ namespace pilgrimage
 		}
 		else
 		{
-			peer = udpLink.AddPeer("127.0.0.1", (unsigned short)settings.hostPort);
+			peer = udpLink.AddPeer(HostAddress(), (unsigned short)settings.hostPort);
 		}
 		if (peer == InvalidPeer)
 		{
 			Log("net: could not add the host as a peer, so there is nobody to join");
+			SetStatus("COULD NOT ADD THE HOST. Check the %s in the field below parses.",
+			    UsingSteam() ? "SteamID" : "address");
 			active->Stop();
 			active = NULL;
 			return false;
@@ -174,10 +224,35 @@ namespace pilgrimage
 		}
 
 		if (UsingSteam())
+		{
 			Log("net: joining SteamID %s, build %08X", settings.hostSteamId, BuildId());
+			SetStatus("JOINING SteamID %s. Waiting for them to answer.",
+			    settings.hostSteamId);
+		}
 		else
-			Log("net: joining 127.0.0.1:%ld from local port %u, build %08X",
+		{
+			Log("net: joining %s:%ld from local port %u, build %08X", HostAddress(),
 			    settings.hostPort, udpLink.LocalPort(), BuildId());
+
+			// SAY IT, because it is invisible otherwise and it is the whole reason a
+			// UDP attempt between two machines silently sends into nothing.
+			if (HostAddressIsThisMachine())
+			{
+				Log("net: %s IS THIS MACHINE. A UDP join to it only reaches another copy "
+				    "of the game on this same PC. If the host is a different computer, "
+				    "put their address in net.host_address, or use Steam P2P, which "
+				    "needs no address at all.",
+				    HostAddress());
+				SetStatus("JOINING %s:%ld, WHICH IS THIS PC. Only reaches another copy "
+				          "on this machine. Use Steam, or set the host's address.",
+				    HostAddress(), settings.hostPort);
+			}
+			else
+			{
+				SetStatus("JOINING %s:%ld over UDP. Waiting for them to answer.",
+				    HostAddress(), settings.hostPort);
+			}
+		}
 		return true;
 	}
 
@@ -201,6 +276,7 @@ namespace pilgrimage
 		//
 		// Menu and pause go LAST for that reason, after anything that might still raise
 		// a hold.
+		ResetSessionPhase();
 		StopWorldSync();
 		StopBoosterSync();
 		StopBattleSync();
@@ -263,6 +339,39 @@ namespace pilgrimage
 
 	void StepNetworking(LONG frame)
 	{
+		// ---------------------------------------------------------------------------
+		// A TEST SETTING, so a boot test can exercise the host path without a keypress.
+		//
+		// Hosting is the only thing that registers the Steam callbacks, and those are
+		// the one place the kit hands Steam an object to call back into. An automated
+		// boot test that never hosts never touches that code, which is how a host that
+		// could not be joined shipped: the transport looked fine because nothing in the
+		// test ever asked it to be joined.
+		//
+		// Put net.host_on_boot = 1 in pilgrimage_together.txt and this presses F2 for
+		// you. A setting and not an environment variable on purpose, because testing
+		// Steam at all means launching through Steam, and Steam starts the game with
+		// its own environment rather than the one the test runner had.
+		//
+		// Retried every two seconds rather than attempted once, because Steam comes up
+		// on the game's schedule and measured about ten seconds after boot here, so a
+		// single early attempt just logs "Steam is not up yet" and gives up. Hosting
+		// alone with no joiner is harmless, so this is safe to leave on in a test loop.
+		// ---------------------------------------------------------------------------
+		static bool hostOnBootAnnounced = false;
+		static bool hostOnBootDone = false;
+		if (settings.hostOnBoot != 0 && !hostOnBootDone)
+		{
+			if (!hostOnBootAnnounced)
+			{
+				hostOnBootAnnounced = true;
+				Log("net: net.host_on_boot is set, so hosting will start on its own "
+				    "shortly. That is a test setting, not something a player does.");
+			}
+			if (frame > 60 && (frame % 60) == 0 && StartHosting())
+				hostOnBootDone = true;
+		}
+
 		if (session.State() == SessionIdle)
 			return;
 
@@ -293,6 +402,38 @@ namespace pilgrimage
 		// the wire before anything else happens.
 		if (after == SessionActive && before != SessionActive)
 		{
+			// ---------------------------------------------------------------------------
+			// OWNERSHIP IS THE HOST'S, so only a client throws its table away here.
+			//
+			// This used to reset on both machines, which quietly destroyed the one
+			// workflow the Config rows exist for. A host sets up who plays whom before
+			// anybody joins, somebody joins, and the join wiped it. The note in
+			// menu/CoopConfig.cpp promising those bindings would "already be in the
+			// table when the join lands" was describing something that did not happen.
+			//
+			// A client still clears, for the reason the old comment gave, which is still
+			// right for a client: a second session must not inherit the first one's
+			// bindings. It loses nothing by clearing, because the host publishes the
+			// whole table as kCommandCharOwnerTable as soon as this machine's clock is
+			// running and able to receive a command at all.
+			//
+			// The host's table is therefore sticky across sessions. That is deliberate:
+			// it is the host's configuration, and "peer 1 plays Yuna" is a setting, not
+			// a fact about one particular guest. A host who wants it different changes
+			// it on the Config screen.
+			// ---------------------------------------------------------------------------
+			if (session.IsHost())
+				Log("ownership: this is the host, so its table stands as the authority "
+				    "for the session and goes out to everybody else. %s",
+				    OwnershipStatus());
+			else
+				ResetOwnership();
+
+			// So the first phase line of this session gets written. Without it a second
+			// session that opens in the same phase the last one closed in says nothing,
+			// and the log loses the one line that explains what everyone is waiting for.
+			ResetSessionPhase();
+
 			StartWorldSync();
 			StartBoosterSync();
 			StartBattleSync();
@@ -310,6 +451,7 @@ namespace pilgrimage
 		if (after != SessionActive && before == SessionActive)
 		{
 			EndLockstep();
+			ResetSessionPhase();
 			StopWorldSync();
 			StopBoosterSync();
 			StopBattleSync();
@@ -345,7 +487,35 @@ namespace pilgrimage
 		// start first means the clock is always up before anything can read a step off
 		// it. On a client this costs one frame, because the frame the install finishes
 		// on had WorldSyncReady false at the top, and one frame is free here.
-		if (after == SessionActive && !LockstepRunning() && WorldSyncReady())
+		// The phase, before anything reads it. Logs only on a change, so this is one
+		// line per transition and not one per frame.
+		if (after == SessionActive)
+			ServiceSessionPhase();
+
+		// ---------------------------------------------------------------------------
+		// AND A GAME HAS TO EXIST, which used to go without saying and then stopped.
+		//
+		// Allowing people to connect from the TITLE SCREEN broke the old condition
+		// silently. On the host WorldSyncReady is true from its first active frame,
+		// whether or not there is a game, so a host sitting at the main menu started a
+		// lockstep clock over an empty world, captured a save block that was all
+		// zeroes, and sent those zeroes to the joiner, which transplanted them over its
+		// own. Nothing refused, nothing logged.
+		//
+		// GameLoaded is the honest test rather than a map id comparison: the save block
+		// is static .data, readable and all zero before a game exists, so it checks two
+		// things a zeroed block cannot fake. See ffx/GameState.h.
+		//
+		// NOT gated on the full PhasePlaying, and this is deliberate. Playing also
+		// requires the CHR pool, which on a joiner is not up until its map has
+		// finished loading, and the host's transfer hold is released the moment the
+		// snapshot is INSTALLED rather than when the map comes up. So waiting for the
+		// pool would start the joiner's clock several hundred steps behind a host that
+		// had already resumed. The clock wants the earliest honest moment, which is a
+		// real world installed, and the pool is the body layer's problem.
+		// ---------------------------------------------------------------------------
+		if (after == SessionActive && !LockstepRunning() && WorldSyncReady()
+		    && ffx::GameLoaded())
 			BeginLockstep();
 
 		// Pace the transfer and, on a client, install a completed one.
@@ -384,7 +554,12 @@ namespace pilgrimage
 
 	const char* NetworkingBackendName()
 	{
-		return UsingSteam() ? "steam" : "udp loopback";
+		// Not "udp loopback" any more. It was loopback only because the address was
+		// hardcoded, and that is a setting now, so saying loopback here would be
+		// telling somebody who set a real address that it cannot work.
+		if (UsingSteam())
+			return "steam";
+		return HostAddressIsThisMachine() ? "udp on this PC only" : "udp";
 	}
 
 } // namespace pilgrimage

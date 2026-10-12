@@ -150,6 +150,39 @@ namespace pilgrimage
 		uint8_t g_opener = HostPeer;
 		bool g_haveOpener = false;
 
+		// ---------------------------------------------------------------------------
+		// HAS THE MENU ACTUALLY BEEN UP SINCE THE OPEN. Without this, the close
+		// detector fired on the open step and every open in the log was followed one
+		// millisecond later by a close on the SAME step number.
+		//
+		// The sequence that did it: ApplyOpen sets g_haveOpener and calls
+		// RequestMenuOpen, which only STORES a request. The engine services it a step
+		// or two later. The close test ran a few lines further down the same step,
+		// found MenuSystemRunning() still false, saw g_haveOpener true, and declared
+		// the menu closed before it had ever been open.
+		//
+		// What that cost: ResetRepeatState ran on the open instead of the close, so
+		// the repeat counters carried into the next menu, the REAL close reported
+		// nothing at all, and the status line said "opener nobody yet" while a menu
+		// was up with a perfectly good opener. The logs from a two machine test are
+		// the only evidence there is, so a log that says the opposite of what happened
+		// is worse than no log.
+		bool g_menuSeenRunning = false;
+
+		// The step the open was ordered for, so an open that never takes can be told
+		// apart from one that is simply a step or two from being serviced.
+		uint32_t g_openOrderedStep = 0;
+
+		// How long to let the engine get round to an open before calling it a failure.
+		// A normal open shows up within a step or two. 30 steps is a second, which is
+		// far longer than that and still quick enough to be in the log near the press.
+		const uint32_t kOpenGraceSteps = 30;
+
+		// Opens that were ordered on both machines and never came up on this one. Any
+		// non-zero value here is a divergence: the other machine is in a menu and this
+		// one is not.
+		volatile LONG g_opensNeverCameUp = 0;
+
 		// The resolved driver for the current step, and the host override.
 		int g_driver = -1;
 		bool g_override = false;
@@ -483,6 +516,13 @@ namespace pilgrimage
 			// inside this same step.
 			g_opener = command.issuer;
 			g_haveOpener = true;
+
+			// Not up yet. RequestMenuOpen below only stores a request and the engine
+			// services it on a later step, so anything that means "a menu is on screen"
+			// has to wait until one actually is. See g_menuSeenRunning.
+			g_menuSeenRunning = false;
+			g_openOrderedStep = command.step;
+
 			ResetRepeatState();
 
 			if (!RequestMenuOpen((int)payload.mode))
@@ -643,6 +683,9 @@ namespace pilgrimage
 		g_override = false;
 		g_haveOpener = false;
 		g_opener = HostPeer;
+		g_menuSeenRunning = false;
+		g_openOrderedStep = 0;
+		g_opensNeverCameUp = 0;
 		g_driver = -1;
 		g_inject = NeutralMenuPad();
 		ResetRepeatState();
@@ -727,16 +770,50 @@ namespace pilgrimage
 			// frame a menu comes up cannot inherit a stale decision.
 			g_armed = false;
 			g_driver = -1;
-			if (g_haveOpener)
+			if (g_haveOpener && g_menuSeenRunning)
 			{
 				// The menu closed. Nothing was sent to make that happen: both machines
 				// stepped the same modules from the same injected pad block, so both
 				// reached a zero module active mask on this step.
+				//
+				// g_menuSeenRunning is half the condition on purpose. An open is a
+				// REQUEST the engine services a step or two later, so without it this
+				// branch fired on the open step and reported a close before the menu
+				// had ever been up.
 				g_haveOpener = false;
+				g_menuSeenRunning = false;
 				ResetRepeatState();
 				Log("menu: the menu closed on step %u, driven by the replicated input "
 				    "rather than by a command",
 				    (unsigned)step);
+			}
+			// The step comparison is guarded rather than bare. These are unsigned, so a
+			// g_openOrderedStep somehow ahead of the current step would wrap the
+			// subtraction to about four billion and fire this on the open step, which is
+			// the exact bug the branch above was just fixed for.
+			else if (g_haveOpener && step > g_openOrderedStep
+			    && step - g_openOrderedStep >= kOpenGraceSteps)
+			{
+				// AN OPEN THAT NEVER TOOK, and this is a divergence rather than a
+				// curiosity. The command was ordered for a step both machines run, so
+				// the other machine almost certainly has a menu on screen right now and
+				// this one does not. Reported loudly because it is otherwise completely
+				// silent: the player just sees nothing happen when they press Triangle.
+				//
+				// RequestMenuOpen returning false is already logged where it happens.
+				// This catches the other case, where the request was accepted and the
+				// engine then quietly dropped it, which is what FFX_MenuSys_RequestOpen
+				// does when the save UI is busy.
+				g_haveOpener = false;
+				g_menuSeenRunning = false;
+				ResetRepeatState();
+				InterlockedIncrement(&g_opensNeverCameUp);
+				Log("menu: %s's open was ordered for step %u and %u steps later there is "
+				    "still no menu on this machine. The other machine is probably sitting "
+				    "in a menu this one never opened, which is a divergence. Opens that "
+				    "never came up: %ld.",
+				    PeerLabel((int)g_opener), (unsigned)g_openOrderedStep,
+				    (unsigned)kOpenGraceSteps, g_opensNeverCameUp);
 			}
 			ServiceGridStickNeutraliser();
 			_snprintf_s(g_status, sizeof(g_status), _TRUNCATE,
@@ -746,6 +823,12 @@ namespace pilgrimage
 		}
 
 		ServiceGridStickNeutraliser();
+
+		// A menu is on screen. From here a later MenuSystemRunning() of false is a real
+		// close rather than an open that has not been serviced yet. Set unconditionally
+		// rather than only when g_haveOpener, so a menu that came up with no command
+		// behind it, which rule 3 of DecideDriver allows for, still reports its close.
+		g_menuSeenRunning = true;
 
 		const int driver = DecideDriver();
 		if (driver != g_driver)
@@ -1003,11 +1086,17 @@ namespace pilgrimage
 			return;
 		}
 
-		Log("screen: %s, running %s, driver %s, opener %s%s", MenuScreenName(),
+		Log("screen: %s, running %s, driver %s, opener %s%s%s", MenuScreenName(),
 		    MenuSystemRunning() ? "yes" : "no",
 		    (g_driver >= 0) ? PeerLabel(g_driver) : "nobody",
 		    g_haveOpener ? PeerLabel((int)g_opener) : "nobody yet, defaulting to the host",
+		    (g_haveOpener && !g_menuSeenRunning) ? " (ordered, waiting for the engine)" : "",
 		    g_override ? "  HOST OVERRIDE IS ON" : "");
+
+		if (g_opensNeverCameUp)
+			Log("%ld ordered opens never came up on this machine, so the other end has "
+			    "been in a menu this one was not in that many times",
+			    g_opensNeverCameUp);
 
 		if (MenuSystemRunning())
 		{

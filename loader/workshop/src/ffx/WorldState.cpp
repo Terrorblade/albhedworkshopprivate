@@ -27,6 +27,7 @@ namespace ffx
 		typedef void(__cdecl* ClearEquipStatBonusFn)(void);
 		typedef void(__cdecl* SetSceneAndSubFn)(void);
 		typedef unsigned char(__cdecl* SaveFileInstallFn)(void* dest, int saveImage);
+		typedef int(__cdecl* ApplyOptionFn)(void);
 
 		template <class T>
 		T Resolve(DWORD rva)
@@ -34,8 +35,12 @@ namespace ffx
 			return (T)ModuleAddress(rva);
 		}
 
-		// The block base, guarded. Null until a save slot has been set up, which is the
-		// state at the title screen and the state a panel refresh can hit.
+		// The block base, guarded against the module not being mapped where we think.
+		//
+		// NOT null at the title screen, which this comment used to claim. The save block
+		// is static .data, so it is mapped and readable from process start and simply
+		// reads as all zero until something fills it. Readability is the only thing this
+		// decides. Whether there is a game is ffx::GameLoaded().
 		BYTE* Block()
 		{
 			BYTE* base = (BYTE*)ModuleAddress(Rva::SaveData);
@@ -105,6 +110,7 @@ namespace ffx
 		o.reencodeNames = false;
 		o.recomputeDerived = true;
 		o.setJustLoadedFlag = true;
+		o.applyOptionFlags = true;
 		return o;
 	}
 
@@ -153,6 +159,13 @@ namespace ffx
 		if (options.reencodeNames)
 			Resolve<ReencodeCharNamesFn>(Rva::SaveDataReencodeCharNames)();
 
+		// The option bits came over inside the block but mean nothing until they are
+		// pushed into the engine. BEFORE the re-derive, which is the order
+		// FFX_SaveFile_CommitLoad uses. See ApplySaveOptionFlags.
+		bool appliedOptions = false;
+		if (options.applyOptionFlags)
+			appliedOptions = ApplySaveOptionFlags();
+
 		// THE re-derive. Rebuilds the equip stat bonus cache from the sphere grid and then
 		// every character's derived stats, effective stats, ability masks and HP/MP clamps.
 		// The game's own save load does this. Skip it and the party keeps the stats of
@@ -166,6 +179,7 @@ namespace ffx
 			resultOut->reencodedNames = options.reencodeNames;
 			resultOut->recomputedDerived = options.recomputeDerived;
 			resultOut->setJustLoadedFlag = options.setJustLoadedFlag;
+			resultOut->appliedOptionFlags = appliedOptions;
 			resultOut->bytesCopied = SaveBlock::Size;
 			resultOut->playtimePreserved = playtime;
 
@@ -269,6 +283,28 @@ namespace ffx
 			return false;
 		}
 
+		// ---------------------------------------------------------------------------
+		// STALE CHECKPOINT WARNING, and this is not hypothetical.
+		//
+		// Entering the title screen raises a latch that suppresses the checkpoint and
+		// location-history write for the next TWO map entries. While it is set, +0xB8
+		// and +0xBA still name wherever the save FILE was, not where the player is now.
+		//
+		// So a resume issued in that window lands somewhere else entirely, and the two
+		// most interesting windows in co-op, a host that just loaded a save and a host
+		// that just started a new game, are both inside it. This still goes ahead,
+		// because a caller that asked for the checkpoint may genuinely want it, but it
+		// says so first. See ffx::RequestLoadLiveLocation for the one a joining client
+		// wants instead.
+		// ---------------------------------------------------------------------------
+		if (CheckpointIsStale())
+			workshop::Log("world state: resuming to checkpoint map %d, but the post-title "
+			              "suppression latch is still set, so that checkpoint has not been "
+			              "updated since the save file was read. This is where the SAVE "
+			              "was, not where the player is. RequestLoadLiveLocation is "
+			              "probably what you wanted.",
+			    (int)checkpointMap);
+
 		Resolve<MapResumeFn>(Rva::MapRequestResumeFromCheckpoint)();
 		return true;
 	}
@@ -301,9 +337,91 @@ namespace ffx
 		*(volatile DWORD*)pending = 1;
 
 		workshop::Log("world state: asked for a load of the live location, map %d entry %d, "
-		              "without disturbing the previous-map history",
-		    (int)mapId, (int)Rd8(base + SaveBlock::LiveEntryPoint));
+		              "without disturbing the previous-map history%s",
+		    (int)mapId, (int)Rd8(base + SaveBlock::LiveEntryPoint),
+		    MapChangeCanBeConsumed()
+		        ? ""
+		        : ". A MENU OR THE SAVE/LOAD UI IS UP, so FFX_MainStep is skipping the ATEL "
+		          "step that picks this flag up. The request is not lost, it fires when "
+		          "that closes.");
 		return true;
+	}
+
+	bool ApplySaveOptionFlags()
+	{
+		// ---------------------------------------------------------------------------
+		// THE HALF OF A LOAD THAT A MEMCPY SKIPS.
+		//
+		// Rva::SaveDataOptionFlags is literally SaveData + 0x3D0C, so a whole-block
+		// transplant already carries every option bit. What it does not carry is the
+		// engine's own idea of what those bits mean, which lives in config slots and
+		// cached bytes outside the block. FFX_SaveFile_CommitLoad calls these three
+		// right after installing a block and before the re-derive, so this does too,
+		// in the same order.
+		//
+		// The one that matters for co-op is the movie flag. It ends up in the byte that
+		// gates sceCdRead, the disc read queue and every Movie_* script syscall, so two
+		// peers that disagree about it disagree about FMV playback, which is exactly the
+		// sort of divergence that shows up as an unexplained desync much later.
+		//
+		// All three are int __cdecl (void) and read the flag word themselves.
+		// ---------------------------------------------------------------------------
+		ApplyOptionFn configBit = Resolve<ApplyOptionFn>(Rva::MenuApplySaveConfigBit5EC);
+		ApplyOptionFn sound = Resolve<ApplyOptionFn>(Rva::MenuApplySaveSoundOptions);
+		ApplyOptionFn movie = Resolve<ApplyOptionFn>(Rva::MenuApplySaveMovieOption);
+
+		if (!configBit || !sound || !movie)
+		{
+			workshop::Log("world state: the option-flag appliers will not resolve, so the "
+			              "transplanted options stay in the block without taking effect");
+			return false;
+		}
+
+		configBit();
+		sound();
+		movie();
+		return true;
+	}
+
+	// ---------------------------------------------------------------------------
+	// The title screen
+	// ---------------------------------------------------------------------------
+
+	bool TitleScreenActive()
+	{
+		DWORD flag = 0;
+		if (!ReadFlag(Rva::TitleScreenActive, &flag))
+			return false;
+
+		return flag != 0;
+	}
+
+	bool MapChangeCanBeConsumed()
+	{
+		// FFX_MainStep's gameplay block, and with it the ATEL step that polls the pending
+		// flag, is skipped while any of these is up. A request raised meanwhile is not
+		// lost, it just waits, which is a thing worth being able to say out loud rather
+		// than looking hung.
+		DWORD value = 0;
+		if (ReadFlag(Rva::SaveUiState, &value) && value != 0)
+			return false;
+		if (ReadFlag(Rva::MenuSysRunning, &value) && value != 0)
+			return false;
+		if (ReadFlag(Rva::MenuSysRunningAlt, &value) && value != 0)
+			return false;
+		if (ReadFlag(Rva::MenuOpenPending, &value) && value != 0)
+			return false;
+
+		return true;
+	}
+
+	bool CheckpointIsStale()
+	{
+		DWORD flag = 0;
+		if (!ReadFlag(Rva::TitleExitCheckpointSuppress, &flag))
+			return false;
+
+		return flag != 0;
 	}
 
 	bool SetMapTransitionFrames(int frames)

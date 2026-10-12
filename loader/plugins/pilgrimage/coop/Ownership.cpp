@@ -91,6 +91,58 @@ namespace pilgrimage
 		return true;
 	}
 
+	bool InstallOwnerTable(const int* charIndexPerPeer, int count)
+	{
+		if (!charIndexPerPeer || count <= 0)
+			return false;
+
+		// Built in full first, then compared, so a table that changes nothing writes
+		// nothing and logs nothing. The host republishes on a heartbeat, so the
+		// no-change case is the common one by a wide margin.
+		int wanted[MaxPlayers];
+		for (int i = 0; i < MaxPlayers; ++i)
+			wanted[i] = -1;
+
+		const int n = (count < MaxPlayers) ? count : MaxPlayers;
+		for (int i = 0; i < n; ++i)
+		{
+			const int charIndex = charIndexPerPeer[i];
+			wanted[i] = (charIndex >= 0 && CharIndexInRange(charIndex)) ? charIndex : -1;
+		}
+
+		// THE EXCLUSIVITY RULE, applied to the table rather than entry by entry. Two
+		// peers on one character is the double-control failure, and a table carrying
+		// one can only come from a build whose rules differ from this one. The lower
+		// peer keeps it, chosen because it is deterministic rather than because it is
+		// fair.
+		for (int i = 0; i < MaxPlayers; ++i)
+		{
+			if (wanted[i] < 0)
+				continue;
+			for (int j = i + 1; j < MaxPlayers; ++j)
+			{
+				if (wanted[j] == wanted[i])
+					wanted[j] = -1;
+			}
+		}
+
+		bool changed = false;
+		for (int i = 0; i < MaxPlayers; ++i)
+		{
+			if (g_explicitChar[i] == wanted[i])
+				continue;
+
+			g_explicitChar[i] = wanted[i];
+			changed = true;
+		}
+
+		if (changed)
+			strcpy_s(g_status, sizeof(g_status),
+			    "ownership: installed the host's table");
+
+		return changed;
+	}
+
 	int OwnerCharacter(int peer)
 	{
 		if (peer < 0 || peer >= MaxPlayers)

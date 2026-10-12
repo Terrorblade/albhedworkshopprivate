@@ -31,6 +31,38 @@ namespace ffx
 		return was;
 	}
 
+	Character* ControlledCharacter()
+	{
+		Character** slot = (Character**)ModuleAddress(Rva::ControlledChr);
+		if (!Readable(slot, sizeof(void*)))
+			return NULL;
+
+		Character* chr = *slot;
+		if (!chr || !Readable(chr, 4))
+			return NULL;
+
+		return chr;
+	}
+
+	bool SetControlledCharacter(Character* chr)
+	{
+		if (!chr || !Readable(chr, 4))
+			return false;
+
+		// The engine's own setter, not the global. See the header: a lot of the game
+		// asks the engine who the player is, and the setter is what those paths were
+		// written to have run.
+		if (!LooksLikeFunctionStart(Rva::ChSetPlayerChr))
+			return false;
+
+		typedef void(__cdecl * SetPlayerChrFn)(Character*);
+		((SetPlayerChrFn)ModuleAddress(Rva::ChSetPlayerChr))(chr);
+
+		// Read it back rather than trusting the call. This is a single global that
+		// several things cache off, so "did it take" is worth one pointer compare.
+		return ControlledCharacter() == chr;
+	}
+
 	void MarkCharacterDirty(Character* chr)
 	{
 		if (!chr)

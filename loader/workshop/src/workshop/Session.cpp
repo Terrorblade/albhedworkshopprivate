@@ -36,6 +36,14 @@ namespace workshop
 		const uint32_t PeerTimeoutFrames = 300;
 		const uint32_t HelloRetryFrames = 30;
 
+		// How often a client that is still waiting says so. A joiner retries forever on
+		// purpose, because a host that is not up yet is the normal case, but retrying in
+		// total silence is indistinguishable from being broken. It cost real debugging
+		// time once: a join sat for two minutes with the client logging one line and the
+		// host logging nothing, and the log gave no way to tell a slow host from a
+		// deadlocked one. Every five seconds, with the count, so the log says which.
+		const uint32_t JoinWaitNoticeFrames = 150;
+
 		// A flood, a loop or a hostile sender must not be able to hold the frame. Ten
 		// times what a sane session produces in one frame.
 		const int MaxMessagesPerFrame = 256;
@@ -235,6 +243,15 @@ namespace workshop
 		// which on loopback is the usual case since one instance starts first.
 		if (state == SessionJoining && (frame % HelloRetryFrames) == 0)
 			SendHello();
+
+		// And it says out loud that it is still waiting, because a silent retry loop
+		// looks exactly like a hang. See JoinWaitNoticeFrames.
+		if (state == SessionJoining && frame > 0 && (frame % JoinWaitNoticeFrames) == 0)
+			Log("session: still waiting for the host to answer, %lu hello%s sent so far. "
+			    "If this does not clear, check the host is hosting, that the SteamID is "
+			    "theirs and not yours, and the transport log above for a reason.",
+			    (unsigned long)(frame / HelloRetryFrames),
+			    (frame / HelloRetryFrames) == 1 ? "" : "s");
 
 		if ((state == SessionActive || state == SessionListening) &&
 		    frame - lastHeartbeatFrame >= HeartbeatEveryFrames)

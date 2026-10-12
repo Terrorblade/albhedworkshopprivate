@@ -38,6 +38,8 @@
 #include <windows.h>
 #include <wchar.h>
 
+#include "ffx/EventPlaces.h"
+#include "ffx/ListExport.h"
 #include "ffx/Api.h"
 #include "ffx/AssetPaths.h"
 #include "ffx/GameLists.h"
@@ -174,6 +176,31 @@ namespace cheats
 			// touching dev-only code paths forever. If it ever says the heap will
 			// fault, read ffx/EngineHeap.h and the repair comment in ffx/GameLists.cpp.
 			ffx::LogEngineHeap("at the end of the cheat plugin's startup");
+
+			// ---------------------------------------------------------------------------
+			// THE NPC PLACE SWEEP IS NOT STARTED HERE, OR ANYWHERE ELSE AT BOOT.
+			//
+			// It reads 397 event packages and about 58 MB to work out where each npc
+			// model is used, which is the only label FFX has for one, and it cannot
+			// share a boot with the game. Four attempts, every one of them measured on
+			// a cold cache, and every one tripped the hang watchdog:
+			//
+			//   on the game thread                     12.9 s of sweep
+			//   on a worker at below normal priority   Windows keeps I/O priority apart
+			//   on a worker in background I/O mode     slower, still a 10 s report
+			//   paced at 200 ms between packages       133 s of sweep, a 30 s report
+			//
+			// The last one is the telling one. With the thread asleep for most of its
+			// life it still produced the longest stall of the four, which means this was
+			// never a fight over the disk. The game stops stepping on its own while it
+			// loads, and anything else touching the archive stretches those loads until
+			// a gap crosses ten seconds. There is no pacing that fixes that, because the
+			// cost is in the way, not in the rate.
+			//
+			// So the player asks for it instead, from the Models tab, and after that the
+			// labels live in models.tsv and every later boot gets them for free. See
+			// RequestPlaceSweep in ui/CheatPanel.h.
+			// ---------------------------------------------------------------------------
 
 			if (g_firstStep)
 			{

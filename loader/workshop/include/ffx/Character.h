@@ -110,6 +110,36 @@ namespace ffx
 	// a step.
 	void StopCharacterMotion(Character* chr);
 
+	// ---------------------------------------------------------------------------
+	// WHICH CHARACTER IS "THE PLAYER"
+	// ---------------------------------------------------------------------------
+
+	// The character the engine currently treats as the player, or NULL.
+	Character* ControlledCharacter();
+
+	// Move the single player binding onto another character.
+	//
+	// There is one player in FFX and a lot of the game asks the engine who it is
+	// rather than being told. The camera follows this character, noclip applies to it,
+	// the player-bump trigger fires for it, and FFX_Map_IsTriBlockedForChr resolves
+	// "the player" through it, which is what makes the player-only walkmesh surfaces
+	// (code 2 passages, code 14 walls) apply to this body and no other.
+	//
+	// So in co-op each machine points this at the character ITS OWN player drives.
+	// That is what makes one machine's camera, collision and interaction follow
+	// player two while the other machine's follows player one, from a global that was
+	// only ever meant to hold one value.
+	//
+	// Goes through FFX_Ch_SetPlayerChr rather than writing the global, because the
+	// engine's setter is what the rest of the game's caches expect to have run. The
+	// model swap in the cheat plugin has been using this same call for a while, which
+	// is where the confidence comes from.
+	//
+	// NOT PERMANENT. A map transition re-authors the player actor from the script, so
+	// whatever sets this has to set it again after every transition. Returns false
+	// when the character is not usable or the engine call is not resolvable.
+	bool SetControlledCharacter(Character* chr);
+
 	// Point a character in a direction and have it STAY pointed there.
 	//
 	// Two writes, and the second is the one that is easy to miss. FFX_Ch_SetRot writes

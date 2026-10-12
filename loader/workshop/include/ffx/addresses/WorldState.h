@@ -65,6 +65,39 @@ namespace ffx
 
 		// NOT DECLARED HERE. g_ffxEquipStatBonus is Rva::EquipStatBonus in GameState.h.
 
+		// ---------------------------------------------------------------------------
+		// THE OPTION RE-APPLY, which is the half of the shipped load path a whole-block
+		// memcpy silently skips.
+		//
+		// Rva::SaveDataOptionFlags in GameState.h is SaveData + 0x3D0C, so the option
+		// bits travel inside the block for free. Nothing pushes them into the engine
+		// though, and the engine caches what they mean elsewhere. FFX_SaveFile_CommitLoad
+		// 0x8B4EC0 calls these three, in this order, immediately after installing a block
+		// and before the re-derive, so a transplant that wants to match a real load has
+		// to do the same.
+		//
+		// All three are int __cdecl (void) and read the flags themselves. Nothing to pass.
+		// ---------------------------------------------------------------------------
+
+		// Save word +0x5EC bit 0 -> config slot 46.
+		const DWORD MenuApplySaveConfigBit5EC = 0x004CC170;
+
+		// The sound half. bit 7 set -> mode 0, else mode 2 minus bit 0. bit 4 goes to a
+		// second setter. Audio only, so this is the one with no effect on the simulation.
+		const DWORD MenuApplySaveSoundOptions = 0x004724F0;
+
+		// The movie half, bit 13, and the one that DOES matter for co-op. It lands in
+		// maybe_g_ffxMovieStreamFromHdd 0x133C913, which gates sceCdRead,
+		// FFX_RomDev_EnqueueRead and the Movie_* ATEL syscalls. Two peers that disagree
+		// about it disagree about FMV playback. Also written by ATEL Core 586.
+		const DWORD MenuApplySaveMovieOption = 0x004724A0;
+
+		// ATEL Core 450, called by the title screen's load branch and nowhere else:
+		// if ((save.dword[0xE0] - 2) <= 3) save.dword[0xE0] = 1. An old-save sanity
+		// clamp. Listed for completeness, NOT called by the transplant, because the host
+		// already ran it on its own block before the bytes were ever sent.
+		const DWORD SaveDataClampOptionWordE0 = 0x00473D30;
+
 		// The ATEL script opcode whose whole body is memcpy(&g_ffxSaveData, arg + 64,
 		// 0x68C0) and return 1. Library 12 function 87. Used by exactly one shipped
 		// package, a developer test map. Proof that the block is self-contained, and not
@@ -164,6 +197,49 @@ namespace ffx
 		// int (void). Save word +0x00. The EVENT/PACKAGE id, i.e. what MapRequestChange
 		// takes. This is the kit's mapId.
 		const DWORD SaveDataGetMapId = 0x0048D660;
+
+		// ---------------------------------------------------------------------------
+		// THE TITLE SCREEN, which is not a mode. It is ordinary ATEL event 23, data name
+		// te/test20, loaded by FFX_MainInit exactly like any map, and its New Game / Load
+		// Game / Config list is bytecode inside test20.ebp. So it steps through
+		// FFX_MainStep like anything else, which is why a mod CAN raise a deferred map
+		// change from the title and have it consumed. FFX_Atel_StepOnce has no mode test.
+		//
+		// Two caveats, both from FFX_MainStep's gameplay-block guard: the ATEL step does
+		// not run while the save/load UI is up (Rva::SaveUiState in MainLoop.h) or while
+		// the menu system is up (Rva::MenuSysRunning), so a request raised then sits in
+		// the flag until they close. It is not lost, just deferred.
+		// ---------------------------------------------------------------------------
+
+		// int. Non-zero exactly while event 23 is up. Set by a strstr for "te/test20",
+		// cleared by FFX_Ev_LoadEventPackage on any other event and by the New Game
+		// opcode. Nine references total, all read. This is the engine's own answer and a
+		// better test than comparing the live map id, which reads 0 before a game exists
+		// rather than 23.
+		const DWORD TitleScreenActive = 0x021D5EBC;
+
+		// int, a latch Scene_Init raises when it enters event 23. WHILE IT IS SET THE
+		// CHECKPOINT FIELDS ARE NOT UPDATED, for the next two map entries, and then it
+		// clears itself. So straight after leaving a title screen the save block's
+		// checkpoint words +0xB8 and +0xBA are STALE.
+		//
+		// That is why a joining client must load the host's LIVE location and not its
+		// checkpoint. MapRequestResumeFromCheckpoint and MapRequestChange(-1, ...) both
+		// read +0xBA/+0xB8 and would land the joiner at the host's last save sphere.
+		// ffx::RequestLoadLiveLocation is the one to call. The shipped load path can use
+		// the checkpoint form safely because the file it just installed is a save-point
+		// save by construction.
+		const DWORD TitleExitCheckpointSuppress = 0x00858E40;
+
+		// ATEL Core 573, the New Game opcode. Calls Rva::InitNewSaveData, which memsets
+		// the whole block, refills it from the battle kernel tables, and RESEEDS ALL 68
+		// RNG STREAMS FROM GetSystemTime. Never call it mid-session in co-op, the two
+		// machines would draw different numbers from that instant. Listed so a plugin
+		// that wants to detect the New Game edge knows what to look at.
+		//
+		// A new game starts at event id 132, entry point 0. That pair is in the title
+		// script, not in the binary.
+		const DWORD AtelSysCore573BeginNewGame = 0x00456520;
 
 		// int (void). Save byte +0x0C. The doorway index, i.e. the second warp argument.
 		const DWORD SaveDataGetEntryPoint = 0x0048D670;
@@ -327,7 +403,11 @@ namespace ffx
 		{
 			static const DWORD list[] = {
 			    SaveFileInstallBlock, SaveDataReencodeCharNames, SphereGridRecomputeDerived,
-			    SaveDataClearEquipStatBonus, AtelSysSave087, SaveDataSetSceneAndSub,
+			    SaveDataClearEquipStatBonus, MenuApplySaveConfigBit5EC,
+			    MenuApplySaveSoundOptions, MenuApplySaveMovieOption,
+			    SaveDataClampOptionWordE0, TitleScreenActive,
+			    TitleExitCheckpointSuppress, AtelSysCore573BeginNewGame,
+			    AtelSysSave087, SaveDataSetSceneAndSub,
 			    MapRequestChange, MapRequestResumeFromCheckpoint, MapSetTransitionFrames,
 			    MapWarpTo, MapArmWarpGate, MapWarpToWithSavedFade, MapSetScreenFadeRate,
 			    MapScreenFadeRate, MapReturnToTitle, SceneInit, MapLeaveFieldRequest,

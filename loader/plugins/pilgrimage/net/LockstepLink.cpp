@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "ModState.h"
+#include "ffx/Battle.h"
 #include "ffx/Cutscene.h"
 #include "ffx/GameState.h"
 #include "ffx/Hub.h"
@@ -23,6 +24,7 @@
 #include "menu/MenuSync.h"
 #include "menu/PauseSync.h"
 #include "world/BoosterSync.h"
+#include "world/CoopBody.h"
 #include "world/DialogueSync.h"
 #include "world/TriggerPass.h"
 
@@ -50,6 +52,36 @@ namespace pilgrimage
 		// the ordinary case without ever putting the render path somewhere the shipped
 		// game would not.
 		const uint32_t EscalateAfterStalls = 2;
+
+		// ---------------------------------------------------------------------------
+		// THE CEILING ON A WAIT. Without it, enforcing the gate is a hang rather than
+		// a feature.
+		//
+		// Lockstep::StepGate returns GateWaiting for as long as a peer's input for the
+		// current step has not turned up, and it has no limit of its own. So an
+		// enforcing gate facing a peer who alt-tabbed, hit a loading hitch or dropped
+		// off the network holds this machine forever. The hang watchdog would write a
+		// report at ten seconds and the player would be sitting in front of a frozen
+		// game with no way out.
+		//
+		// Past the ceiling the step is allowed to run. That IS a divergence, since the
+		// other machine has that input and used it and we did not. It is a BOUNDED and
+		// ANNOUNCED one though, the desync hash notices it and a world resync repairs
+		// it, and that beats a freeze with no exit.
+		//
+		// 60 steps is about two seconds at 30 Hz. Long enough that ordinary jitter and
+		// a short hitch get absorbed by waiting, which is the whole point of the gate,
+		// and short enough that nobody sits staring at a still frame wondering whether
+		// the game has died.
+		const uint32_t MaxStallSteps = 60;
+
+		// How many times the ceiling has been hit this session. Any non-zero value here
+		// means the two worlds have been allowed to differ at least once.
+		uint32_t abandonedWaits = 0;
+
+		// Was a battle running last step. Only used to notice the edge, so the park and
+		// the log happen once rather than every step of the fight.
+		bool stepWasInBattle = false;
 
 		bool holdApplied = false;
 
@@ -212,7 +244,33 @@ namespace pilgrimage
 			// Not enforcing means measure, do not interfere. The counters still move, so
 			// the log and the panel show exactly how often a real gate would have held
 			// the game, which is the number worth knowing before switching it on.
-			return !enforced;
+			//
+			// The measuring phase is over and the number it produced was damning. With
+			// the gate passive the two clocks drifted 1559 steps apart in two and a half
+			// minutes, every ordered command arrived for a step already run, and the
+			// ownership table went split brain. Enforcing is the default now and this
+			// stays as an escape hatch, on net.enforce_lockstep and shift+F4.
+			if (!enforced)
+				return true;
+
+			// THE CEILING, see MaxStallSteps. Waiting is the gate doing its job, waiting
+			// forever is a frozen game, and a frozen game is not the better outcome.
+			if (clock.CurrentStall() >= MaxStallSteps)
+			{
+				++abandonedWaits;
+				Log("lockstep: GIVING UP the wait on step %lu after %lu refused steps, "
+				    "about %lu ms. A peer's input never arrived, so this step runs "
+				    "without it and the two worlds are allowed to differ from here. The "
+				    "desync check will say so and ctrl+F3 asks the host for the world "
+				    "again. Waiting longer would just be a frozen game. Abandoned waits "
+				    "this session: %lu.",
+				    (unsigned long)clock.CurrentStep(), (unsigned long)clock.CurrentStall(),
+				    (unsigned long)(clock.CurrentStall() * 1000u / 30u),
+				    (unsigned long)abandonedWaits);
+				return true;
+			}
+
+			return false;
 		}
 
 		void OnStep(const workshop::Event&, void*)
@@ -240,10 +298,58 @@ namespace pilgrimage
 			// command queues are in a different order.
 			StepBattleSync();
 
-			// Order matters. Drive the remote bodies first so the trigger pass sees where
-			// they are this step, not where they were last step.
-			StepRemotePlayers();
-			RunRemoteTriggerPass(0);
+			// ---------------------------------------------------------------------------
+			// THE FIELD RELAY STOPS AT THE EDGE OF A BATTLE, and keeping these two apart
+			// is the point rather than an optimisation.
+			//
+			// This mod replicates two completely different things. On the field it
+			// replicates INPUT: each peer's stick and buttons for a step, run through the
+			// engine's own driver on every machine. In battle it replicates the chosen
+			// ACTION: the 72 byte command record, put on the wire at the moment of
+			// confirm and committed byte for byte on both machines by
+			// battle/BattleSync.cpp.
+			//
+			// A BATTLE ACTION MUST NEVER RIDE ON RELAYED INPUT. The battle menu is a
+			// single global page stack with one cursor and one staging record that is
+			// rebuilt from that stack every frame, so two machines driving it from two
+			// pads would not race, they would attribute one player's choice to the other
+			// player's unit. That is why the shape is one menu per unit, suppressed
+			// everywhere else (ffx::HookBattleMenuOpen), and the record carried.
+			//
+			// Nothing used to stop the field half at the boundary. It kept running
+			// FFX_Player__stepControl on party characters and kept firing the per-peer
+			// trigger and examine passes, step after step, through a whole fight, against
+			// a scene where the field CHR pool is not the thing those passes assume.
+			// ---------------------------------------------------------------------------
+			const bool nowInBattle = ffx::BattleRunning();
+			if (nowInBattle != stepWasInBattle)
+			{
+				stepWasInBattle = nowInBattle;
+				if (nowInBattle)
+					ParkRemotePlayers();
+
+				Log("lockstep: %s, so the field input relay is %s. Battle actions do not "
+				    "use it at all, they go over as 72 byte command records, see "
+				    "battle/BattleSync.cpp.",
+				    nowInBattle ? "a battle started" : "the battle ended",
+				    nowInBattle ? "parked and the trigger slots let go"
+				                : "driving again");
+			}
+
+			if (!nowInBattle)
+			{
+				// BEFORE THE BODIES ARE DRIVEN, because this is what creates them. A spawn
+				// command that lands on this step has to have run before StepRemotePlayers
+				// asks who has a body, or the new body sits still for one step and the two
+				// machines disagree about that step by exactly one character's worth of
+				// motion.
+				StepCoopBodies();
+
+				// Order matters. Drive the remote bodies first so the trigger pass sees
+				// where they are this step, not where they were last step.
+				StepRemotePlayers();
+				RunRemoteTriggerPass(0);
+			}
 
 			if (!clock.Running())
 				return;
@@ -269,8 +375,10 @@ namespace pilgrimage
 		installed = AddStepGate(&GateCallback)
 		    && workshop::Subscribe(workshop::EventStep, &OnStep) != 0;
 		if (installed)
-			Log("lockstep: gate added to the hub's step chain, gate is %s",
-			    enforced ? "ENFORCING" : "measuring only");
+			Log("lockstep: gate added to the hub's step chain, gate is %s for now and "
+			    "BeginLockstep arms it from net.enforce_lockstep, which is %s",
+			    enforced ? "ENFORCING" : "measuring only",
+			    settings.enforceLockstep ? "on" : "OFF");
 		else
 			Log("lockstep: could not register the gate, so the clock cannot run");
 
@@ -343,6 +451,26 @@ namespace pilgrimage
 		// different accelerations.
 		ResetPlayerDrive();
 		StartMinigameSync();
+		ResetCoopBodies();
+
+		// ARM THE GATE FROM THE SETTING, here rather than at load, because this is the
+		// one place that runs exactly once per session on both machines. shift+F4 still
+		// toggles the live value afterwards without writing the setting back, so a
+		// temporary "let it run free so I can see something" does not become permanent.
+		//
+		// A session that starts with the gate measuring is a session whose two clocks
+		// are free to drift apart, and once they have drifted far enough every ordered
+		// command lands on a step the other machine already ran. That is how an
+		// ownership change applied on one machine and nowhere else.
+		const bool wantEnforced = settings.enforceLockstep != 0;
+		if (wantEnforced != enforced)
+			SetLockstepEnforced(wantEnforced);
+		else
+			Log("lockstep: the gate is %s for this session",
+			    enforced ? "ENFORCING" : "measuring only, so the clocks may drift");
+
+		abandonedWaits = 0;
+		stepWasInBattle = false;
 
 		clock.Start(session, step);
 	}
@@ -352,6 +480,12 @@ namespace pilgrimage
 		if (!clock.Running())
 			return;
 		clock.Stop();
+
+		// The bodies stop being anybody's. They are NOT despawned: a dropped link is
+		// not a reason to delete a character out of the pool, and leaving them standing
+		// there means a reconnect on the same map has something to look at rather than
+		// an empty field. PruneDeadClones collects them on the next map change.
+		StopCoopBodies();
 
 		// Never leave the game held because the link went away mid-stall.
 		if (holdApplied)
@@ -379,6 +513,11 @@ namespace pilgrimage
 	bool LockstepEnforced()
 	{
 		return enforced;
+	}
+
+	DWORD LockstepAbandonedWaits()
+	{
+		return (DWORD)abandonedWaits;
 	}
 
 	void HoldSimulationFor(int reason)
@@ -480,6 +619,17 @@ namespace pilgrimage
 		// offering it every frame costs a hash and nothing else. Playtime ticks on
 		// its own every frame, so it is excluded from the combined value by
 		// HashGameState rather than here.
+		//
+		// NOTHING TO HASH WITHOUT A GAME, and hashing anyway was worse than useless.
+		// The save block is static .data and reads as all zero before a game exists, so
+		// two peers sitting in the main menu produced identical hashes of nothing and
+		// AGREED. A detector that reports agreement over an empty world is a detector
+		// that has to be ignored. The clock is gated on GameLoaded now, so in practice
+		// this only catches somebody quitting to the title mid-session, which is still
+		// exactly when a flood of meaningless mismatches is least wanted.
+		if (!ffx::GameLoaded())
+			return;
+
 		GameStateHash hash;
 		if (HashGameState(&hash) && hash.valid)
 		{
@@ -487,7 +637,7 @@ namespace pilgrimage
 			// uint32_t. They are the same width here, but copying rather than casting
 			// means the day one of them changes is a compile error instead of a
 			// checksum that quietly means nothing.
-			// 13 save block buckets, 2 menu, 1 carries, 2 minigame. Protocol 7 raised
+			// 16 save block buckets, 2 menu, 1 carries, 2 minigame. Protocol 7 raised
 			// ChecksumRegionCount to 24, so there are spares again.
 			const int kHeldHashRegions = 1;
 			typedef char ChecksumRegionsFit[(kBucketCount + kMenuHashRegions
@@ -501,10 +651,10 @@ namespace pilgrimage
 			for (int i = 0; i < (int)kBucketCount; ++i)
 				buckets[i] = (uint32_t)hash.bucket[i];
 
-			// The menu's own replicable state goes in the spare slots past the 13 save
-			// block buckets. ChecksumPayload carries 16, so this needs no protocol
-			// change, and HandleChecksum reports "first difference in region N", which
-			// for N >= 13 means the menu rather than the save block.
+			// The menu's own replicable state goes in the spare slots past the 16 save
+			// block buckets (kBucketCount). HandleChecksum reports "first difference in
+			// region N", which for N >= kBucketCount means the menu rather than the save
+			// block.
 			//
 			// It is mixed into the combined value as well, not just carried alongside,
 			// because the combined value is the only thing HandleChecksum compares. A
@@ -566,9 +716,15 @@ namespace pilgrimage
 		}
 
 		char line[200];
-		_snprintf_s(summary, sizeof(summary), _TRUNCATE, "%s%s",
+		char gave[64];
+		gave[0] = 0;
+		if (abandonedWaits)
+			_snprintf_s(gave, sizeof(gave), _TRUNCATE, "  [%lu abandoned waits]",
+			    (unsigned long)abandonedWaits);
+
+		_snprintf_s(summary, sizeof(summary), _TRUNCATE, "%s%s%s",
 		    clock.Summary(line, sizeof(line)),
-		    enforced ? "" : "  [measuring only]");
+		    enforced ? "" : "  [measuring only]", gave);
 		return summary;
 	}
 

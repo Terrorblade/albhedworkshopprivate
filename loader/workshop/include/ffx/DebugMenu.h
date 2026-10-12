@@ -73,6 +73,22 @@ namespace ffx
 	// it changes more than one thing, so the one here says so and logs it.
 	bool SetDebugMode(bool on);
 
+	// Makes model loading work while debug mode is on. SetDebugMode(true) calls this
+	// for you, so a caller only needs it directly to check or to force the order.
+	//
+	// Debug mode sends ChLoadChrData down a lookup in a table the retail archive does
+	// not ship, so it returns null for every chrId, and ChAllocate then stores through
+	// that null on the next spawn. This forces the one branch that chooses between the
+	// two paths, which costs a debug only name string and nothing else. See the long
+	// note on Rva::ChLoadChrDataDebugBranch for the disassembly either side of it.
+	//
+	// Idempotent, and it refuses rather than guesses if the bytes are not what the
+	// retail build has there. True means model loading is safe under debug mode now.
+	bool RestoreModelLoadUnderDebug();
+
+	// Whether that patch is in place.
+	bool ModelLoadUnderDebugRestored();
+
 	// True when the manager singleton exists, which it does on any normal boot.
 	bool DebugMenuAvailable();
 

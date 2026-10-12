@@ -5,6 +5,8 @@
 #include "ffx/Layout.h"
 #include "ffx/addresses/Character.h"
 #include "ffx/addresses/GameState.h"
+#include "ffx/EventPlaces.h"
+#include "ffx/KernelTables.h"
 #include "workshop/HostModule.h"
 #include "workshop/Log.h"
 
@@ -22,6 +24,10 @@ namespace ffx
 		// here as data because a picker needs 892 labels and calling across for each one
 		// buys nothing.
 		const char kLetters[kModelCategories] = { 'c', 'm', 'n', 's', 'w', 'f', 'k' };
+
+		// The index into those two arrays, which is also the chr id's high nibble, so
+		// a monster model id is 0x1000 plus its number.
+		const int CategoryMonster = 1;
 		const char* kDirs[kModelCategories] = { "pc", "mon", "npc", "sum", "wep", "obj", "skl" };
 
 		// No shipped table has a number above 999, and the name format is "%03d", so a
@@ -146,12 +152,73 @@ namespace ffx
 			return data[Rva::ChrDataIsFallbackOff] != 0;
 		}
 
-		// Appends the human name for the eighteen character indices whose model this is,
-		// so "s007" also reads "Anima". Everything else keeps the engine's own label,
-		// because a monster's model number is a different id space from its bestiary
-		// entry and inventing a name there would be a guess.
+		// ---------------------------------------------------------------------------
+		// A MONSTER MODEL NUMBER IS ITS BESTIARY INDEX. Measured, not assumed.
+		//
+		// This file used to say the opposite, that the two were different id spaces and
+		// naming a monster model would be a guess. That was wrong, and here is what
+		// settled it. The engine's rom index holds monster models numbered 0 to 346 with
+		// no gaps, plus a stray m999. The name table holds 366 rows whose real names run
+		// 0 to 356 with padding after. Three things then line up that cannot line up
+		// under a wrong offset:
+		//
+		//   m000 has no assets in the archive AND its name row is a placeholder, so both
+		//   spaces agree index 0 is a dummy. That alone pins the offset at zero.
+		//
+		//   m203, m204, m205 and m206 have no assets of their own, and all four name
+		//   rows read "Magic Urn". The Magic Urn is one fiend with four targetable
+		//   faces, so it needs four records and one model. Four identical names falling
+		//   exactly on the four assetless slots is not a coincidence.
+		//
+		//   Names 347 to 356 are real but have no model at all, and every one of them
+		//   reads "Unknown". Records with no model, at the end, where they belong.
+		//
+		// The strongest check is the duplicate names. FFX lists Dingo, Water Flan and
+		// Condor twice each, because the Besaid fiends come back as recoloured stronger
+		// versions, at 9/16/28 and again at 231/232/233. Under this mapping each pair
+		// lands on two model folders holding the SAME number of files: Dingo 8 and 8,
+		// Water Flan 15 and 15, Condor 9 and 9. That is what a retexture of one
+		// creature looks like, and three pairs agreeing by accident under a wrong
+		// offset is not credible.
+		//
+		// Spot checks across the range agree too: m120 Evrae Altana, m200 Fallen Monk,
+		// m300 Stratoavis, m346 Left Arm, which is a boss part and sits last. And
+		// m159 Sinspawn Ammes carries 61 files where an ordinary fiend carries 8 to 17,
+		// which is what a boss should look like.
+		//
+		// WHAT DOES NOT RESOLVE, and should not be papered over: m163 to m169 have
+		// assets but their name rows are blank in the shipped table, so they stay
+		// unnamed. KernelNameIsReal is what keeps "unnamed 163" out of the label, since
+		// printing it would say the same thing twice.
+		// ---------------------------------------------------------------------------
+		const char* MonsterName(int number)
+		{
+			if (!KernelNameIsReal(KernelMonsters, number))
+				return nullptr;
+			const char* name = KernelName(KernelMonsters, number);
+			return (name && name[0]) ? name : nullptr;
+		}
+
+		// The human name for the eighteen character indices whose model this is, so
+		// "s007" also reads "Anima", and the bestiary name for a monster model.
+		//
+		// WHEN THE GAME HAS NO NAME, WHERE IT IS USED. That covers every NPC, because
+		// FFX ships no NPC names at all, and it picks up the objects and the handful of
+		// monsters and aeons whose name row is blank. ffx/EventPlaces.h has the evidence
+		// and the reason it lists areas rather than choosing one.
+		//
+		// The order matters: a real name always beats a place. m120 stays Evrae Altana
+		// and does not become "Airship".
 		const char* FriendlyName(int chrId)
 		{
+			if (ChrIdCategory(chrId) == CategoryMonster)
+			{
+				const char* name = MonsterName(ChrIdNumber(chrId));
+				if (name)
+					return name;
+				return ModelPlaceLabel(chrId);
+			}
+
 			for (BYTE i = 0; i < (BYTE)kCharCount; ++i)
 			{
 				if ((int)ChrIdForCharacter(i, false) != chrId)
@@ -162,7 +229,7 @@ namespace ffx
 					return name;
 				return CharacterName(i);
 			}
-			return nullptr;
+			return ModelPlaceLabel(chrId);
 		}
 
 	} // namespace
@@ -264,6 +331,13 @@ namespace ffx
 
 	void RefreshModelList()
 	{
+		// NOTHING IS STARTED HERE. FriendlyName reads the place labels for every model
+		// the game has no name for, and this deliberately does not kick that sweep off:
+		// it is twenty seconds of disk and a lazy ModelList() from a panel draw is the
+		// worst possible moment for it. A caller that wants labelled rows starts it
+		// itself and waits for EventPlacesReady first, which RefreshCheatLists does.
+		// Without that, this still works and the npc rows are bare numbers.
+
 		g_models.Reset("chr rom index tables");
 
 		for (int cat = 0; cat < kModelCategories; ++cat)

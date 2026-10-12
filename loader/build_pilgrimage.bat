@@ -64,8 +64,27 @@ if errorlevel 1 goto :fail
 echo.
 echo Built: %OUTDIR%\PilgrimageTogether.dll
 echo.
-echo Install with:
-echo   copy "%OUTDIR%\PilgrimageTogether.dll" "G:\Steam\steamapps\common\FINAL FANTASY FFX&FFX-2 HD Remaster\AlBhedWorkshop\plugins\"
+set "GAMEDIR=G:\Steam\steamapps\common\FINAL FANTASY FFX&FFX-2 HD Remaster"
+set "DLLNAME=PilgrimageTogether.dll"
+
+rem INSTALLED, NOT JUST SUGGESTED. This used to echo the copy command and stop,
+rem which reads the same as having installed it, so a test run could measure a
+rem stale DLL and pass. If the game is running it has the file open and the copy
+rem fails, which is worth one loud line rather than a silent build.
+set "INSTALLDIR=%GAMEDIR%\AlBhedWorkshop\plugins"
+if not exist "%INSTALLDIR%" mkdir "%INSTALLDIR%"
+copy /y "%OUTDIR%\%DLLNAME%" "%INSTALLDIR%\" >nul
+if errorlevel 1 (
+    echo.
+    echo *** NOT INSTALLED ***  %DLLNAME% could not be copied to:
+    echo     "%INSTALLDIR%"
+    echo     The game is probably running and holding it open. Close it and
+    echo     run this again, or the next test measures the old build.
+    exit /b 1
+)
+rem QUOTED, because this game's folder name contains an ampersand and cmd splits
+rem an unquoted echo on it, which printed a path that stopped at "FFX".
+echo Installed: "%INSTALLDIR%\%DLLNAME%"
 exit /b 0
 
 :fail

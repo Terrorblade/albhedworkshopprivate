@@ -47,6 +47,19 @@ namespace workshop
 	// module that loads later is picked up on the next step.
 	void WarmCrashHandler();
 
+	// Rename albhed_crash.log to albhed_crash.prev.log, so this boot starts with no
+	// crash log and the one from last boot is still readable.
+	//
+	// NOT A TRUNCATE, and that is the whole point. A crash report is written and then
+	// the process dies, so the only way to read it is to start the game again. Clearing
+	// it on the way in would delete the report every single time, which is the one
+	// behaviour that makes a crash handler useless.
+	//
+	// CALL IT ONCE PER BOOT, from the loader, BEFORE any plugin loads. Any later and a
+	// report written by a plugin's DllMain would be rolled away as soon as it was
+	// written. Returns true when a previous log was moved.
+	bool RollCrashLog();
+
 	// Cheap, meant for a per-step handler. Two jobs.
 	//
 	// The game installs its own top level filter during startup, after ours, and that

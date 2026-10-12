@@ -480,15 +480,54 @@ namespace pilgrimage
 			if (peer < 0 || peer >= MaxPlayers)
 				return;
 
+			// ---------------------------------------------------------------------------
+			// ONLY THE HOST CHANGES THIS, and a client pressing the row changes nothing.
+			//
+			// That is a simplification rather than a restriction. One writer means the
+			// table never has to be reconciled between machines, which is why the host
+			// sends it once per joiner and then never again. With both ends able to
+			// change it, every copy has to be treated as possibly stale, and the only
+			// honest answer to that is to keep resending.
+			//
+			// REFUSED HERE RATHER THAN BY MAKING THE ROW UNSELECTABLE, and that is not a
+			// shortcut. Up and Down skip any row whose selectable flag is not 1, and that
+			// navigation runs on replicated input, so a row that is selectable on one
+			// machine and not the other puts the two cursors on different rows and the
+			// next Left or Right changes two different settings. The host override row
+			// already works this way for the same reason, see the file header.
+			//
+			// The row still moves for a moment on the client and then snaps back, which
+			// is what the ask latch does for every setting here when nothing lands. See
+			// kAskTimeoutSteps.
+			// ---------------------------------------------------------------------------
+			Session* session = ActiveSession();
+			if (session && !session->IsHost())
+			{
+				InterlockedIncrement(&g_refused);
+				Log("co-op config: ignoring a request for %s to play %s, because only the "
+				    "host sets who plays whom. Ask them to change it on their Config "
+				    "screen and it will arrive here.",
+				    PeerName(peer), CharacterName(charIndex));
+				return;
+			}
+
 			// NO SESSION MEANS BIND IT RIGHT HERE. There is no clock to stamp a step
 			// on, and there is also nobody to disagree with, so the ordering that the
 			// rest of this function exists to guarantee has nothing to guarantee. This
 			// is what makes the rows useful before anybody joins: a host can set up who
 			// plays whom, and the bindings are already in the table when the join lands.
 			//
-			// The hazard this does NOT open: a binding made alone cannot desync, because
-			// the table is seeded from the same place on both machines and a joiner gets
-			// the host's world before it ever steps alongside it.
+			// The hazard this does NOT open, and the old reason for that was wrong. It
+			// said the table was "seeded from the same place on both machines", which it
+			// is not: a binding made here exists on this machine only. What makes it safe
+			// is the other end. The host KEEPS its table when a session starts, a client
+			// clears, and the host then publishes the whole thing as
+			// kCommandCharOwnerTable. So a binding made alone survives the join and is
+			// handed to everybody rather than having to be guessed at.
+			//
+			// Before that was true this was a real bug. net/NetLink.cpp reset on both
+			// machines and StartBattleSync reset again, so a host who set all this up and
+			// then had somebody join lost every choice they had made.
 			Lockstep* clock = ActiveLockstep();
 			if (!clock)
 			{
@@ -578,6 +617,16 @@ namespace pilgrimage
 		// ---------------------------------------------------------------------------
 		// APPLYING WHAT THE HOST ORDERED
 		// ---------------------------------------------------------------------------
+		// Was each peer's clock running last time the host looked. The FALSE to TRUE
+		// edge is the join signal, see PublishOwnerTable.
+		bool g_peerWasStepping[MaxPlayers] = { false, false, false };
+
+		// Who is owed the table and has not had it yet. Cleared only once the command
+		// is actually away, so a refusal is retried on the next step rather than losing
+		// that peer's table for the session. This is NOT a heartbeat: once a peer has
+		// been sent the table, it is never sent to them again.
+		bool g_peerNeedsTable[MaxPlayers] = { false, false, false };
+
 		void ApplyCharOwner(const Command& command)
 		{
 			if (command.length < (int)sizeof(CharOwnerCommand))
@@ -613,6 +662,55 @@ namespace pilgrimage
 			    (unsigned)command.step, (unsigned)command.issuer);
 		}
 
+		// ---------------------------------------------------------------------------
+		// THE HOST'S TABLE, ARRIVING. Absolute state, so this overwrites rather than
+		// merges, and says nothing at all when nothing changed.
+		// ---------------------------------------------------------------------------
+		void ApplyCharOwnerTable(const Command& command)
+		{
+			if (command.length < (int)sizeof(CharOwnerTableCommand))
+			{
+				Log("co-op config: an ownership table from peer %u is %d bytes and the "
+				    "payload is %d, so the two builds do not agree on the protocol",
+				    (unsigned)command.issuer, command.length,
+				    (int)sizeof(CharOwnerTableCommand));
+				return;
+			}
+
+			// ONLY THE HOST PUBLISHES THE TABLE. A client sending one is a client
+			// asserting authority it does not have, and applying it would mean the
+			// answer to "who drives whom" depended on who spoke last. Loud rather than
+			// silent, because the only ways to get here are a modified build or a bug.
+			if (command.issuer != HostPeer)
+			{
+				Log("co-op config: IGNORING an ownership table from peer %u. Only the "
+				    "host publishes the table. A client that wants a change asks with "
+				    "kCommandCharOwner and the host orders it.",
+				    (unsigned)command.issuer);
+				return;
+			}
+
+			CharOwnerTableCommand payload;
+			memcpy(&payload, command.data, sizeof(payload));
+
+			// The wire shape is fixed by kOwnerTableEntries and the table is MaxPlayers
+			// wide. They are the same number today and a change to either has to be a
+			// deliberate protocol decision, so it is a compile error rather than a
+			// truncation.
+			typedef char OwnerTableWidthCheck[(kOwnerTableEntries == MaxPlayers) ? 1 : -1];
+
+			int owners[kOwnerTableEntries];
+			for (int i = 0; i < kOwnerTableEntries; ++i)
+				owners[i] = (payload.charIndex[i] == 0xFF) ? -1 : (int)payload.charIndex[i];
+
+			if (!InstallOwnerTable(owners, kOwnerTableEntries))
+				return; // Nothing changed, which is the usual case on the heartbeat.
+
+			InterlockedIncrement(&g_applied);
+			Log("co-op config: installed the host's ownership table on step %u. %s",
+			    (unsigned)command.step, OwnershipStatus());
+		}
+
 		void ApplyCommandsForStep(Lockstep* clock)
 		{
 			// Three is already generous: one row change per step is the most a human can
@@ -622,8 +720,104 @@ namespace pilgrimage
 			const int count = clock->CommandsForStep(commands, 4);
 
 			for (int i = 0; i < count; ++i)
+			{
 				if (commands[i]->kind == (uint8_t)kCommandCharOwner)
 					ApplyCharOwner(*commands[i]);
+				else if (commands[i]->kind == (uint8_t)kCommandCharOwnerTable)
+					ApplyCharOwnerTable(*commands[i]);
+			}
+		}
+
+		// ---------------------------------------------------------------------------
+		// THE HOST'S TABLE, GOING OUT. ONCE PER JOINER, and that is the whole rule.
+		//
+		// A PEER'S CLOCK STARTING is the only trigger. workshop::Lockstep registers as a
+		// message sink inside Start(), so until a joiner's clock runs it is not listening
+		// to the command channel at all and every binding ordered before that moment
+		// reached it as nothing. That is the one gap a single-binding command cannot
+		// cover, so it is the one thing this covers. The host can see the moment it
+		// happens because a heartbeat carries the sender's step.
+		//
+		// NOTHING ELSE NEEDS SENDING. A change made afterwards goes out as an ordered
+		// kCommandCharOwner that every machine applies on the same step, and only the
+		// host can make one, so there is exactly one writer and no copy that can drift.
+		// An earlier version resent the whole table on a slow heartbeat to be
+		// self-healing. With one writer there is nothing to heal, and a heartbeat would
+		// only be paying forever for a problem that no longer exists.
+		//
+		// The one failure left is the send itself not going out, so the peer stays on
+		// the owed list and it is tried again next step. That is a retry of a send that
+		// did not happen, not a resend of one that did.
+		// ---------------------------------------------------------------------------
+		void PublishOwnerTable(Lockstep* clock)
+		{
+			Session* session = ActiveSession();
+			if (!session || !session->IsHost())
+				return;
+
+			bool publish = false;
+
+			for (int peer = 0; peer < MaxPlayers; ++peer)
+			{
+				const PeerInfo* info = session->Peer(peer);
+
+				// A non-zero step means they have sent at least one heartbeat since
+				// their clock started, so they are listening to commands now.
+				const bool stepping
+				    = info && info->active && !info->isLocal && info->step != 0;
+
+				if (!stepping)
+				{
+					// Not started, or gone away again. Either way, if their clock
+					// starts later they are owed the table then, so the edge is armed
+					// rather than left latched.
+					g_peerWasStepping[peer] = false;
+					g_peerNeedsTable[peer] = false;
+					continue;
+				}
+
+				if (!g_peerWasStepping[peer])
+				{
+					g_peerWasStepping[peer] = true;
+					g_peerNeedsTable[peer] = true;
+					Log("co-op config: peer %d's clock is running now, so the ownership "
+					    "table goes out to them once. Anything ordered before this "
+					    "moment never reached them, because their clock was not "
+					    "listening to commands yet.",
+					    peer);
+				}
+
+				if (g_peerNeedsTable[peer])
+					publish = true;
+			}
+
+			if (!publish)
+				return;
+
+			CharOwnerTableCommand payload;
+			memset(&payload, 0, sizeof(payload));
+			for (int i = 0; i < kOwnerTableEntries; ++i)
+			{
+				const int owner = OwnerCharacter(i);
+				payload.charIndex[i] = (owner < 0) ? 0xFF : (uint8_t)owner;
+			}
+
+			if (!clock->RequestCommand(
+			        (uint8_t)kCommandCharOwnerTable, &payload, (int)sizeof(payload)))
+			{
+				// The owed list is deliberately NOT cleared, so this is tried again on
+				// the next step. A refusal means the command ring was full for this
+				// step, which passes. Said out loud because a client that never receives
+				// the table is a client that silently disagrees about who drives whom,
+				// and that disagreement is invisible until their battle menu opens in
+				// the wrong place.
+				Log("co-op config: could not publish the ownership table this step, so it "
+				    "is still owed and goes out on the next one.");
+				return;
+			}
+
+			for (int peer = 0; peer < MaxPlayers; ++peer)
+				g_peerNeedsTable[peer] = false;
 		}
 
 		// ---------------------------------------------------------------------------
@@ -929,6 +1123,11 @@ namespace pilgrimage
 					g_drainedStep = g_nowStep;
 					g_haveDrainedStep = true;
 					ApplyCommandsForStep(clock);
+
+					// AFTER the drain, so a table the host just applied to itself is the
+					// one that goes out, and on the same step guard so the frame path's
+					// second call to ServiceStep cannot publish twice.
+					PublishOwnerTable(clock);
 				}
 			}
 
@@ -990,6 +1189,14 @@ namespace pilgrimage
 
 	void StartCoopConfig()
 	{
+		// The publisher starts from scratch every session, so every peer in the new one
+		// is seen as a fresh join and is owed the table.
+		for (int i = 0; i < MaxPlayers; ++i)
+		{
+			g_peerWasStepping[i] = false;
+			g_peerNeedsTable[i] = false;
+		}
+
 		g_started = g_installed;
 		g_saidNoRoom = false;
 		g_haveDrainedStep = false;

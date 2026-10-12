@@ -373,7 +373,7 @@ Built in `_WinMain` at 0x62EE8D onward:
 2. Appends the wide literal at 0xB40EB8:
    `\Square Enix\FINAL FANTASY X&X-2 HD Remaster\GameSetting.ini`
 3. `FFX_Alloc(0x63C)` for a 1596-byte settings object.
-4. `FFX_GameSettings__loadIni(obj, path)` at **0x401880** - badly named, it is the
+4. `FFX_Config_Construct(obj, path)` at **0x401880** (renamed 2026-10-11 from `FFX_GameSettings__loadIni`), it is the
    constructor. It seeds the 24 option dwords from column 0 of
    `g_configQualityPresetTable`, zeroes the three 0x144-byte (81 dword) binding arrays at
    +96, +420 and +744, and copies the wide path to +1072.

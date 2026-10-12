@@ -449,6 +449,21 @@ namespace ffx
 	// ownership table keyed on characters to the actor id an event command needs.
 	int ActorIdForPartyCharacter(int charIndex);
 
+	// The CHR this party character is wearing right now, or NULL.
+	//
+	// THE ONE CALL A CO-OP LAYER WANTS, because an ownership table is keyed on save
+	// block character indices and everything that moves a body is keyed on a CHR. It
+	// is just ActorIdForPartyCharacter followed by ChrForActor, but having it in one
+	// place means the "which of the three id spaces is this" question is answered once
+	// rather than at every call site.
+	//
+	// NULL is an ordinary answer, not a failure: a character who is not in the active
+	// party has no actor in this map, and neither does one during a transition. So
+	// re-resolve it rather than caching the pointer. The CHR pool is freed and
+	// reallocated on every map change, which is exactly why this returns a pointer to
+	// use now and not a handle to keep.
+	void* ChrForPartyCharacter(int charIndex);
+
 	// ---------------------------------------------------------------------------
 	// Moving an actor. This is how a joining machine lands its characters where the
 	// host says they are.

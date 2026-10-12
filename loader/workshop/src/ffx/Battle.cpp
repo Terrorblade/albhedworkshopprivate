@@ -3,6 +3,7 @@
 #include "ffx/addresses/Battle.h"
 #include "ffx/addresses/GameState.h"
 #include "ffx/GameState.h"
+#include "workshop/Detour.h"
 #include "workshop/HostModule.h"
 #include "workshop/Log.h"
 
@@ -187,73 +188,27 @@ namespace ffx
 		// ---------------------------------------------------------------------------
 		// The call site patch.
 		//
+		// workshop::PatchCallSite, not a copy of it. There used to be a second
+		// implementation here, identical to the kit's except for the log prefix, and it
+		// carried the same defect: it refused when the site already pointed somewhere
+		// other than the named function, which is what happens when another plugin
+		// patched it first. Two copies meant fixing that twice, so now there is one.
+		//
 		// One dword written, after proving the five bytes are the call we think they
 		// are. Nothing is relocated and the target function is never modified, so the
-		// original stays callable by address and the other callers of it are untouched.
+		// original stays callable and the other callers of it are untouched.
 		// ---------------------------------------------------------------------------
-		struct CallSite
-		{
-			DWORD rva;
-			bool patched;
-		};
+		typedef workshop::CallSitePatch CallSite;
 
-		bool PatchCallSite(CallSite& site, DWORD siteRva, DWORD expectedTargetRva,
-		    void* replacement, const char* what)
-		{
-			site.rva = siteRva;
-			site.patched = false;
-
-			BYTE* call = (BYTE*)ModuleAddress(siteRva);
-			if (!Readable(call, 5))
-			{
-				Log("battle: %s call site RVA 0x%08X is not readable, refusing", what, siteRva);
-				return false;
-			}
-			if (Rd8(call) != 0xE8)
-			{
-				Log("battle: %s call site RVA 0x%08X holds 0x%02X not an E8 call, refusing. "
-				    "Re-derive this site from the IDB.",
-				    what, siteRva, (unsigned)Rd8(call));
-				return false;
-			}
-
-			INT32 relative = 0;
-			memcpy(&relative, call + 1, sizeof(relative));
-			const BYTE* target = call + 5 + relative;
-			const BYTE* expected = (const BYTE*)ModuleAddress(expectedTargetRva);
-			if (target != expected)
-			{
-				Log("battle: %s call site RVA 0x%08X calls 0x%08X, expected 0x%08X. Refusing "
-				    "to patch, because that is not the function this hook means.",
-				    what, siteRva, (unsigned)(UINT_PTR)target, (unsigned)(UINT_PTR)expected);
-				return false;
-			}
-
-			// PAGE_EXECUTE_READWRITE and NOT workshop::WriteProtectedDword, which asks
-			// for PAGE_READWRITE. That helper is for a vtable slot in a data section.
-			// Taking execute off a .text page, even for the three instructions this
-			// takes, is a window in which another thread running through that page
-			// faults. workshop::InstallDetour makes the same choice for the same reason.
-			const INT32 wanted = (INT32)((BYTE*)replacement - (call + 5));
-			DWORD previousProtect = 0;
-			if (!VirtualProtect(call, 5, PAGE_EXECUTE_READWRITE, &previousProtect))
-			{
-				Log("battle: %s call site RVA 0x%08X could not be made writable, "
-				    "GetLastError=%lu",
-				    what, siteRva, GetLastError());
-				return false;
-			}
-			memcpy(call + 1, &wanted, sizeof(wanted));
-
-			DWORD ignored = 0;
-			VirtualProtect(call, 5, previousProtect, &ignored);
-			FlushInstructionCache(GetCurrentProcess(), call, 5);
-
-			site.patched = true;
-			Log("battle: %s hooked at call site RVA 0x%08X, now calling 0x%08X",
-			    what, siteRva, (unsigned)(UINT_PTR)replacement);
-			return true;
-		}
+		// The route back to FFX_Btl_CommitCommand. Normally the engine's own function,
+		// and another plugin's hook when one got here first, which is why it is read out
+		// of the patch record rather than resolved from the RVA.
+		//
+		// ONE value for five sites, because MenuCommitThunk cannot tell which of them
+		// called it. All five called the same function before we touched them, so the
+		// five agree unless another plugin patched a subset, and that case is logged and
+		// falls back to the engine.
+		void* commitPrevious = NULL;
 
 		// ---------------------------------------------------------------------------
 		// Where the five player side commits are.
@@ -325,6 +280,13 @@ namespace ffx
 					return 0;
 				}
 			}
+
+			// commitPrevious when we have one, so a plugin that patched this site before
+			// we loaded still sees the commit. It is NULL only when nothing was patched
+			// or the five sites disagreed, and then the engine's own function is both the
+			// honest fallback and what this line always used to do.
+			if (commitPrevious)
+				return ((CommitCommandFn)commitPrevious)(record, gilCost, variant);
 
 			return Resolve<CommitCommandFn>(Rva::BtlCommitCommand)(record, gilCost, variant);
 		}
@@ -878,10 +840,25 @@ namespace ffx
 		for (int i = 0; i < kMenuCommitSiteCount; ++i)
 		{
 			const MenuCommitSite& site = kMenuCommitSites[i];
-			if (PatchCallSite(menuCommitSites[i], site.functionRva + site.offset,
+			if (workshop::PatchCallSite(menuCommitSites[i], site.functionRva + site.offset,
 			        Rva::BtlCommitCommand, (void*)&MenuCommitThunk, site.name))
 			{
 				++menuCommitSitesPatched;
+
+				// First one sets the route back, the rest have to agree with it.
+				if (!commitPrevious)
+					commitPrevious = menuCommitSites[i].previous;
+				else if (menuCommitSites[i].previous != commitPrevious)
+				{
+					Log("battle: site %s was calling 0x%08X but an earlier site was "
+					    "calling 0x%08X, so another plugin patched some of the five and "
+					    "not the others. There is one route back from the thunk, so it "
+					    "will use the engine's own function and whoever hooked a subset "
+					    "will not see those commits.",
+					    site.name, (unsigned)(UINT_PTR)menuCommitSites[i].previous,
+					    (unsigned)(UINT_PTR)commitPrevious);
+					commitPrevious = NULL;
+				}
 			}
 		}
 
@@ -921,7 +898,7 @@ namespace ffx
 		// as an address rather than scanned for, because PatchCallSite verifies the
 		// opcode and the displacement before it writes, so a build that moved gets a
 		// clean refusal with a log line instead of a wild jump.
-		return PatchCallSite(menuOpenSite, Rva::BtlMenuOpenCallSite, Rva::BtlMenuOpen,
+		return workshop::PatchCallSite(menuOpenSite, Rva::BtlMenuOpenCallSite, Rva::BtlMenuOpen,
 		    (void*)&MenuOpenThunk, "menu open");
 	}
 

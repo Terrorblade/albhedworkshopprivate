@@ -25,7 +25,14 @@ namespace ffx
 	DWORD SaveBlockSize();
 
 	// Copies the live block out. The buffer must hold SaveBlockSize() bytes. Returns false
-	// when the block is not readable yet, which is the state at the title screen.
+	// only when the block is not readable.
+	//
+	// READABLE IS NOT THE SAME AS "THERE IS A GAME", and this used to claim otherwise.
+	// The block is static .data, so it is readable from process start and reads as all
+	// zero until a save or a new game has filled it. This succeeds at the title screen
+	// and hands back a buffer of zeroes, which transplants perfectly well and produces a
+	// world nobody is in. Call ffx::GameLoaded() first if you care, and every caller
+	// sending this over a wire does.
 	bool SnapshotSaveBlock(void* out, DWORD bytes);
 
 	// What a transplant may be told to leave alone.
@@ -45,6 +52,18 @@ namespace ffx
 		// There is almost no reason to turn this off. Default true.
 		bool recomputeDerived;
 
+		// Push the block's option flags back into the engine, which the game's own Load
+		// Game commit does and a bare memcpy does not. Default true.
+		//
+		// The bits ride along inside the block, but the engine caches what they mean
+		// outside it, so without this the machine keeps the previous game's settings
+		// while the block claims otherwise. The one that matters is bit 13, the movie
+		// setting, because it gates FMV playback and disc reads and two peers that
+		// disagree about it disagree about every FMV. It also moves the audio config to
+		// match the incoming save, which is what a real load does and is the reason this
+		// is a flag rather than unconditional.
+		bool applyOptionFlags;
+
 		// Set the game's own byte +0x2A "loaded from file" flag, which
 		// FFX_SaveData_SetSceneAndSub consumes once to take the previous-scene fields from
 		// the +0xC0 history instead of from stale live values. One byte, removes a class of
@@ -55,6 +74,12 @@ namespace ffx
 	// Sensible defaults, as described above. Use this and then change what you mean.
 	TransplantOptions DefaultTransplantOptions();
 
+	// The option re-apply on its own, for a caller that transplanted with the flag off and
+	// changed its mind, or that wrote the option word directly. Three engine calls in the
+	// order FFX_SaveFile_CommitLoad makes them. Returns false only if they will not
+	// resolve.
+	bool ApplySaveOptionFlags();
+
 	// What a transplant actually did, so a caller can log it rather than guess.
 	struct TransplantResult
 	{
@@ -62,6 +87,7 @@ namespace ffx
 		bool reencodedNames;
 		bool recomputedDerived;
 		bool setJustLoadedFlag;
+		bool appliedOptionFlags;
 		DWORD bytesCopied;
 		DWORD playtimePreserved;
 		int mapIdAfter;
@@ -97,6 +123,11 @@ namespace ffx
 		int scenario;             // +0xBEC, the word 331 script descriptors read
 		bool changePending;       // the deferred request has been raised and not consumed
 		bool sceneLoaded;
+
+		// THE FIELDS WERE READ. Not "there is a game here", which is the reading that
+		// costs you an afternoon. The block is readable from process start, so this is
+		// true at the title screen with mapId 0 and everything else zero. Pair it with
+		// ffx::GameLoaded() when a zero needs to mean "nowhere" rather than "map 0".
 		bool valid;
 	};
 
@@ -143,6 +174,41 @@ namespace ffx
 	// Returns false when there is no block or the live map id is zero, which means the block
 	// names nowhere to go.
 	bool RequestLoadLiveLocation();
+
+	// ---------------------------------------------------------------------------
+	// The title screen
+	// ---------------------------------------------------------------------------
+
+	// Is the title screen up. The engine's own flag, not a map id comparison.
+	//
+	// The title is not a mode, it is ordinary ATEL event 23 (te/test20) with its menu
+	// written in script, so it steps through FFX_MainStep like any map. That is the fact
+	// that makes joining from the main menu work at all: a deferred map change raised here
+	// IS consumed, FFX_Atel_StepOnce has no mode test.
+	//
+	// Prefer this over reading the live map id, which is 0 before a game exists rather
+	// than 23, and over ffx::GameLoaded(), which answers a different question. The two
+	// disagree in a window worth knowing about: during a load the block fills in before
+	// the title comes down.
+	bool TitleScreenActive();
+
+	// Can a deferred map change actually be consumed right now. False while the save/load
+	// UI or the menu system is up, because FFX_MainStep skips the whole gameplay block
+	// then, and with it the ATEL step that polls the pending flag.
+	//
+	// A request raised while this is false is NOT lost. It sits in the flag and fires when
+	// the menu closes. This is here so a caller can say "waiting for you to close that"
+	// instead of looking broken.
+	bool MapChangeCanBeConsumed();
+
+	// Are the checkpoint words +0xB8 and +0xBA currently stale.
+	//
+	// Entering the title screen raises a latch that suppresses the checkpoint and history
+	// write for the next two map entries. So just after leaving a title screen the
+	// checkpoint names where the save FILE was, not where the player is. Anything that
+	// resumes from the checkpoint will land in the wrong place while this is true, which
+	// is precisely the window a co-op join happens in.
+	bool CheckpointIsStale();
 
 	// How many simulation steps to wait before the load actually happens. The warp path
 	// sets this, and a bare RequestMapChange does not, so set it if a fade is wanted.

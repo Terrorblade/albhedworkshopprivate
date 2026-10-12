@@ -342,8 +342,8 @@ namespace ffx
 	{
 		if (!out)
 			return false;
-		BYTE* ctx = Singleton(Rva::EventContextPtr, AtelContext::StepCounter + sizeof(int));
-		const int* counter = Field<int>(ctx, AtelContext::StepCounter);
+		BYTE* ctx = Singleton(Rva::EventContextPtr, AtelCtxField::StepCounter + sizeof(int));
+		const int* counter = Field<int>(ctx, AtelCtxField::StepCounter);
 		if (!counter)
 			return false;
 		*out = *counter;

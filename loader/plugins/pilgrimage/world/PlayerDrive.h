@@ -27,6 +27,11 @@
 // SOLO IS UNTOUCHED. With no session the hook calls the original and returns, so a single
 // player game runs the shipped code path exactly.
 
+namespace ffx
+{
+	struct Character;
+}
+
 namespace pilgrimage
 {
 
@@ -43,6 +48,22 @@ namespace pilgrimage
 	// Is the loop actually driving, as opposed to passing through to the original. False
 	// with no session, no clock, or no local peer id.
 	bool PlayerDriveActive();
+
+	// ---------------------------------------------------------------------------
+	// THE BODY A PEER DRIVES, or NULL. The ownership table resolved against the active
+	// party order, which is the one answer both machines compute identically.
+	//
+	// EXPORTED BECAUSE MORE THAN ONE SUBSYSTEM NEEDS IT, and because two subsystems
+	// that disagree about which body belongs to a peer is the worst available outcome:
+	// a player who walks with one character and opens chests as another. The trigger
+	// pass used to resolve this through the clone roster instead, which nothing filled
+	// in, so a remote player fired no triggers at all.
+	//
+	// NULL is an ordinary answer. It means that peer has no active party member on this
+	// map, which is the normal state during a load and for a peer that is not in the
+	// session.
+	// ---------------------------------------------------------------------------
+	ffx::Character* PlayerBodyForPeer(int peer);
 
 	// Forget every character's ramp state. Call when a session starts, and when ownership
 	// changes, so a character does not inherit the ramps of whoever drove it last and

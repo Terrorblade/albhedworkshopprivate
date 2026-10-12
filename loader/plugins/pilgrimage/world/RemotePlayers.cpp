@@ -81,7 +81,21 @@ namespace pilgrimage
 			return (peer < localPeer) ? peer + 1 : peer;
 		}
 
-		LONG g_entryForPeer[MaxPeers];
+		// ---------------------------------------------------------------------------
+		// THE BODY WE LAST DROVE FOR EACH PEER, and this used to be a private copy of
+		// the peer -> roster entry table.
+		//
+		// The table moved to clones/CloneRoster.h, where the drive pass and the trigger
+		// pass can both see the same one. What is left here is the thing this file
+		// actually needs it for: noticing that a peer's body CHANGED, so the edge and
+		// coast state does not carry from the old body to the new one. A button held
+		// when the old body went away must not read as a fresh press on the new one,
+		// and a new body must not start off walking because the old one was.
+		//
+		// A pointer is the right thing to compare here even though a pointer does not
+		// survive a map change, because a map change is exactly one of the events this
+		// is meant to catch.
+		ffx::Character* g_lastBody[MaxPeers];
 
 		// Last step's button mask per peer, so an examine can fire on the press EDGE. The
 		// engine reads g_ffxAtelPadPressed, which is already an edge mask, but
@@ -130,21 +144,34 @@ namespace pilgrimage
 		// The kit takes the kind as a parameter, so wiring it later is one line.
 		const DWORD ExamineButton = Btn::Circle;
 
+		// ---------------------------------------------------------------------------
+		// THE PARTY CHARACTER FIRST, the clone roster only as a fallback.
+		//
+		// This used to look at the clone roster and nothing else, and nothing ever
+		// called BindRemotePlayer, so it returned NULL for every peer forever. That is
+		// why a remote player fired no proximity, line or box trigger, opened no chest,
+		// took no map transition and started no dialogue: the pass below skipped every
+		// peer before it got as far as asking where they were.
+		//
+		// PlayerBodyForPeer is the same resolver world/PlayerDrive.cpp drives through,
+		// deliberately, so the body that receives a peer's input is the body that fires
+		// their triggers. Two resolvers would eventually disagree and the symptom would
+		// be a character walking in one place and interacting in another.
+		//
+		// The roster fallback stays for the F9 clone harness, which is still the only
+		// way to get a second body with no session.
+		// ---------------------------------------------------------------------------
 		Character* CharacterForPeer(int peer)
 		{
 			if (peer < 0 || peer >= MaxPeers)
 				return NULL;
 
-			const LONG entry = g_entryForPeer[peer];
-			if (entry < 0)
-				return NULL;
-
-			const LONG slot = SlotOfEntry(entry);
-			if (slot < 0)
-				return NULL;
-
-			Character* chr = CharacterFromSlot(slot);
-			return IsLive(chr) ? chr : NULL;
+			// ONE RESOLVER, and this is now literally it. PlayerBodyForPeer asks the
+			// clone roster's peer table first and the ownership table second, so the
+			// roster fallback that used to be written out again here is covered by the
+			// call itself. Keeping a second copy of it was the thing the comment above
+			// warns against.
+			return PlayerBodyForPeer(peer);
 		}
 
 		// Apply one peer's replicated input to its character, then tell the trigger pass
@@ -220,7 +247,7 @@ namespace pilgrimage
 	{
 		for (int i = 0; i < MaxPeers; ++i)
 		{
-			g_entryForPeer[i] = -1;
+			g_lastBody[i] = NULL;
 			g_lastButtons[i] = 0;
 			g_lastFrame[i] = NeutralInput();
 			g_coastSteps[i] = 0;
@@ -230,46 +257,17 @@ namespace pilgrimage
 		strcpy_s(g_status, sizeof(g_status), "remote players: reset");
 	}
 
-	void BindRemotePlayer(int peer, LONG rosterEntry)
+	void ParkRemotePlayers()
 	{
-		if (peer < 0 || peer >= MaxPeers)
-		{
-			Log("remote players: refusing to bind peer %d, the session only has peers 0 to "
-			    "%d",
-			    peer, MaxPeers - 1);
-			return;
-		}
+		// Slots, not peers. Slot 0 is the engine's own bound player and was never ours
+		// to clear, which is the same reason StepRemotePlayers starts its no-session
+		// loop at 1.
+		for (int slot = 1; slot < MaxTriggerPlayers; ++slot)
+			ClearTriggerPlayer(slot);
 
-		// Binding the LOCAL peer a clone is the one genuine mistake here, and it is worth
-		// being loud about. That character already has a body the engine drives, so giving
-		// it a second one would mean two things writing one character's motion.
-		const int local = LocalPeerId();
-		if (local >= 0 && peer == local)
-		{
-			Log("remote players: refusing to bind peer %d, that is US. The local player "
-			    "already has a body and the engine drives it.",
-			    peer);
-			return;
-		}
-
-		g_entryForPeer[peer] = rosterEntry;
-
-		// Forget the edge state on a rebind. Carrying it over would let a button that was
-		// held when the old body went away count as a fresh press on the new one. Same for
-		// the coast: a new body must not start off walking because the old one was.
-		g_lastButtons[peer] = 0;
-		g_lastFrame[peer] = NeutralInput();
-		g_coastSteps[peer] = 0;
-
-		if (rosterEntry < 0)
-		{
-			const int slot = TriggerSlotForPeer(peer, local);
-			if (slot > 0)
-				ClearTriggerPlayer(slot);
-		}
-
-		Log("remote players: peer %d %s", peer,
-		    rosterEntry < 0 ? "unbound" : "bound to roster entry");
+		ResetRemotePlayers();
+		strcpy_s(g_status, sizeof(g_status),
+		    "remote players: parked, a battle is running");
 	}
 
 	Character* RemotePlayerCharacter(int peer)
@@ -279,10 +277,7 @@ namespace pilgrimage
 
 	LONG RemotePlayerEntry(int peer)
 	{
-		if (peer < 0 || peer >= MaxPeers)
-			return -1;
-
-		return g_entryForPeer[peer];
+		return PeerBodyEntry(peer);
 	}
 
 	void StepRemotePlayers()
@@ -314,9 +309,31 @@ namespace pilgrimage
 		{
 			const int slot = TriggerSlotForPeer(peer, local);
 			if (slot < 0)
-				continue; // us. The engine drives this one.
-			if (g_entryForPeer[peer] < 0)
+				continue; // us. This machine's own pass covers slot 0.
+
+			// NO ROSTER GATE. It used to be a check on this file's own peer table, which
+			// skipped every peer always, because nothing ever filled that table in. The
+			// body question belongs to CharacterForPeer, and DriveOnePeer clears the
+			// trigger slot when the answer is NULL, so a peer with no body on this map
+			// is handled below rather than here.
+			Character* body = CharacterForPeer(peer);
+
+			// A DIFFERENT BODY THAN LAST STEP. A map change, a fresh spawn, or an
+			// ownership change. Throw away the edge and coast state rather than letting
+			// it describe a character that is not there any more. See g_lastBody.
+			if (body != g_lastBody[peer])
+			{
+				g_lastBody[peer] = body;
+				g_lastButtons[peer] = 0;
+				g_lastFrame[peer] = NeutralInput();
+				g_coastSteps[peer] = 0;
+			}
+
+			if (!body)
+			{
+				ClearTriggerPlayer(slot);
 				continue;
+			}
 
 			// Received, or only the neutral stand-in. InputForStep cannot tell us, which
 			// is why HasInputForStep exists.
@@ -388,7 +405,7 @@ namespace pilgrimage
 		{
 			if (peer == local)
 				continue;
-			if (g_entryForPeer[peer] >= 0)
+			if (PeerBodyEntry(peer) >= 0)
 				++n;
 		}
 
@@ -417,7 +434,7 @@ namespace pilgrimage
 				continue;
 			}
 
-			const LONG entry = g_entryForPeer[peer];
+			const LONG entry = PeerBodyEntry(peer);
 			if (entry < 0)
 			{
 				Log("  peer %d: unbound (would be trigger slot %d)", peer,

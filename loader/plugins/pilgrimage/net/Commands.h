@@ -87,6 +87,83 @@ namespace pilgrimage
 		// A held or carried object changing hands, or being picked up or put down.
 		// Payload shape belongs to that layer too, for the same reason.
 		kCommandHeldObject = 8,
+
+		// A joining peer getting a body: one character out of the CHR pool, of
+		// whatever character that player picked. See world/CoopBody.h.
+		//
+		// It is on this channel rather than derived because an allocation is not a
+		// consequence of input and cannot be worked out locally. Both machines have
+		// to run FFX_Ch_Allocate on the SAME step with the SAME position, or one
+		// world gets a character the other does not and nothing afterwards notices.
+		//
+		// The payload is in this file rather than the body layer's header, unlike
+		// kinds 7 and 8, because it is four floats and two small integers with no
+		// engine types in it, so there is nothing to hide.
+		kCommandSpawnBody = 9,
+
+		// THE WHOLE OWNERSHIP TABLE, published by the host and only by the host.
+		//
+		// kCommandCharOwner above carries ONE binding and works for a change made
+		// while everybody is already playing. It cannot reach somebody who was not
+		// there when it was ordered, and that is not a detail: workshop::Lockstep
+		// registers itself as a message sink in Start(), so a joining client is not
+		// listening to the command channel AT ALL until its own clock starts. Every
+		// binding the host ordered before that moment went into the floor.
+		//
+		// So the host publishes the whole table instead, ONCE, the moment it sees that
+		// peer's clock running. Two reasons it is the table and not a replay of the
+		// bindings: an absolute state is idempotent, so it cannot land wrongly if it
+		// crosses a single-binding command in flight, and it is four bytes, so there is
+		// no saving worth having from being cleverer.
+		//
+		// NOT RESENT. There is exactly one writer, because a client's Config rows refuse
+		// to change ownership and only ask, so no copy can drift and there is nothing to
+		// reconcile. An earlier version resent this on a slow heartbeat to be
+		// self-healing, which was paying forever for a problem that one writer removes.
+		//
+		// Applied ONLY when the issuer is the host. A client that sent one would be a
+		// client asserting authority it does not have.
+		kCommandCharOwnerTable = 10,
+	};
+
+	// How many peers an ownership table carries. Spelled as a literal rather than as
+	// workshop::MaxPlayers so the WIRE SHAPE is fixed by this file: if MaxPlayers ever
+	// changes, that must be a deliberate protocol decision and not a silent one. The
+	// two are checked against each other where the table is applied.
+	const int kOwnerTableEntries = 3;
+
+	// The whole table, one entry per peer in peer order. 4 bytes.
+	struct CharOwnerTableCommand
+	{
+		// A save block character index 0..7, or 0xFF for "this peer has no explicit
+		// binding and falls through to the default". Index into this array IS the peer
+		// id, so there is no peer field to disagree with the position.
+		uint8_t charIndex[kOwnerTableEntries];
+		uint8_t reserved;
+	};
+
+	// One body to spawn. 20 bytes.
+	//
+	// THE POSITION IS IN HERE ON PURPOSE. The obvious alternative is for each machine
+	// to work out "beside the party leader" for itself, which is exactly the shape of
+	// mistake lockstep exists to prevent: the two leaders are at the same place only
+	// for as long as nothing has gone wrong, and if something has, the bodies end up
+	// in different places and the desync hash reports it several seconds later with
+	// no clue as to the cause. One machine measures, both machines use the number.
+	//
+	// chrId is the resolved game id, for example 1 for Tidus, and NOT an index into
+	// SpawnableChrIds. An index would mean two builds with different lists spawning
+	// different characters from the same command, which is the kind of thing that
+	// works all through testing and breaks the first time somebody has an old DLL.
+	struct SpawnBodyCommand
+	{
+		uint8_t peer;   // whose body this is
+		uint8_t pad;    // keeps chrId aligned, and reads as a zero on both ends
+		uint16_t chrId; // the game's own character id
+		float x;
+		float y;
+		float z;
+		float yaw;
 	};
 
 	// The booster payload. Four ints rather than a packed bitfield because

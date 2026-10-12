@@ -33,6 +33,7 @@
 #include "world/TriggerPass.h"
 #include "battle/BattleSync.h"
 #include "world/BoosterSync.h"
+#include "world/CoopBody.h"
 #include "world/DialogueSync.h"
 #include "world/FmvSync.h"
 #include "world/HeldObjects.h"
@@ -141,8 +142,19 @@ namespace pilgrimage
 			if (InterlockedExchange(&requests.startHashProbe, 0))
 				BeginHashProbe(counters.frames, 300);
 
+			// THE TOGGLE STICKS, both live and in the file. The live value is what the
+			// gate reads this instant, the setting is what the NEXT session arms from,
+			// and writing only the first one meant turning the gate off to look at
+			// something, then having it quietly come back on at the next join. Whoever
+			// turned it off gets to decide when it comes back.
 			if (InterlockedExchange(&requests.toggleLockstepEnforce, 0))
-				SetLockstepEnforced(!LockstepEnforced());
+			{
+				const bool wanted = !LockstepEnforced();
+				SetLockstepEnforced(wanted);
+				InterlockedExchange(&settings.enforceLockstep, wanted ? 1 : 0);
+				// The file write itself is the UI timer's SaveModSettingsIfChanged poll,
+				// which notices the change on its own. Nothing to do here.
+			}
 
 			if (InterlockedExchange(&requests.lookAtInteractables, 0))
 				LookAtInteractables();
@@ -174,6 +186,7 @@ namespace pilgrimage
 				// every line above is ultimately trying to keep in agreement.
 				LogPlayerDrive();
 				LogMinigameSync();
+				LogCoopBodies();
 				LogRemotePlayers();
 				workshop::LogOverlay();
 				LogHub();
@@ -310,7 +323,20 @@ namespace pilgrimage
 			Character* active = ActiveClone();
 			if (IsLive(active))
 			{
-				DriveClone(active);
+				// DRIVE IT FROM THE LOCAL PAD ONLY WHEN THERE IS NO SESSION.
+				//
+				// The F9 clone is the solo test harness. Its input comes straight off
+				// this machine's keyboard and never goes on the wire, so driving it
+				// during a session moves a character on one machine and not the other,
+				// which is a divergence the desync hash cannot even see because
+				// positions are in no checksum region. Somebody pressing F9 out of
+				// habit mid-session should not quietly split the two worlds.
+				//
+				// Telemetry and the spawn watch still run, because reading where it is
+				// does not move it.
+				if (!NetworkingActive())
+					DriveClone(active);
+
 				PublishTelemetry(active);
 				StepSpawnWatch(frame, active);
 			}

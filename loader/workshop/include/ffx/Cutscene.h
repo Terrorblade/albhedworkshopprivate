@@ -299,10 +299,15 @@ namespace ffx
 	} // namespace FrameSuspendLayout
 
 	// The ATEL context field this area cares about. The rest is addresses\Atel.h.
-	namespace AtelContext
+	//
+	// NOT "AtelContext". That name is already ffx::AtelContext(), the function in
+	// ffx/Atel.h that hands you the selected context, and a namespace by the same name
+	// made those two headers impossible to include in one file. Which nobody noticed
+	// until something needed both.
+	namespace AtelCtxField
 	{
 		const DWORD StepCounter = 500; // int, ++ per step while the context is active
-	} // namespace AtelContext
+	} // namespace AtelCtxField
 
 	// ---------------------------------------------------------------------------
 	// IS A CUTSCENE RUNNING

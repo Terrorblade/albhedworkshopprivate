@@ -1,5 +1,6 @@
 #include "ui/OverlayPanel.h"
 
+#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -19,10 +20,12 @@
 #include "ffx/Walkmesh.h"
 #include "hooks/VisibilityDetour.h"
 #include "menu/CoopConfig.h"
+#include "world/CoopBody.h"
 #include "menu/EscMenuRows.h"
 #include "menu/MenuSync.h"
 #include "menu/PauseSync.h"
 #include "net/LockstepLink.h"
+#include "net/SessionPhase.h"
 #include "net/NetLink.h"
 #include "workshop/Events.h"
 #include "workshop/Log.h"
@@ -103,6 +106,14 @@ namespace pilgrimage
 			    telemetry.personaName[0] ? telemetry.personaName : "(Steam not ready)",
 			    telemetry.localSteamId);
 			RowF("network", "%s", NetworkingSummary());
+
+			// DIRECTLY UNDER THE NETWORK LINE, because "connected" and "playing together"
+			// are different things and the gap between them is where somebody connecting
+			// from the title screen spends their time. The reason is printed rather than
+			// just the phase, since "lobby" tells a player nothing and "waiting for the
+			// host to load a save" tells them whether to sit still.
+			RowF("session", "%s - %s", SessionPhaseName(CurrentSessionPhase()),
+			    SessionPhaseReason());
 			RowF("transport", "%s, port %ld", NetworkingBackendName(), settings.hostPort);
 			RowF("lockstep", "%s", LockstepSummary());
 			RowF("clones", "%ld of %ld live, driving #%ld, last id %ld",
@@ -126,6 +137,7 @@ namespace pilgrimage
 			}
 
 			RowF("drive", "%s", PlayerDriveStatus());
+			RowF("bodies", "%s", CoopBodySummary());
 			RowF("minigame", "%s", MinigameSyncStatus());
 			RowF("world", "%s", WorldSyncStatus());
 			RowF("arrival", "%s", ArrivalStatus());
@@ -142,17 +154,31 @@ namespace pilgrimage
 			RowF("menu row", "%s", EscMenuRowTestStatus());
 		}
 
+		// Defined below, next to the clone tab it shares its list with.
+		void DrawMyCharacter();
+
 		void DrawNetwork()
 		{
 			static char steamId[24] = { 0 };
-			static bool steamIdLoaded = false;
-			if (!steamIdLoaded)
+			static char hostAddress[64] = { 0 };
+			static bool fieldsLoaded = false;
+			if (!fieldsLoaded)
 			{
 				strncpy_s(steamId, sizeof(steamId), settings.hostSteamId, _TRUNCATE);
-				steamIdLoaded = true;
+				strncpy_s(hostAddress, sizeof(hostAddress), settings.hostAddress, _TRUNCATE);
+				fieldsLoaded = true;
 			}
 
 			ImGui::TextUnformatted(NetworkingSummary());
+
+			// EXACTLY ONE OF YOU HOSTS. Spelled out because two people both pressed Host
+			// and then spent four minutes wondering why neither of them had joined, and
+			// the refusal that explains it was in a log file at the time.
+			ImGui::TextUnformatted("One of you presses Host, the other presses Join. "
+			                       "Both hosting connects nobody.");
+			ImGui::Separator();
+
+			DrawMyCharacter();
 			ImGui::Separator();
 
 			Request("Host", &requests.startHosting, 90.0f);
@@ -162,7 +188,7 @@ namespace pilgrimage
 			Request("Disconnect", &requests.stopNetworking, 110.0f);
 
 			bool useSteam = settings.useSteam != 0;
-			if (ImGui::Checkbox("Steam P2P (off is UDP on loopback)", &useSteam))
+			if (ImGui::Checkbox("Steam P2P (off is plain UDP to the address below)", &useSteam))
 			{
 				InterlockedExchange(&settings.useSteam, useSteam ? 1 : 0);
 				SetStatus("transport: %s", NetworkingBackendName());
@@ -183,6 +209,39 @@ namespace pilgrimage
 				SetStatus("host SteamID set to %s", steamId);
 			}
 
+			if (useSteam)
+			{
+				ImGui::TextUnformatted(telemetry.localSteamId[0]
+				        ? "Give them the id below. Steam needs no address and no port."
+				        : "Steam has not signed in yet.");
+			}
+			else
+			{
+				// Written the same way as the SteamID field, on Enter or on losing
+				// focus, because writing a setting writes the file.
+				ImGui::SetNextItemWidth(220.0f);
+				ImGui::InputText("host address (UDP)", hostAddress, sizeof(hostAddress));
+				if (ImGui::IsItemDeactivatedAfterEdit())
+				{
+					const Setting* setting = FindSetting("net.host_address");
+					if (setting)
+						WriteSettingText(*setting, hostAddress);
+					else
+						strncpy_s(settings.hostAddress, sizeof(settings.hostAddress),
+						    hostAddress, _TRUNCATE);
+					SetStatus("host address set to %s", hostAddress);
+				}
+
+				const bool loopback = strcmp(settings.hostAddress, "127.0.0.1") == 0
+				    || strcmp(settings.hostAddress, "localhost") == 0
+				    || settings.hostAddress[0] == 0;
+				ImGui::TextUnformatted(loopback
+				        ? "127.0.0.1 IS THIS PC. Only reaches another copy of the game "
+				          "here. For a friend, put their address in, or use Steam."
+				        : "Their machine has to be reachable on this address and port, "
+				          "which usually means a port forward. Steam needs neither.");
+			}
+
 			if (ImGui::Button("copy my SteamID"))
 			{
 				if (!telemetry.localSteamId[0])
@@ -199,6 +258,87 @@ namespace pilgrimage
 				InterlockedExchange(&requests.toggleLockstepEnforce, 1);
 			Request("resync the world from the host", &requests.requestWorldResync);
 			Request("host takes or gives back menu control", &requests.toggleMenuOverride);
+		}
+
+		// A case insensitive "does name contain needle". By hand because the CRT has
+		// no portable strcasestr and a 21 entry list does not justify pulling one in.
+		bool ContainsNoCase(const char* name, const char* needle)
+		{
+			if (!name || !needle || !*needle)
+				return true;
+
+			for (const char* start = name; *start; ++start)
+			{
+				const char* a = start;
+				const char* b = needle;
+				while (*a && *b && tolower((unsigned char)*a) == tolower((unsigned char)*b))
+				{
+					++a;
+					++b;
+				}
+				if (!*b)
+					return true;
+			}
+			return false;
+		}
+
+		// ---------------------------------------------------------------------------
+		// WHO I PLAY AS. The one answer each player gives before connecting.
+		//
+		// Built from SpawnableChrIds and ChrIdName rather than from a hardcoded list of
+		// names, so it says whatever the game's own name table says, in whatever
+		// language the game is in, and a new id added to the kit's list turns up here
+		// with no change to this file.
+		//
+		// Every entry is a filter box away rather than a scroll away because 21 of them
+		// is already more than fits comfortably, and the list is sorted the way the kit
+		// declares it, which puts the party in id order at the top.
+		//
+		// This writes the setting through the registry rather than the field, because
+		// the registry is what makes it survive a restart.
+		// ---------------------------------------------------------------------------
+		void DrawMyCharacter()
+		{
+			static char filter[32] = "";
+
+			ImGui::Text("I play as: %s", ChrIdName(SelectedChrId()));
+
+			ImGui::SetNextItemWidth(220.0f);
+			ImGui::InputTextWithHint("##chrfilter", "type to filter the list", filter,
+			    sizeof(filter));
+
+			ImGui::SetNextItemWidth(220.0f);
+			if (ImGui::BeginCombo("my character", ChrIdName(SelectedChrId())))
+			{
+				for (int i = 0; i < SpawnableChrIdCount; ++i)
+				{
+					const char* name = ChrIdName(SpawnableChrIds[i]);
+
+					// A case insensitive contains, done by hand. The alternative is
+					// _stricmp on a lowered copy, and a 21 entry list does not need it.
+					if (filter[0] && !ContainsNoCase(name, filter))
+						continue;
+
+					const bool selected = (i == (int)settings.spawnIdIndex);
+					if (ImGui::Selectable(name, selected))
+					{
+						const Setting* setting = FindSetting("spawn.chr_id_index");
+						if (setting)
+							WriteSetting(*setting, (float)i);
+						else
+							InterlockedExchange(&settings.spawnIdIndex, i);
+						SetStatus("you play as %s", ChrIdName(SpawnableChrIds[i]));
+					}
+					if (selected)
+						ImGui::SetItemDefaultFocus();
+				}
+				ImGui::EndCombo();
+			}
+
+			// Said plainly because it is the question everybody asks next, and because
+			// the answer is not what a party based co-op mod would do.
+			ImGui::TextUnformatted("Each of you picks your own. It is not shared, so you "
+			                       "do not have to match.");
 		}
 
 		void DrawClones()
@@ -459,17 +599,26 @@ namespace pilgrimage
 		// stack is gone.
 		ffx::PointOverlayAtSwapChain();
 
-		if (!InstallOverlay())
-			return false;
+		// SHARE THE LOADER'S ImGui, do not start one. See the matching comment in the
+		// cheat plugin: two modules each calling InstallOverlay is two contexts and two
+		// Present hooks, which is what this replaces. A false is the ordinary "no frame
+		// yet" answer and not a reason to give up, because the host points this
+		// module's ImGui at its context right before it calls the panel below.
+		if (!AdoptOverlayHost())
+			Log("overlay: not up yet, which is normal this early. %s",
+			    OverlayHostAdoptStatus());
 
 		g_panel = RegisterOverlayPanel("Pilgrimage Together", &Draw);
 		if (g_panel == 0)
 			return false;
 
-		// The hotkey table owns F11, so the overlay must not also claim it or a
-		// press would toggle twice. Other plugins can keep the default.
-		SetOverlayToggleKey(0);
-
+		// NO SetOverlayToggleKey(0) ANY MORE, and no F11 in the hotkey table either.
+		// The toggle key belongs to the overlay owner now, so it is one setting for
+		// the whole process: taking it away here would have disabled F11 for every
+		// other plugin as well, which is not this plugin's call to make. The overlay's
+		// own default is F11 and that is the same key the hotkey table used to bind,
+		// so nothing changes for the player.
+		//
 		// Hidden until asked for, so a launch looks like the shipped game.
 		SetOverlayPanelOpen(g_panel, true);
 		SetOverlayVisible(false);

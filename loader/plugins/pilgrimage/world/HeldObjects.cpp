@@ -5,6 +5,7 @@
 
 #include "ffx/Atel.h"
 #include "ffx/Character.h"
+#include "ffx/GameState.h"
 #include "ffx/Layout.h"
 #include "ffx/WorldState.h"
 #include "net/Commands.h"
@@ -78,6 +79,12 @@ namespace pilgrimage
 
 		int LiveMapId()
 		{
+			// NO GAME MEANS NO MAP. WorldLocation::valid means the fields were read, not
+			// that there is anywhere to be, and the save block is readable from process
+			// start. At the title screen that is a valid location on map 0.
+			if (!GameLoaded())
+				return -1;
+
 			WorldLocation where;
 			if (!ReadWorldLocation(&where) || !where.valid)
 				return -1;

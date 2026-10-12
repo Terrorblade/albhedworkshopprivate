@@ -26,6 +26,17 @@ namespace pilgrimage
 	// when no game is loaded, since the name table lives in the save data.
 	const char* ChrIdName(int chrId);
 
+	// Spawn one body of chrId at an exact position, and return the roster entry it
+	// took, or -1. Does not touch which body the F9 keys drive.
+	//
+	// why is a short label for the log, for example "spawned clone" or "co-op body
+	// for peer 1". Never NULL in practice, and defaulted if it is.
+	//
+	// THE POSITION IS THE CALLER'S PROBLEM AND THAT IS THE POINT. A replicated spawn
+	// has to put the body in the same place on both machines, which it can only do
+	// if the numbers came from one of them rather than each working its own out.
+	LONG SpawnBodyAt(int chrId, float x, float y, float z, float yaw, const char* why);
+
 	// Which id the next spawn will use, from settings.spawnIdIndex.
 	int SelectedChrId();
 

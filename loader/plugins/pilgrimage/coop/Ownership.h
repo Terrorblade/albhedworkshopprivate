@@ -29,10 +29,33 @@
 // nobody has been bound to. Handing those to the host is not a claim about who ought to
 // control them, it is the only answer both machines reach without another message.
 //
-// THE SEAM. SetCharacterOwner is the explicit binding, and it is what "each player
-// picks their character" will be built on. Read the warning on it before calling it: a
-// binding applied on one machine and not the other is exactly the split-brain failure
-// above, so it has to be driven from an ordered command rather than a local keypress.
+// THE EXPLICIT BINDINGS ARE THE HOST'S, and rule 1 is the only part of this file that
+// needs a message at all. Rules 2 and 3 are derived, so they cannot disagree. Rule 1 is
+// a CHOICE somebody made in a menu, so it can.
+//
+// THERE IS EXACTLY ONE WRITER, and everything else follows from that:
+//
+//   ONLY THE HOST MAY CHANGE A BINDING. A client's Config row refuses the press with a
+//   log line, see menu/CoopConfig.cpp. The row stays selectable on both machines
+//   because the selectable flag drives replicated navigation, so it is the change that
+//   is refused and not the cursor.
+//
+//   A change is still an ORDERED COMMAND. The host asks with kCommandCharOwner, stamps
+//   a step, and every machine applies it on that step or none does. Writing the binding
+//   locally even on the host would put the host a few steps ahead of everybody else,
+//   which is the split-brain failure above for as long as it lasted.
+//
+//   The host KEEPS its table when a session starts and a client CLEARS. See
+//   ResetOwnership. That is what lets a host set up who plays whom before anybody has
+//   joined, which is the normal way this gets used.
+//
+//   The host PUBLISHES THE WHOLE TABLE as kCommandCharOwnerTable ONCE PER JOINER, the
+//   moment it sees that peer's clock running. That is needed because workshop::Lockstep
+//   only becomes a message sink in Start(), so a joiner is not listening to the command
+//   channel until its own clock runs and every binding ordered before that reached it as
+//   nothing. InstallOwnerTable is the receiving end.
+//
+// Nothing is resent. With one writer no copy can drift, so there is nothing to heal.
 
 namespace pilgrimage
 {
@@ -41,9 +64,31 @@ namespace pilgrimage
 	// session, or before the host has assigned this machine a peer id.
 	const int kNoOwner = -1;
 
-	// Forget every explicit binding and go back to the default. Called when a session
-	// starts, so a second session does not inherit the first one's choices.
+	// Forget every explicit binding and go back to the default.
+	//
+	// CALLED BY A CLIENT AT SESSION START, NOT BY THE HOST. The host's table is the
+	// authority for the session and is published to everybody else, so wiping it on the
+	// host would throw away the one thing a host sets up before anybody joins. A client
+	// clears because it is about to be told, and because a second session must not
+	// inherit the first one's bindings.
 	void ResetOwnership();
+
+	// Replace the WHOLE table at once, from the host's published copy.
+	//
+	// NOT a loop over SetCharacterOwner, and it must not become one. That setter is
+	// exclusive: it takes a character off whoever else held it. So replaying three
+	// entries through it would have each entry strip the ones before it and the result
+	// would depend on the order they were applied in, which is the opposite of what an
+	// absolute state is for.
+	//
+	// charIndexPerPeer is one entry per peer, -1 meaning no binding. An entry out of
+	// range is taken as no binding rather than refusing the whole table, because a
+	// table from a build with different rules must not leave this machine with no table
+	// at all. A duplicate character is resolved by letting the lower peer keep it,
+	// which is an answer every machine reaches identically.
+	//
+	// Returns true when the table actually changed.
+	bool InstallOwnerTable(const int* charIndexPerPeer, int count);
 
 	// THE SEAM. Bind a peer to a character index explicitly, beating the default. Pass
 	// -1 as the character to clear that peer's binding.

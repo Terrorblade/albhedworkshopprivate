@@ -63,11 +63,21 @@
 #include <stdarg.h>
 #include <string.h>
 
-// The only part of the Al Bhed Workshop library the proxy links. It is deliberately
-// self contained, so this costs one object file and no other dependency. Installing
-// here is what makes a crash inside a plugin's DllMain produce a report, which is
-// exactly the case where the loader log otherwise stops mid scan and says nothing.
+// The parts of the Al Bhed Workshop library the loader itself uses.
+//
+// The crash handler is installed here rather than in a plugin because that is what
+// makes a crash inside a plugin's DllMain produce a report, which is exactly the case
+// where the loader log otherwise stops mid scan and says nothing.
+//
+// The overlay is owned here for a different reason. ImGui has to be one context per
+// process, and before this the two shipped plugins each made their own, each hooked
+// Present, and which of them ended up chained to the real dxgi came down to which
+// thread won. The loader claims it before it loads anything, so there is never a race
+// to win. See workshop/OverlayHost.h.
 #include "workshop/CrashHandler.h"
+#include "workshop/Log.h"
+#include "workshop/Overlay.h"
+#include "workshop/OverlayHost.h"
 
 #if !defined(_M_IX86)
 #error "Al Bhed Workshop proxy must be built for 32-bit x86. FFX.exe is a 32-bit process."
@@ -509,6 +519,27 @@ static DWORD WINAPI BootstrapThread(LPVOID)
 
 	CreateDirectoryW(g_coopDir, NULL);
 	CreateDirectoryW(g_pluginDir, NULL);
+
+	// ---------------------------------------------------------------------------
+	// BEFORE THE FIRST LINE IS WRITTEN, and that ordering is the whole point.
+	//
+	// Two things happen here. The library's log calls get pointed at this file
+	// rather than the workshop.log nobody thinks to read, which is what this call
+	// has always been for. And the file is TRUNCATED, so each boot gets a fresh
+	// log instead of piling onto the last run.
+	//
+	// It used to sit further down, after the loader had already written its header,
+	// the host path and the crash handler line. That was harmless while OpenLog only
+	// set a name. The moment it started truncating, those lines were written and then
+	// deleted a few microseconds later, and the loader log began mid-sentence at the
+	// overlay claim. Caught 2026-10-06 by noticing a grep for a line that is
+	// unconditionally logged came back empty.
+	//
+	// After the two CreateDirectoryW calls on purpose: the path it writes is
+	// <game dir>\AlBhedWorkshop\workshop_loader.log, so the directory has to exist.
+	// ---------------------------------------------------------------------------
+	workshop::OpenLog(L"workshop_loader.log");
+
 	InterlockedExchange(&g_logReady, 1);
 
 	wchar_t exePath[MAX_PATH] = { 0 };
@@ -562,10 +593,39 @@ static DWORD WINAPI BootstrapThread(LPVOID)
 	// case that previously left nothing behind but a WER entry.
 	workshop::WarmCrashHandler();
 
+	// One boot, one crash log. BEFORE LoadPlugins, because a plugin that faults in its
+	// own DllMain writes a report and this would otherwise roll it away a moment later.
+	// The previous boot's report is kept as albhed_crash.prev.log rather than deleted,
+	// since restarting the game is how you get to read one at all.
+	if (workshop::RollCrashLog())
+		Log("crash log: last boot's albhed_crash.log moved aside to "
+		    "albhed_crash.prev.log, so this boot starts clean");
+
 	Log("crash handler: %s. A crash writes albhed_crash.log with a call chain, and "
 	    "that covers each plugin's DllMain, which is where the loader log would "
 	    "otherwise just stop.",
 	    workshop::CrashHandlerInstalled() ? "installed" : "COULD NOT BE INSTALLED");
+
+	// ---------------------------------------------------------------------------
+	// THE OVERLAY IS CLAIMED HERE, BEFORE A SINGLE PLUGIN IS LOADED.
+	//
+	// That ordering is the entire fix. Ownership is first come first served, so
+	// claiming it from the loader means no plugin can ever win the race, and every
+	// plugin that asks finds an owner already in place and shares it.
+	//
+	// The hook thread this starts does not need a plugin to have run yet: it waits for
+	// one to say where the game keeps its swapchain. The loader knows nothing about any
+	// game and that is deliberate, because it is what lets the same loader serve FFX-2.
+	//
+	// The library's log already points at this file, from the top of this function.
+	// It has to happen there rather than here because OpenLog truncates.
+	// ---------------------------------------------------------------------------
+	workshop::CrashContext("loader: claiming the overlay");
+	if (workshop::PublishOverlayHost())
+		workshop::InstallOverlay();
+	else
+		Log("overlay: the loader could not claim it, so the first plugin that asks will "
+		    "take it instead. That still leaves exactly one owner.");
 
 	workshop::CrashContext("loader: scanning for plugins");
 	LoadPlugins();

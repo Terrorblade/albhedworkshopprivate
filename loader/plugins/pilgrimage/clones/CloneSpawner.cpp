@@ -138,44 +138,51 @@ namespace pilgrimage
 		    SpawnableChrIds[next], next, SpawnableChrIdCount);
 	}
 
-	bool SpawnClone()
+	// ---------------------------------------------------------------------------
+	// THE WHOLE OF SPAWNING A BODY, with where and what as arguments.
+	//
+	// Split out of SpawnClone because there are now two callers that want exactly
+	// this and disagree about nothing except the two questions above. SpawnClone, the
+	// F9 test harness, asks for settings.spawnIdIndex beside the local player.
+	// CoopBody asks for a peer's chosen character at a position that came off the
+	// wire, so that both machines put the same body in the same place.
+	//
+	// It returns the ROSTER ENTRY, not the character, because an entry survives the
+	// caller stashing it and a Character* does not survive a map transition. -1 means
+	// nothing was spawned, and the reason is in the log and in the status line.
+	//
+	// It deliberately does NOT touch the active entry. Which body the F9 keys drive
+	// is the harness's business and nothing to do with a peer's body.
+	// ---------------------------------------------------------------------------
+	LONG SpawnBodyAt(int chrId, float x, float y, float z, float yaw, const char* why)
 	{
 		InterlockedIncrement(&counters.spawnAttempts);
-		const int chrId = SelectedChrId();
+		if (!why)
+			why = "spawn";
 
 		if (!PoolIsReady())
 		{
 			SetStatus("pool not up yet, load a map first");
-			return false;
+			Log("%s refused: the CHR pool is not up yet", why);
+			return -1;
 		}
 		LONG entry = FirstFreeEntry();
 		if (entry < 0)
 		{
 			SetStatus("at the clone cap of %ld, despawn one first", MaxClones);
-			Log("spawn refused: all %ld clone entries are in use", MaxClones);
-			return false;
+			Log("%s refused: all %ld clone entries are in use", why, MaxClones);
+			return -1;
 		}
 		if (!PoolHasFreeSlot())
 		{
 			SetStatus("pool full (%d/%d), cannot allocate", Game.CountLive(), *Game.chrCount);
-			Log("spawn refused: pool full, %d live of %d", Game.CountLive(), *Game.chrCount);
-			return false;
+			Log("%s refused: pool full, %d live of %d", why, Game.CountLive(), *Game.chrCount);
+			return -1;
 		}
 		if (!EnsureCharacterDataLoaded(chrId))
-			return false;
+			return -1;
 
-		// Where to put it: beside whoever player 1 is driving.
-		float playerX = 0.0f, playerY = 0.0f, playerZ = 0.0f, playerYaw = 0.0f;
 		Character* player = LivePlayerCharacter();
-		if (player)
-		{
-			Game.GetPos(player, &playerX, &playerY, &playerZ);
-			playerYaw = FloatAt(player, Chr::Facing);
-		}
-		else
-		{
-			Log("spawn: no live player character, spawning at the origin");
-		}
 
 		// THE ONE SINGLE-INSTANCE ASSUMPTION IN THE WHOLE PATH.
 		//
@@ -210,8 +217,8 @@ namespace pilgrimage
 		if (!clone)
 		{
 			SetStatus("Allocate(%d) returned null", chrId);
-			Log("spawn failed: FFX_Ch_Allocate(%d) returned null", chrId);
-			return false;
+			Log("%s failed: FFX_Ch_Allocate(%d) returned null", why, chrId);
+			return -1;
 		}
 
 		// Straight after the allocation, before anything else is touched. If the model
@@ -222,14 +229,11 @@ namespace pilgrimage
 		Game.SetByte184(clone, FieldSoundSelector);
 		Game.SetPartyIndex(clone, (int)settings.spawnPartyIndex);
 
-		// THE SPAWN OFFSET. This was +60.0 and that was an unforced error: 60 world
-		// units to the side can land inside geometry or outside the view, which would
-		// make a clone invisible for an entirely mundane reason. A few units beside the
-		// player is close enough to see and far enough not to interpenetrate, and
-		// successive clones fan out so number two does not land inside number one.
-		const float offset = settings.spawnOffset * (float)(LiveCloneCount() + 1);
-		Game.SetPos(clone, playerX + offset, playerY, playerZ);
-		Game.SetRot(clone, playerYaw);
+		// Straight to where the caller said. The offset that used to be computed here
+		// moved out to SpawnClone, because a position that each machine works out for
+		// itself is exactly what a replicated spawn must not do.
+		Game.SetPos(clone, x, y, z);
+		Game.SetRot(clone, yaw);
 
 		// Bind the walkmesh now rather than waiting for a next-frame recovery that will
 		// not come if the character is hidden. See Walkmesh.h for the deadlock.
@@ -237,15 +241,14 @@ namespace pilgrimage
 
 		const LONG poolSlot = SlotOfCharacter(clone);
 		ClaimEntry(entry, poolSlot);
-		SetActiveEntry(entry); // drive the one just spawned
 		InterlockedExchange(&telemetry.spawnedChrId, chrId);
 
-		Log("spawned clone: id=%d character=0x%08X poolSlot=%ld at (%.1f %.1f %.1f) yaw=%.3f  "
-		    "pool %d/%d  tidusCache=0x%08X  partyIndex=%ld  offset=%.1f  motionKill=%u",
-		    chrId, (unsigned)(UINT_PTR)clone, poolSlot,
-		    playerX + offset, playerY, playerZ, playerYaw,
+		Log("%s: id=%d (%s) character=0x%08X entry=%ld poolSlot=%ld at (%.1f %.1f %.1f) "
+		    "yaw=%.3f  pool %d/%d  tidusCache=0x%08X  partyIndex=%ld  motionKill=%u",
+		    why, chrId, ChrIdName(chrId), (unsigned)(UINT_PTR)clone, entry, poolSlot,
+		    x, y, z, yaw,
 		    Game.CountLive(), *Game.chrCount, (unsigned)(UINT_PTR)realTidus,
-		    settings.spawnPartyIndex, (double)offset, *Game.motionKillSwitch);
+		    settings.spawnPartyIndex, *Game.motionKillSwitch);
 
 		if (player)
 			LogCharacterDiag("the player", player);
@@ -254,6 +257,42 @@ namespace pilgrimage
 		if (player)
 			LogInstanceGeometry(player, "player");
 
+		return entry;
+	}
+
+	// ---------------------------------------------------------------------------
+	// The F9 harness. One body beside the local player, of whatever character the
+	// panel is set to, driven by the arrow keys.
+	// ---------------------------------------------------------------------------
+	bool SpawnClone()
+	{
+		const int chrId = SelectedChrId();
+
+		// Where to put it: beside whoever player 1 is driving.
+		float x = 0.0f, y = 0.0f, z = 0.0f, yaw = 0.0f;
+		Character* player = LivePlayerCharacter();
+		if (player)
+		{
+			Game.GetPos(player, &x, &y, &z);
+			yaw = FloatAt(player, Chr::Facing);
+		}
+		else
+		{
+			Log("spawn: no live player character, spawning at the origin");
+		}
+
+		// THE SPAWN OFFSET. This was +60.0 and that was an unforced error: 60 world
+		// units to the side can land inside geometry or outside the view, which would
+		// make a clone invisible for an entirely mundane reason. A few units beside the
+		// player is close enough to see and far enough not to interpenetrate, and
+		// successive clones fan out so number two does not land inside number one.
+		x += settings.spawnOffset * (float)(LiveCloneCount() + 1);
+
+		const LONG entry = SpawnBodyAt(chrId, x, y, z, yaw, "spawned clone");
+		if (entry < 0)
+			return false;
+
+		SetActiveEntry(entry); // drive the one just spawned
 		SetStatus("clone %ld of %ld live, id %d", entry + 1, LiveCloneCount(), chrId);
 		return true;
 	}

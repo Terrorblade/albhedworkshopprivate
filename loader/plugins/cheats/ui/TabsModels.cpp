@@ -6,10 +6,20 @@
 //
 // Typing in the picker filters on the label, and the label carries the category
 // directory, so "mon" narrows it to monsters and "s0" to the aeons.
+//
+// MONSTERS CARRY THEIR REAL NAME, because a monster model number is its bestiary
+// index, so m120 reads Evrae Altana. 341 of 349 resolve and the rest have a blank
+// name row in the game's own table.
+//
+// NPCS HAVE NO NAME IN THE GAME AT ALL, so the button below offers the next best
+// thing, which is where the game puts them. It is a button and not automatic because
+// working it out means reading all 397 event packages, and doing that during boot
+// trips the hang watchdog however it is scheduled. See ffx/EventPlaces.h.
 
 #include "ui/Tabs.h"
 #include "ui/CheatPanel.h"
 
+#include "ffx/EventPlaces.h"
 #include "ffx/GameState.h"
 #include "ffx/Models.h"
 #include "workshop/Log.h"
@@ -66,6 +76,32 @@ namespace cheats
 			    "no free model data record, so a swap is refused. Claiming a 41st is a "
 			    "write through a null pointer in the engine, not a failed allocation. "
 			    "A map change frees them.");
+
+		// ---------------------------------------------------------------------------
+		// NPC labels, on request.
+		// ---------------------------------------------------------------------------
+		if (ffx::EventPlacesLoaded())
+		{
+			ImGui::TextDisabled("npc and object models are labelled with the places the "
+			                    "game uses them. %d place names read.",
+			    ffx::EventPlaceCount());
+		}
+		else if (PlaceSweepRunning())
+		{
+			ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f),
+			    "reading the event packages. The game keeps running, and the list "
+			    "relabels itself when this lands.");
+		}
+		else
+		{
+			if (ImGui::Button("resolve npc names"))
+				RequestPlaceSweep();
+
+			ImGui::SameLine();
+			ImGui::TextDisabled("FFX ships no npc names, so this reads all 397 event "
+			                    "packages to find where each model is used. About half a "
+			                    "minute, once per archive, then it is cached.");
+		}
 
 		ImGui::Separator();
 

@@ -761,3 +761,34 @@ has to advance it the same number of times on both peers, because the overdrive 
 0x888C40` is an identity lookup through `g_ffxPadButtonRemapTable 0x1330488`, whose only writer is
 `FFX_Pad__resetPort 0x889360` writing the identity back. `FFX_Pad__setButtonRemapEntry 0x8894F0` has
 one caller. Nothing in the retail build ever changes a mapping.
+
+## Corrections from the Project Zanarkand port, 2026-10-12
+
+Found while porting FFX_Input, the scePad emulation and FFX_Player__readPad line by line (the
+recreation's `src/engine/input/`), each checked against the decompile:
+
+- Section 3, the synthesised dpad. `FFX_Pad__fillAnalogAndSynthDpad 0x889570` writes the stick
+  derived dpad bits only to the staging word at port+0x9A, which `commitRingSlot` copies to ring
+  slot +0x1E and feeds to repeat set 1 (`FFX_Pad__readRepeatSet1 0x888E30`, read only by
+  `FFX_Atel__samplePadsBothPorts 0x871D70`). It never reaches the held word (`readButtons16`) or
+  `g_ffxPlayerPadButtons`, so the "fully deflected stick takes the digital ramp path" trap does
+  not exist. The Y immediates in that function are 0xEFFF (Down clears Up) and 0xBFFF (Up clears
+  Down), the decompiler printed 0xAFFF.
+- The auto repeat interval after the first fire is 0.1 s, not 0.133 s: `FFX_Input__maskIsRepeating
+  0x6313A0` fires when the hold timer passes `dbl_ffxInputRepeatThreshold 0xB41380` (0.2333) and
+  reloads it to `flt_ffxInputRepeatReload 0xB41378` (0.1333).
+- Section 6.1, the action map. `FFX_Input__buildActionMap 0x6315C0` stores literal 0 for entries
+  30, 32, 65 and 67, reads entries 41..48 from the LM binding array (settings+908..+936, mask 0,
+  never walked) and entry 31 from the FFX-2 array (settings+544), a decimal for hex slip that is
+  invisible with the default tables because both arrays hold 69 at slot 31.
+- The scePad state machine is pinned in state 1 by the PC stubs (`getPortConnectState_stub
+  0x62FB30` returns 6, the rest return 0). States 2 to 7 and `FFX_Pad__negotiateMode_unreachable
+  0x889510` are dead in this build.
+- "Quantisation table at 0x23C44A4" should read: the four output bytes LY, LX, RY, RX in that
+  order, uninitialised data, written by `FFX_Player__readPad 0x82D070` from ring analog bytes
+  [3], [2], [1], [0]. The quantisation is `FFX_Pad__axisFloatToByte 0x889AA0`,
+  `0x80 - trunc(f * -127.0)` through `dbl_ffxPadAxisToByteScale 0xB5DEE8`.
+- `g_ffxPadPortBuffer 0x13304C0` (now `g_ffxPadDmaBuffer_unused`) has no writer in the PC build,
+  so both fills take their no-data branches. `maybe_g_ffxPadIconActive 0x112CA20` is
+  `g_ffxInputPadR1HeldAtPoll`: written at the top of every poll with pad semantic 16 held, read by
+  `FFX_Field_StepRandomEncounter`.

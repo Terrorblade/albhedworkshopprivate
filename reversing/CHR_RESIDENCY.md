@@ -620,3 +620,41 @@ for (int i = 0; i < 100; ++i)
 | `0x00849660` | data | `ChrCategoryToAssetKind` | `WORD[8]` | 28, 29, 30, 31, 32, 33, 34, 0 for `c m n s w f k` and the bogus 7 |
 | `0x0084967F` | data | `ChrAssetSubFileCount` | `BYTE` | 5. `ChFindRomEntry` returns `rank * 5`, the blob being sub-index 0 |
 | `0x008CC7C8` | data | `ChrC101ToC307Gate` | `int` | the dead `c101 -> c307` path-rewrite gate. Stays -1 in retail |
+
+## Corrections from the Project Zanarkand port, 2026-10-12
+
+Found while porting the cache, the ROM device and the residency half of chr.c line by line
+(the recreation's `src/engine/chr/`), each checked against the decompile:
+
+- `FFX_Asset_GetSizeForIndex 0xA428A0` does not open the file to measure it for the kinds that
+  matter here. For kinds {14, 16, 26, 28..34, 40, 41} it reads `sizetbl.vita.bin` through
+  `FFX_Asset_SizeTableLookup 0x76C410` (`g_ffxAssetSizeTable 0x1128A90` under
+  `g_ffxAssetSizeTableCount 0x1128A94`, loaded by `FFX_Asset_LoadSizeTable 0xA43100`). Only other
+  kinds open the file and round the size up to 16. The table equals the shipped file size for all
+  857 shipped `.chr` and is 0 for the 35 unshipped ids, which is why `FFX_Ch_RomRead` refuses them.
+- `FFX_Ch_RomReadMotionSet 0x82A4C0` refuses a 16 byte mgrp (an empty group) as well as a 0 byte
+  one.
+- `FFX_Ch_FindRomEntry 0x82A640` accepts category 7, because `word_C49660` has an eighth entry
+  of 0, and would read past the seven table pointers. Nothing ships in category 7.
+- The cache has 100 slots: `g_ffxChrCacheSlots 0x1302F98` is 100 pointers (bound by
+  `g_ffxChrCacheSlotsEnd 0x1303128`) into 100 records of 40 bytes at `g_ffxChrCacheRecords
+  0x1301FF8`. `FFX_ChCache_Init 0x840910` points slot i at record i and `FFX_ChCache_MoveToBack
+  0x840CF0` permutes the pointer array afterwards, so every scan walks the permutation.
+- `FFX_ChCache_EvictOne 0x8409A0` has a quirk worth knowing: the blob address floor used for the
+  tie break is never reset when a strictly lower priority takes over, so a later entry at the new
+  best priority only wins the tie against the lowest blob address seen at ANY priority so far.
+- `FFX_ChCache_FreeAllOfType 0x840340`, `FFX_ChCache_CompactBlobs 0x840B00` (the "Cache Move"
+  string) and `sub_840F20` have no callers in the PC build. Record +36 (free when landed) therefore
+  has no reader, and the scratch list past `g_ffxChrCacheSlotsEnd` with `dword_13032B8` is dead.
+  The `g_ffxTidusChr` compare in `FFX_ChCache_FreeSlot` is a CHR* against a file image, also dead.
+- `FFX_ChCache_CreateEntry 0x840560` leaves +16..+36 as the last occupant left them and
+  `FFX_ChCache_FreeSlot` does not clear them, so a reused slot carries a stale ClassCharacter
+  pointer until `FFX_ChCache_GetModelSlots 0x840680` zeroes it inside `FFX_Ch_RomRead`.
+- The pass-done semaphore at AsyncLoadManager+12 DOES have a waiter: `FFX_RomDev_PumpBlocking
+  0x76E660` waits on it (`g_ffxRomDevPassDoneSema 0x2310C24`, filled from
+  `AsyncLoadManager__getPassDoneSemaphore 0x641360`), as a 1 ms TryWait loop with dispatches when
+  the Phyre app flag is set and a plain wait otherwise. The pump's "execute inline" step calls
+  `sa_task_runGroup 0x77A420` through `g_ffxRomReadTaskGroup 0x1128ADC`, whose body is
+  `nullsub_88`, so nothing executes inline on PC.
+- `FFX_Chr_IsClassCharacterLoading` scans 50 pending entries (0x12FC6A0..0x12FFBC0, stride 272),
+  not 51.

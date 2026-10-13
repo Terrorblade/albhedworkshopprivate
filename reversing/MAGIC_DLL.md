@@ -294,8 +294,10 @@ BOOL FFX_Ch_DispatchUpdateJob(int a1, int a2, int a3)
 from an 8-entry ring, stores the function pointer and three args with `kind = 3`, pushes it onto a
 second ring and `ReleaseSemaphore`s a worker. `JobWorker__vf01 0x303A20` is the consumer, an infinite
 pop / run / release loop, and `sub_703910` is the dispatcher whose `case 3` does
-`(*(this+3))(arg0, arg1, arg2)`. The pool's threads come from Phyre's `sub_300B0`, which is
-`CreateThread` plus the `RaiseException 0x406D1388` thread-naming trick.
+`(*(this+3))(arg0, arg1, arg2)`. The pool's threads are FFX's own: four `JobWorker` Sys::Thread
+objects started by `JobSchedule__startWorkers 0x2DBA20` through `Sys_Thread_Create 0x279CB0`
+(corrected 2026-10-12, not Phyre's `sub_300B0` pool, which retail sizes to one thread and runs
+inline, `THREADS_AND_CLOCKS.md` T2 and T4).
 
 So blink runs on a **worker thread**. MSVC's `rand()` has used per-thread state since VC8
 (`_getptd()->_rand_state`), so blink draws from the worker's own stream and cannot perturb the game

@@ -94,7 +94,7 @@ namespace ffx
 		const DWORD TimingTrackTolerance = 0x00EFB8B0; // float, milliseconds of slack
 		const DWORD TimingTrackDueTime = 0x00EFB8A4;   // float, when this step was due
 		const DWORD TimingTrackElapsed = 0x00EFB8A8;   // float, seconds since the track started
-		const DWORD TimingTrackStartMs = 0x00EFB818;   // __int64, FFX_Time_NowMilliseconds at track start
+		const DWORD TimingTrackStartMs = 0x00EFB818;   // __int64, FFX_Time_NowMicroseconds at track start
 		const DWORD TimingTrackFirstStep = 0x008494D4; // int, 1 until the first step of a track has run
 		const DWORD TimingTrackStepTicks = 0x00EFB828; // DWORD[30], 8.8 fixed step scales from the file
 

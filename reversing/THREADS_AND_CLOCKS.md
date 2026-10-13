@@ -77,8 +77,13 @@ to preserve or replace.
   `sub_A3D240`, `sub_A3D410`, `sub_A3D720`), `PRenderer__vf01`, `sub_638F90` (before
   `FFX_MenuSys_CreateTexLoad`), `sub_638FB0`, `sub_615F40`, and a dead thunk at nofunc
   0x642C10.
-- Publishes to the step thread: nothing. The step thread joins it every frame through the
-  flush, so the two run as a one frame deep producer and consumer with a hard join.
+- Publishes to the step thread: nothing. Corrected 2026-10-12 by the display list pass: the
+  flush at 0x627B4A is gated on the app dirty bytes +0x14..+0x18 (resize, msaa, gamma,
+  resolution, vsync), so it is not a per frame join. The per frame handoff is
+  `Phyre_PRenderer_QueuePresent 0x5B6AF0`, which waits with no timeout on the event at
+  renderThread+0x164, then `PRendererBase__vf02 0x5B6C50` posts to the 16 slot ring. The two
+  still run as producer and consumer with a blocking wait, but the depth (what signals +0x164)
+  is open, `DISPLAY_LIST.md`.
 - Port: keep a render thread or fold it into the frame, either is observably identical, the
   simulation never reads anything from it. `MAIN_LOOP.md` line 19 ("One thread. No render
   thread.") is wrong and is listed in the corrections.
@@ -248,9 +253,15 @@ to preserve or replace.
   (dword_1330250)`) is called by the ROM device read path (`FFX_RomDev_ExecuteQueuedRead`,
   `sub_A432A0`, `sub_778550`, `sub_778610`, `sub_7797A0`, `sub_76E1C0`, Movie 144) and releases
   a semaphore nobody waits on. Dead on PC.
-- Port: remove the thread. Advance `saveData[47]` from the step counter (one second per 60
-  simulation steps at the 60 Hz base, or per 30 at divider 2, whichever the recreation's step
-  period is). It is save data and it is in the hash, so it has to be step derived.
+- Port: remove the thread. Corrected 2026-10-12: the first decision here (derive `saveData[47]`
+  from the step counter) was wrong on two counts. The save block hash skips 0xBC..0xC0, the play
+  time, in both the co-op kit's region table and the recreation's oracle probe, so the value is
+  not in the hash. And the callback runs whether or not the step is held, so the original counts
+  the seconds spent in the Esc menu and during FMV, which a step clock would not. The recreation
+  keeps the original's arithmetic (`src/engine/app/PlayTime.cpp`, the float mark, the 1.001
+  compare in double, the whole span added before the truncation, the cap) and calls it once per
+  presented frame on the frame thread with the app elapsed seconds. In co-op the host's value is
+  the one that travels.
 
 ### T10. PVideoPlaybackWin32::_ReadingThread (per movie)
 
@@ -306,7 +317,7 @@ for FMOD, `RENDER_DEVICE.md` for D3D11, and Steam callbacks pumped from the main
 ### Summary for PORTING_RULES E3
 
 Retail FFX.exe runs the simulation on the main thread and has exactly these other threads of
-its own: `PhyreEngineRenderThread` (Present and the Phyre command list, joined every frame),
+its own: `PhyreEngineRenderThread` (Present and the Phyre command list, waited on every frame),
 four `JobWorker` (character render update jobs, VFX prim builds, and the whole of `FFX_MainInit`
 at boot, joined before submit), `FmodManager` (30 Hz audio service, command ring in, voice
 timers out), `AsyncControllerTaskManager` (pad polling, only active in Lulu's fury minigame),
@@ -392,7 +403,7 @@ majority.
 
 | row | VA(s) | function | feeds | class | port |
 |---|---|---|---|---|---|
-| A1 | 0x86CA33 | `sub_86CA20` (vsync thread callback slot 2, T9) | `saveData[47]` play time, whole seconds since `flt_1325B84` | **simulation** (save data, in the hash, written off thread) | step clock, on the step thread |
+| A1 | 0x86CA33 | `sub_86CA20` (vsync thread callback slot 2, T9) | `saveData[47]` play time, whole seconds since `flt_1325B84` | save data, but skipped by the hash (0xBC..0xC0), written off thread | display clock on the frame thread with the original's arithmetic, counts through held steps like the original (corrected 2026-10-12, was step clock) |
 | A2 | 0x89AEF6, 0x89AF39 | `FFX_BtlMenu_Step 0x89AE20`, page state 2 | page record `+0xDC` = now, `+0xE0` = 0 | **simulation**, see A3 | step clock |
 | A3 | 0x8A2DBB.., 0x8A369B.., 0x8A49D8.., 0x8A688C, 0x8A6A7B.., 0x8A7548, 0x8A760C.., 0x8A7DDC.. (23 sites) | the battle menu page callbacks installed by `FFX_BtlMenu_InstallPageCallbacks`: `sub_8A2DA0`, `sub_8A3680`, `sub_8A49B0`, `sub_8A6870`, `sub_8A6A60`, `sub_8A7520`, `sub_8A75F0`, `sub_8A7DC0`, and `sub_89F370` (6 callers among them) | `+0xE0 = now - +0xDC`, then `if (+0xE0 >= 0.3)` / `>= 0.45` / `>= 0.5` advance the page (comparisons in `sub_89F370`, `sub_8A6A60`, `sub_8A75F0`, `sub_8A7DC0`, `sub_8A87A0`, `sub_8A8A40`, `sub_8A8A70`, `sub_8A8AC0`, `sub_8A8AF0`, `sub_8A8B20`, `sub_8A8B50`, `sub_8A8B90`), and slide fractions `(t-0.2)/0.2`, `/0.3` for the draw | **simulation**: the open animation of a battle menu page decides on which step the page starts accepting input. A press on step N is taken on one machine and dropped on the other | step clock: count steps since the page opened, 0.3 s = 9 steps at the 30 Hz divider |
 | A4 | 0x891BB6, 0x891BD6 | `FFX_BtlOd_LuluFuryStickMinigame 0x891B80` | `g_ffxBtlOdLuluClockNow`, `g_ffxBtlOdLuluClockMark`, the real time window the stick rotations are counted in (the IDB comment notes these are not the overdrive time limit, which is `g_ffxBtlOdTimeRemaining`) | **simulation** (the rotation count is the overdrive result) | step clock, and with T6 removed the rotations are sampled per step |
@@ -476,9 +487,10 @@ reproducible is R7 and R8 on the workers, and those are render only.
 
 | decision | rows |
 |---|---|
-| step clock | P1, A1, A2, A3, A4, I1, I2, I3, I7, I8, I9, C16, C17, C18, C19 |
+| step clock | P1, A2, A3, A4, I1, I2, I3, I7, I8, I9, C16, C17, C18, C19 |
 | display clock | P2, P3, P4, A5 to A22 |
 | keep (another thread's own clock, the step never reads it) | C2, C9, C10, C11, R15, P6 |
+| original arithmetic on the frame thread, outside the hash | A1 |
 | host ordered event instead of a clock | C12, C13, C14 (voice done), T7 load complete |
 | remove | C1, C3a, C3b, C4a, C4e, P5, P7, P9, C15, I4, I5, I6, R16, T6, T8, T9, T13 |
 | session seed | R1 |

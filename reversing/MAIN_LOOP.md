@@ -16,7 +16,18 @@ Four answers matter more than the rest.
 
 1. **The frame limiter is in `WinMain`, not in the engine.** `WinMain 0x62EE50` runs its own
    `PeekMessageA` pump and `Sleep`s to hold one frame at `g_phyreFrameRateDivider * (1/59.94)`
-   seconds. One thread. No render thread. No vsync wait of the engine's own.
+   seconds. The simulation is one thread. No vsync wait of the engine's own. (Corrected
+   2026-10-12: "no render thread" was wrong. `PhyreEngineRenderThread` exists in retail, started by
+   `Phyre_RenderThread_Start 0x615140` from `Phyre__PApplication__onInit`, and
+   `IDXGISwapChain::Present` runs on it, at 0x614D89 inside `Phyre_RenderThread_ExecuteCommand
+   0x614C60`. Corrected again the same day by the display list pass: the flush at `frameTick
+   0x627B4A` is not per frame, it only runs when a resize, msaa, gamma, resolution or vsync dirty
+   byte (app +0x14..+0x18) is set. The per frame handoff is `Phyre_PRenderer_QueuePresent
+   0x5B6AF0`, which waits with no timeout on the event at renderThread+0x164 before it appends the
+   Present record, then `PRendererBase__vf02 0x5B6C50` posts the list to the 16 slot ring. What
+   signals +0x164, and so how far the render thread can trail, is still open. The step itself
+   draws nothing, it only fills queues, `DISPLAY_LIST.md` and `RENDER_PASSES.md`.
+   `THREADS_AND_CLOCKS.md` T1.)
 2. **The game already ships a complete simulation stall, and it is one byte.**
    `FFXApplication + 0x3AD`. All four FFXApplication vtable bodies honour it: update, animate, render
    and endFrame each take a different branch. That is the shipped pause, and it is the place to put a
@@ -297,7 +308,9 @@ Two things fall out of this and both matter.
 
 ### Pacing mode 1, and it is narrower than it first looked
 
-`g_ffxPacingMode 0x12FB8A0 == 1` derives its step count from `FFX_Time_NowMilliseconds` and, when it
+`g_ffxPacingMode 0x12FB8A0 == 1` derives its step count from `FFX_Time_NowMicroseconds 0x641420`
+(renamed 2026-10-12, it multiplies by 1000000.0 and the pacing path divides by 1000 to get its
+millisecond track time) and, when it
 is more than 100 ms ahead, busy-waits in a `for (v3 = 0; v3 < 10000; ++v3)` spin. Mode 0 never
 touches the clock. `ffx::IsPacingFromWallClock()` samples this plus the missing-fixed-timestep case.
 
@@ -322,7 +335,8 @@ per presented frame differs, and lockstep already owns that through `g_ffxPendin
 
 So mode 1 is a pacing difference, not a divergence, and it has a shipped remedy. The engine's own
 pause menu has the identical problem, so there is a pending-pause value,
-`g_ffxTimingTrackPauseMsPending 0xCCC868`, which `FFX_StepPacing` subtracts from the track's elapsed
+`g_ffxTimingTrackPauseUsPending 0xCCC868` (microseconds, renamed from `..PauseMsPending` on
+2026-10-12), which `FFX_StepPacing` subtracts from the track's elapsed
 time. **A lockstep gate that stalls during mode 1 must write its stall duration there**, or the track
 comes back behind and burns catch-up steps that the other machine does not take. That is
 `ffx::AddTimingTrackPauseMs()`, and `plugins\pilgrimage\net\LockstepLink.cpp` calls it when it
@@ -334,8 +348,12 @@ that: the clock is at `0x630C60` (`0x630C40` is `FFX_Input__clearThreadedSampleQ
 callers and all of them are input-hold, input-thread, menu or message-window key repeat, and none is
 Blitzball. Blitzball reads no wall clock at all, it is ATEL bytecode, see `reversing/BLITZBALL.md`.
 The real battle-side reader is `FFX_BtlOd_LuluFuryStickMinigame 0x491B80`, two sites through
-`FFX_Time_AppElapsedSeconds 0x241410`. That clock has 30 callers of which 20 reach the simulation
-step, mostly battle-menu UI pulsing, detailed in `COOP_DESIGN.md`. Also still true:
+`FFX_Time_AppElapsedSeconds 0x641410`. That clock has 31 caller functions at 65 sites (recounted
+2026-10-12). The simulation side is smaller and sharper than "UI pulsing": the play time counter
+`FFX_Save_StepPlayTimeFromWallClock 0x86CA20` writes `saveData[47]` from the vsync emulation
+thread, the battle menu page timers decide on which step a page starts accepting input, and the
+fury minigame measures its window in real time. The rest are draw pulses. Every site is classified
+in `THREADS_AND_CLOCKS.md` section 2.4. Also still true:
 `sub_6F0670`'s `GetTickCount` ramp. `sub_42FA00`'s play-time float at `FFXApplication+0x3B0` is a further accumulator of raw real
 time, but it only feeds `+0x120` and I found no gameplay consumer.
 

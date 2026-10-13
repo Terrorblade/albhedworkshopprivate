@@ -81,6 +81,12 @@ otherwise falls back to a byte array with the intended type in a trailing commen
 registered members become `_pad_<hex>` and unregistered trailing bytes become `_tail_<hex>` -
 those are genuinely unknown private fields, not padding we chose.
 
+Correction 2026-10-12 (`PHYRE_FORMAT.md` section 11): the type getter `phyre_reflection_meta.json`
+records for `PTexture2D::m_format` (0x4C0A10) is a `PSamplerState` getter. The texture format getter
+is `Phyre__PType__PTextureFormatBase 0x4C0B10`. The JSON is left as the tool generated it, this note
+and the doc carry the correction. The same doc settles what marks a header class: the descriptor's
++144 bit 2, written by the lazy getter after Init, not the Init flags argument at +132.
+
 ## What is in this folder
 
 - `phyre_types.h` - 259 recovered structs plus 27 opaque helpers and 4 math types. Applied to the

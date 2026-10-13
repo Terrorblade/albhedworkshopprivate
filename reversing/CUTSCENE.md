@@ -37,9 +37,11 @@ Seven answers, in the order they were asked.
    authored data from the file. Both machines consume the same track entries in the same order and
    get the same per-step motion scale. Only the number of steps per presented frame differs.
    **A mode-1 cutscene can be lockstepped by taking over the step count.** See section 2.4.
-   And the engine already ships the compensation a stall needs: `g_ffxTimingTrackPauseMsPending
+   And the engine already ships the compensation a stall needs: `g_ffxTimingTrackPauseUsPending
    0xCCC868`, which the Esc menu writes on close and `FFX_StepPacing` subtracts from the track's
-   elapsed time. See section 2.5.
+   elapsed time. See section 2.5. (The `Ms` names were renamed to `Us` on 2026-10-12:
+   `FFX_Time_NowMicroseconds 0x641420` multiplies by 1000000.0, so these globals hold microseconds
+   and the `/ 1000` in the pacing path yields the track's milliseconds.)
 
 3. **Is a cutscene observable from one read?** There is no single "a cutscene is running" boolean.
    There are four cheap reads that together cover it, and the engine itself trusts three of them:
@@ -169,7 +171,7 @@ void FFX_StepPacing_LoadTimingTrack(void)
         g_ffxPacingMode           = 0;              // <- back to the accumulator
         g_ffxTimingTrackTolerance = 0.0f;
         g_ffxTimingTrackFirstStep = 1;
-        g_ffxTimingTrackStartMs   = 0;
+        g_ffxTimingTrackStartUs   = 0;
         g_ffxCatchUpExtraSteps    = 0;
         memset(g_ffxTimingTrackStepTicks, 0, 0x78);  // DWORD[30]
     } else {
@@ -239,15 +241,15 @@ knowing because it looks like a hitch and is not one.
 ```c
 g_ffxPendingSteps = 1;
 if (g_ffxTimingTrackFirstStep == 1) {
-    g_ffxTimingTrackStartMs        = FFX_Time_NowMilliseconds();
+    g_ffxTimingTrackStartUs        = FFX_Time_NowMicroseconds();
     g_ffxTimingTrackDueTime        = g_ffxTimingTrackNextTime;
     g_ffxTimingTrackFirstStep      = 0;
-    g_ffxTimingTrackPauseMsPending = 0;
-    g_ffxTimingTrackPauseMsTotal   = 0;
+    g_ffxTimingTrackPauseUsPending = 0;
+    g_ffxTimingTrackPauseUsTotal   = 0;
 } else {
-    now = FFX_Time_NowMilliseconds() - (PauseMsPending + PauseMsTotal);
+    now = FFX_Time_NowMicroseconds() - (PauseUsPending + PauseUsTotal);
     PauseMsTotal += PauseMsPending;  PauseMsPending = 0;
-    g_ffxTimingTrackElapsed = (float)(now - g_ffxTimingTrackStartMs) / 1000.0f;
+    g_ffxTimingTrackElapsed = (float)(now - g_ffxTimingTrackStartUs) / 1000.0f;
     if (g_ffxTimingTrackDueTime <= g_ffxTimingTrackElapsed) {
         // BEHIND: take extra steps until the track catches up
         while (g_ffxTimingTrackTolerance < Elapsed - DueTime && g_ffxPacingMode == 1) {
@@ -296,20 +298,20 @@ should match entry for entry even when the per-frame counts differ.
 
 ### 2.5 The pause compensation the engine already ships
 
-`g_ffxTimingTrackPauseMsPending 0xCCC868` is a qword. The only non-`FFX_StepPacing` writer is the
+`g_ffxTimingTrackPauseUsPending 0xCCC868` is a qword. The only non-`FFX_StepPacing` writer is the
 Esc menu step, `FFEscMenu` vtable slot 0 at `0x68FFB0` (the IDB name says `scalar_deleting_dtor`,
 which is wrong, the function is the per-frame step). Near its end:
 
 ```c
 if (escMenuOpen) {
-    if (!wasOpen) pauseStartMs = FFX_Time_NowMilliseconds();
+    if (!wasOpen) pauseStartMs = FFX_Time_NowMicroseconds();
 } else if (wasOpen) {
-    g_ffxTimingTrackPauseMsPending = FFX_Time_NowMilliseconds() - pauseStartMs;
+    g_ffxTimingTrackPauseUsPending = FFX_Time_NowMicroseconds() - pauseStartMs;
 }
 wasOpen = escMenuOpen;
 ```
 
-`FFX_StepPacing`'s mode 1 path folds that into `g_ffxTimingTrackPauseMsTotal 0x12FB7E8`, zeroes the
+`FFX_StepPacing`'s mode 1 path folds that into `g_ffxTimingTrackPauseUsTotal 0x12FB7E8`, zeroes the
 pending value, and subtracts the total from the elapsed time. So **the game has a supported way to
 tell a running timing track "pretend these N milliseconds did not happen".**
 
@@ -841,7 +843,7 @@ priority arbitration picks one winner per screen.
    `g_ffxPendingSteps`, and `ffx::TimingTrackState()` reports what the track is doing so the layer
    knows which window it is in.
 4. **If the gate stalls during mode 1, write the stall duration to
-   `g_ffxTimingTrackPauseMsPending`.** Otherwise the track thinks it fell behind and burns catch-up
+   `g_ffxTimingTrackPauseUsPending`.** Otherwise the track thinks it fell behind and burns catch-up
    steps the instant the gate opens, which would look like the cutscene lurching. This is the single
    most actionable thing in this document.
 5. Replicate the dialogue advance as a networked command, not as local input. Detour
@@ -891,7 +893,7 @@ hook during a cutscene, not the narrow `FFX_MainStep` gate.
   CAN advance during a movie. Which makes the question sharper rather than softer, because a track
   advancing while a movie plays at wall-clock speed is exactly the shape of thing that diverges. Not
   checked.
-- **Whether the engine ever writes `g_ffxTimingTrackPauseMsPending` from anywhere but the Esc menu.**
+- **Whether the engine ever writes `g_ffxTimingTrackPauseUsPending` from anywhere but the Esc menu.**
   Four xrefs total, three of them in `FFX_StepPacing`. So almost certainly no, but the Esc menu
   function itself is another agent's area and I did not read all of it.
 - **The FMV skip path. SETTLED**, see section 4 of `reversing/FMV_SYNC.md`. It is

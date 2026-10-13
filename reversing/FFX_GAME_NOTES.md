@@ -23,9 +23,9 @@ filenames and assert strings.
 |---|---|
 | +0x00 | vtable |
 | +0x04 | loaded Phyre cluster / asset root (mesh list reachable at `*(+4)+28`) |
-| +0x08/+0x0C/+0x10 | `{data, size, capacity}` vector of sub-asset blobs |
-| +0x14 | array of Phyre asset handles |
-| +0x18 | count for +0x14 |
+| +0x08/+0x0C/+0x10 | `{data, size, capacity}` vector of mesh instances (`ClassCharacter__addInstance 0x6A0D00` pushes here under a mutex, corrected 2026-10-12) |
+| +0x14 | per mesh joint remap int arrays, built by `ClassCharacter__buildMeshTables 0x6A2390` (corrected 2026-10-12, was "array of Phyre asset handles", `CLASS_CHARACTER.md`) |
+| +0x18 | mesh count, the PMeshInstance count of the model cluster (c001 has 1) |
 | +0x1C | BYTE loaded/ready (also set to 1 on load *failure*) |
 | +0x20 | BYTE isHiLod - set when asset id is 4347/4348/4349/4352 or in (800,900) |
 

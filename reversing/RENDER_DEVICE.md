@@ -75,8 +75,15 @@ swapChain->Present(vsyncByte != 0 ? 1 : 0, 0);
 return 1;
 ```
 
-The only two callers are `sub_6148B0` and `sub_614C60`, the Phyre end-of-frame paths that
-`FFXApplication::render` reaches. Flags are always 0, so there is no tearing flag and no
+The two callers are `j_Phyre_RenderD3D11_Present 0x6148B0`, a thunk with no callers of its own,
+and `Phyre_RenderThread_ExecuteCommand 0x614C60` at 0x614D89, which runs on
+`PhyreEngineRenderThread`, not on the main thread (corrected 2026-10-12 by the thread census,
+`THREADS_AND_CLOCKS.md` T1). The main thread queues the Present record through
+`Phyre_PRenderer_QueuePresent 0x5B6AF0`, which first waits with no timeout on the event at
+renderThread+0x164, then posts the list through `PRendererBase__vf02 0x5B6C50`.
+`Phyre_RenderThread_FlushGlobal 0x5BC3F0` at `frameTick 0x627B4A` is not the per frame join, it
+only runs when a resize, msaa, gamma, resolution or vsync dirty byte is set (corrected 2026-10-12,
+`DISPLAY_LIST.md`). Whether Present can complete a frame late is open. Flags are always 0, so there is no tearing flag and no
 `DXGI_PRESENT_DO_NOT_WAIT`.
 
 ## 4. The vsync chain, now complete

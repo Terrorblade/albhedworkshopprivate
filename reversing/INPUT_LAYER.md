@@ -306,7 +306,10 @@ Two things spoil it, and both are checkable:
   catch-up substep. A write made before animate is overwritten before anything reads it. The flag is
   set to 1 at `0x891C7E` and back to 0 at `0x891FD8`, both inside the state machine `sub_891B80`; I
   did not determine which path the retail build takes at boot, so **a mod must read the flag at run
-  time rather than assume**. `ffx::ThreadedPadMode()` exists for exactly that and
+  time rather than assume**. (Resolved 2026-10-12: `g_ffxThreadedPadMode 0x133C930` has exactly
+  those two writers, both inside `FFX_BtlOd_LuluFuryStickMinigame 0x891B80`, and it sits in
+  uninitialised data, so it is 0 at boot and threaded mode is on only during Lulu's fury stick
+  minigame. `THREADS_AND_CLOCKS.md` T6.) `ffx::ThreadedPadMode()` exists for exactly that and
   `ffx::LogInputState()` prints a warning when it is non-zero.
 - **The Esc menu is open** (`FFXApplication+941 != 0`). Then `update` skips the poll entirely and
   `animate` calls `FFX_Input__pollForMenu 0x644990` **first**, which re-polls. Same outcome.

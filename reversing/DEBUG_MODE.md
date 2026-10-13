@@ -54,7 +54,10 @@ There are exactly three instructions in the whole binary that store to it.
    argument. Verified in the disassembly. The caller chain is
    `FFXApplication__initScene -> FFX_BootSequence -> FFX_ParseCommandLineAndInitDebug_tramp`
    0x636410, with `FFX_BootSequence` pushing the trampoline as a callback at 0x641848 and
-   0x641952. I did not verify that the `argv` reaching it is the real process command line
+   0x641952 (corrected 2026-10-12: those two sites call `JobSchedule__postJob 0x633670` with
+   `ecx = dword_CDEDE4`, so the trampoline is a job that runs on one of the four `JobWorker`
+   threads while the main thread presents `OpeningScreen.swf`, `BOOT_SEQUENCE.md` step 85). I did
+   not verify that the `argv` reaching it is the real process command line
    rather than a synthesised one, so treat "launch with the argument debug" as plausible but
    untested. Writing the byte is the sure thing.
    Resolved 2026-10-11 (Zanarkand command line pass): it is the real command line. `WinMain 0x62EE50`

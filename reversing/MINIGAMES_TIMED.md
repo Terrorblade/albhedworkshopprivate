@@ -1038,10 +1038,10 @@ RVA = IDA VA minus 0x400000. Types: `fn` function, `glob` global, `tbl` table, `
 
 | RVA | Type | Name | Note |
 |---|---|---|---|
-| 0x02FD80 | fn | `Phyre_Time_NowSeconds` | the only `QueryPerformanceCounter` reader in the engine |
+| 0x02FD80 | fn | `Phyre_Time_NowSeconds` | the only `QueryPerformanceCounter` reader the game logic reaches (`Phyre_Time_Init` and the CRT cookie read it too, and on Windows 8 and later this one reads `GetSystemTimePreciseAsFileTime` instead) |
 | 0x02F690 | fn | `sub_42F690` | wraps it |
 | 0x241410 | fn | `FFX_Time_AppElapsedSeconds` | the FFX-side wrapper. **30 callers, 65 sites**, see below |
-| 0x241420 | fn | `FFX_Time_NowMilliseconds` | **misnamed, it returns microseconds**, see section 11 |
+| 0x241420 | fn | `FFX_Time_NowMicroseconds` | **returns microseconds**, renamed from `FFX_Time_NowMilliseconds` in the IDB on 2026-10-12, see section 11 |
 | 0x230C60 | fn | `FFX_Input__getTimeSeconds` | **not 0x230C40**, which is `FFX_Input__clearThreadedSampleQueues` |
 | 0x2EA050 | fn | dlmalloc `init_mparams` | `GetTickCount() ^ 0x55555550`, one shot, the source of nearly all false clock reachability |
 

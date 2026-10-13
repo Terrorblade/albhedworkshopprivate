@@ -419,7 +419,7 @@ That is an inference from the stub strings in its own closure, not something I e
 1. **What is it?** The PS2 hard-disk install / verify screen. Unreachable.
 2. **RNG?** No. Nothing in the 244-function closure calls either RNG function or references either
    state global.
-3. **Wall clock?** No. No `FFX_Time_AppElapsedSeconds`, no `FFX_Time_NowMilliseconds`, no
+3. **Wall clock?** No. No `FFX_Time_AppElapsedSeconds`, no `FFX_Time_NowMicroseconds`, no
    `FFX_Input__getTimeSeconds`, and `Phyre_Time_NowSeconds` is not in the closure at all. The only
    timing primitive is the `SleepEx`-free `task_wait` stub.
 4. **Input?** The module itself reads none. `GetHeld` / `GetRepeat` / `GetPressed` are called and
@@ -501,7 +501,7 @@ screen is still up and resumes when bit 23 clears.
 2. **RNG?** **No.** Its 189-function closure contains neither RNG function and references neither
    state table.
 3. **Wall clock?** **No, not even a draw-side one.** `FFX_Time_AppElapsedSeconds`,
-   `FFX_Time_NowMilliseconds`, `FFX_Input__getTimeSeconds` and `Phyre_Time_NowSeconds` are all absent
+   `FFX_Time_NowMicroseconds`, `FFX_Input__getTimeSeconds` and `Phyre_Time_NowSeconds` are all absent
    from the closure, and so are all four Win32 time imports. This is the only one of the four modules
    with a completely clock-free closure.
 4. **Input, and is it deterministic?** **One read, and it is deterministic.** `Pressed & 0x40` in

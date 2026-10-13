@@ -572,6 +572,12 @@ cluster is overwhelmingly battle-menu UI animation, and spot-checking the heavie
 is a pulsing highlight and harmless. So the old "four hits" conclusion was roughly right in spirit
 and wrong as a count. What it cost us is below.
 
+Re-run 2026-10-12 for Project Zanarkand: the complete census is `reversing/THREADS_AND_CLOCKS.md`
+part 2, every caller of every clock classified with a port decision. The count is 31 caller
+functions at 65 sites. The simulation side is the play time counter (written into the save block
+from the vsync emulation thread), the battle menu page open timers that gate input acceptance, and
+the fury minigame window. Part 1 of the same doc is the thread census.
+
 The real problems:
 
 - **Lulu's Fury overdrive is wall-clock timed, and this was not in the list.**

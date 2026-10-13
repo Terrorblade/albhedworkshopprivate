@@ -5,7 +5,9 @@ PhyreEngine 3.9 "cluster" file with the extension .phyre, 47,125 of them inside 
 under ffx_data/gamedata/ps3data/. This document is the on-disk layout as the loader in FFX.exe
 reads it. Every claim names the function that proves it. Addresses are IDA virtual addresses at
 the preferred base 0x400000. Decompiled names that are still sub_XXXXXX in the IDB are quoted as
-such, with the names proposed for them at the end.
+such, with the names proposed for them at the end. Those names were applied to the IDB on
+2026-10-12 after the coordinator re-read the header load, the platform and physics ids, the +144
+header class test, the varint reader, the pointer fixup strings and the file open in IDA.
 
 The reference reader is tools/phyre.py in the Project Zanarkand repo. It parses 47,095 of the
 47,125 clusters to the last byte with every size, count and fixup cross checked, and rejects the
@@ -387,6 +389,9 @@ PShaderParameterDefinition list 38 object 0, pointer index 55.
 
 ## 9. The D3D11 resource payload
 
+Two corrections from 2026-10-12 are in section 15.7: no standalone PIndexDataBlock ships (the index
+block is embedded in PMeshSegmentD3D11 at +48), and PTextureFormat__ctor stores five values, not four.
+
 sub_465AA0 (the PClusterD3D11 payload loader) runs after the fixups, reading from the same stream:
 
 1. m_indexBufferSize bytes: one blob holding every index buffer. Each PIndexDataBlock object
@@ -403,8 +408,8 @@ sub_465AA0 (the PClusterD3D11 payload loader) runs after the fixups, reading fro
    - m_format at +0 (PTextureCommonBase), a pointer patched by a user fixup of type
      PTextureFormatBase whose payload is the format name
    - m_mipmapCount at +12, the chain holds m_mipmapCount + 1 levels
-   - m_width at +28 and m_height at +32 (PTexture2DBase), m_depth at +36 for a 3D texture, a cube
-     map uses its width for both
+   - m_width at +28 and m_height at +32 (PTexture2DBase), m_depth at +36 for a 3D texture. A cube
+     map has one PTextureCubeMapBase::m_size at +28 for both
    - level bytes = w x h x bitsPerPixel / 8 (x depth for 3D), with w and h rounded up to a
      multiple of 4 for block compressed formats, each dimension halving per level down to 1
    - a cube map stores six full chains, one per face
@@ -530,3 +535,153 @@ them through a PAssetReferenceImport (the other magic_0668 textures are D3D11).
 | 0x561E90 | sub_561E90 | PIndexDataBlockD3D11__createBuffer | |
 | 0x5620C0 | sub_5620C0 | PDataBlockD3D11__createBuffer | |
 | 0x43B0A0 | Phyre__PClassDescriptor__Init | keep | zeroes +144 |
+
+## 15. Meshes and textures as the D3D11 loader uses them (2026-10-12)
+
+Written for Project Zanarkand items 5.3 and 5.5. The readers are src/engine/phyre/Mesh.cpp and
+Texture.cpp there, and "phyrecheck meshes" and "phyrecheck textures" run them over the whole archive.
+
+### 15.1 Mesh layout
+
+- PMesh (56 bytes): m_meshSegments +0 PArray<PMeshSegment>, m_skeletonMatrices +8 PArray<PMatrix4>,
+  m_skeletonBounds +16 PArray<PSkeletonJointBounds>, m_defaultPose +24 PArray<PMatrix4>,
+  m_matrixNames +32 PArray<PString>, m_matrixParents +40 PArray<PInt32>, m_defaultMaterials +48
+  PMaterialSet, whose m_materials is a PSharray<PMaterial*> (m_count +48, m_u +52).
+- A PArray of objects is m_count at the slot and a pointer fixup at slot + 4 that lands on the first
+  element object, with pointerIndex equal to the count. Element i is the object i places after it in
+  the same list. A PArray of primitives is an array fixup at slot + 4.
+- PSharray<PMaterial*>: a count of 1 keeps the pointer inline in m_u, more go through a pointer array
+  fixup, and the pointer fixups' pointerIndex is the slot (they are not stored in slot order). 981 of
+  the 12,266 meshes state a count over a pointer array with no pointer fixups at all, every slot
+  null. In bsil03 they are the 25 odd meshes 1 to 49, and only their PAssetReference points at them,
+  no PMeshInstance or PModifierNetworkDynamicMesh does.
+- PMeshSegment (PMeshSegmentBase 40 bytes first): m_materialIndex +0 into the mesh's material set,
+  m_matrixIndex +4, m_skinBones +8 PArray<PSkinBoneRemap>, m_primitiveType +16, m_modeIndex +24,
+  m_segmentRenderOrder +28, m_clothmodelIndex +32, m_clothIndex +36. The PMeshSegmentD3D11 part holds
+  the vertex blocks (a PArray<PDataBlock>) and an embedded PIndexDataBlockD3D11 at +48, so the index
+  block's m_offsetInIndexBuffer is segment +92 and its m_dataSize segment +100.
+- PSkinBoneRemap is two PUInt16, m_hierarchyMatrixIndex then m_skeletonMatrixIndex.
+  PSkeletonJointBounds is min[3], m_hierarchyMatrixIndex, size[3] and a pad, 32 bytes. Over the
+  archive every remap's skeleton index lands in the bounds table and
+  bounds[remap.skeleton].hierarchyMatrixIndex equals remap.hierarchy.
+- c001 (Tidus): 1 PMesh, 13 segments of 8 blocks each, 104 blocks tiling the 806,748 byte vertex
+  blob exactly, indices tiling the 59,172 byte index blob, 8,769 vertices, 127 remaps, 53 skeleton
+  matrices and bounds, 79 hierarchy matrices. Segments 6, 7, 10, 11 and 12 carry cloth indices
+  (cloth model 0 or 1, cloth 0 to 2). modeIndex is 0 for segments 0 to 3 and 1 for the rest.
+
+### 15.2 Data types, streams and indices
+
+- sub_55BC40 maps a data type id (0 to 50) to its byte size. sub_4D6C00 maps it to a reflected
+  component type and count: 0..3 float x1..4, 4..7, 12..15 and 40..43 PUInt16, 8..11 PUInt32,
+  16..19 PUInt8 x1..4, 28..31 PInt32, 32..35 PInt16, 48 float x12, 49 float x16, 50 PUInt32.
+- The archive's vertex streams use four types: 1 (Float2, ST sets 0 to 2, stride 8), 2 (Float3,
+  Vertex, Normal, Tangent, Binormal and the Skinnable ones, stride 12), 3 (Float4, Color and
+  SkinWeights, stride 16) and 19 (UInt8x4, SkinIndices, stride 4). Every PDataBlock holds one stream
+  and stride x elementCount equals m_dataSize.
+- There is no stream to DXGI table in FFX.exe. The format comes from each .fx's input layout:
+  ST is R32G32_FLOAT (16), Vertex and Normal R32G32B32_FLOAT (6), Color and SkinWeights
+  R32G32B32A32_FLOAT (2), SkinIndices R8G8B8A8_UINT (30).
+- Index format, the cmp/setnz at 0x592C95 in sub_592C60: m_type 8 gives R32_UINT (42), anything else
+  R16_UINT (57). Every shipped segment uses type 12, two bytes.
+- Topology, sub_58AB60 on m_primitiveType: 0 and 5 POINTLIST, 1 LINELIST, 2 TRIANGLELIST, 3
+  TRIANGLESTRIP, 4 TRIANGLESTRIP with a "FAN_NOT_SUPPORTED" warning, else 0. Every shipped segment
+  is 2.
+- sub_592C60 sets the index buffer with the offset at [ib+2Ch] and draws DrawIndexed(count, 0, 0).
+  sub_592DE0 is the instanced variant (vtable +80).
+
+### 15.3 What the loader does to the buffers
+
+- PDataBlockD3D11__createBuffer and PIndexDataBlockD3D11__createBuffer copy the blob slice verbatim
+  into an immutable buffer (usage 1). Bind flags are 9 for vertices (VB and SRV) and 10 for indices
+  (IB and SRV). Each also creates a BUFFEREX shader resource view, R32_FLOAT (41) over vertices and
+  R32_UINT (42) over indices, NumElements = m_dataSize >> 2.
+- PClusterD3D11__loadResourcePayload zeroes m_offsetInIndexBuffer (+44 of the index block, segment
+  +92) and PDataBlock m_offsetInVertexBuffer (+48) after each create, because every block now owns
+  its own buffer. The value in the file is the slice offset, the value at runtime is 0.
+
+### 15.4 Textures
+
+- PTextureFormat__ctor(name, id, flags, a5 to a9) stores a5..a9 at +20, +24, +28, +32, +36.
+  sub_58FC20 creates the Texture2D with Format = +24. By id: L8 0 and A8 1 -> 61, LA8 2 and RG8 3
+  -> 49, L16 4 and A16 5 -> 57, LA16 6 and RG16 7 -> 36, RGBA8 11 -> 28, ARGB8 12 -> 87, A2RGB10 13
+  -> 24, RGBA16 14 -> 12, DXT1 15 -> 71, DXT3 16 -> 74, DXT5 17 -> 77, BC4 18 -> 80, BC5 19 -> 83,
+  RGBA16F 28 -> 10, RGBA32F 29 -> 2, R16F 30 and L16F 31 -> 54, R32F 32 and L32F 33 -> 41, RG16F 34
+  and LA16F 35 -> 34, RG32F 36 and LA32F 37 -> 16, DEPTH16 38 -> 53, DEPTH24 39 and DEPTH24S8 40 ->
+  44, DEPTH32 41 -> 39, R32 47 -> 42, UNKNOWN 48 -> 0. For the depth formats +28, +32 and +36 differ
+  (DEPTH16 55, 56, 56, DEPTH24 45, 46, 46, DEPTH32 40, 41, 41) and look like the DSV, SRV and RTV
+  formats. That reading is not verified.
+- ARGB8 is B8G8R8A8_UNORM, so the file's bytes are BGRA in memory and nothing swaps channels. No
+  shipped texture is swizzled or tiled.
+- sub_58FC20 creates MipLevels = m_mipmapCount + 1, except 1 when m_maxMipLevel (+16) is 0 and
+  m_textureFlags (+20) bit 1 is clear. Row pitch = (block ? alignUp(w, 4) x 4 : w) x bpp / 8, slice
+  pitch 0. Usage 2 when the dynamic argument is set, BindFlags 8. sub_590800 (cube) uses the same
+  MipLevels rule with ArraySize 6 and MiscFlags 4, and walks the face pointers by the created level
+  count, so a cube forced to one level would read the wrong data for faces 1 to 5. No shipped cube
+  hits that. sub_5903A0 (3D) was not decoded.
+- Over the archive: flags 0 on 30,157 textures (m_maxMipLevel == m_mipmapCount), flags 0x2 on
+  14,208. No texture has m_maxMipLevel 0 with a chain, so the one level rule never fires.
+
+### 15.5 Texture quality drops top levels
+
+sub_5947D0 returns the D3D11 render interface's +0x1340, sub_58E000 sets it and reloads the
+clusters. Phyre__PApplication__onInit (0x62AA0F) and the frame tick (0x627BCC) pass
+g_ffxGameSettings +0x34, which is GameSetting.ini key 13, TextureQuality (TQ_HIGH 0, TQ_MEDIUM 1,
+TQ_LOW 2). PClusterD3D11__loadResourcePayload then, per texture:
+
+- 2D: when m_mipmapCount >= skip and skip != 0, w' = w >> skip, h' = h >> skip, and while skip != 0
+  and either is below 4, both double and skip drops by one. The lowered skip is a single local, so
+  it carries over to later textures of the same cluster, cube and 3D included. No shipped cluster
+  holds more than one texture, so the carry never shows.
+- Dropped levels are read into the same staging spot and discarded. The object is resized through
+  Phyre__PTexture2D__setFormatAndSize(w >> skip, h >> skip, format, m_mipmapCount - skip), whose
+  return the loader ignores. It refuses (3) when the level count is nonzero and 1 << it exceeds the
+  larger side. No shipped texture would be refused at skip 1 or 2.
+- Cube: no 4x4 clamp, sub_4C7260(size >> skip, format, m_mipmapCount - skip).
+- Archive counts: skip 1 drops one level from 30,151 textures, skip 2 drops two from 30,106 and one
+  from 45 (the clamp). The 14,214 single level textures keep everything at both.
+
+### 15.6 Archive totals (phyrecheck, 47,095 clusters parsed, 30 foreign)
+
+- Meshes: 1,266 clusters, 12,266 PMesh (all in .dae clusters), 39,497 segments, 235,397 vertex
+  blocks and streams, 23,256,840 vertices, 28,506,639 indices, 49,543 remaps, 34,195 joint bounds,
+  62,497 hierarchy matrices. In every cluster the mesh blocks tile the vertex blob byte for byte
+  with no overlap. 4,084 segments are skinned, and in each the largest SkinIndices byte is the last
+  palette entry. One segment has no indices. Two znkd09 segments store a maximum index of 137 over
+  indices that reach 113, still inside the vertex count.
+- No standalone PIndexDataBlock list exists anywhere in the archive, all 39,497 index blocks are
+  embedded in segments. 5,016 PDynamicDataBlock objects are not segment data.
+- Textures: 44,365 decode, 300,252 subresources, 9,562,557,912 texel bytes. 2D DXT5 29,452, DXT1
+  13,404, ARGB8 1,062, DXT3 335, L8 2, cube DXT1 107, DXT5 3. 278 are not a power of two, 6 block
+  compressed ones are not a multiple of 4 (for example a 1x256 DXT5 under help_). Every level's size
+  agrees with the DXGI layout and the chain ends exactly at the end of the file.
+- bsil03 as one map: 140 .dds.phyre (tex 66, fp 42, texswap 32), 1,267 levels, 10,900,016 bytes,
+  and the model cluster imports 65 textures. The import id "PS3Data/<dir>/<name>.dds" maps to
+  "ffx_data/gamedata/ps3data/<dir>/d3d11/<name>.dds.phyre" lowercased. That mapping was read off
+  the data, the resolver in FFX.exe was not traced.
+
+### 15.7 Corrections
+
+- Section 9 says each PIndexDataBlock object is a 60 byte file class PIndexDataBlock. No such list
+  ships. The 60 byte PIndexDataBlockD3D11 lives inside PMeshSegmentD3D11 at +48, so its
+  m_offsetInIndexBuffer and m_dataSize are segment +92 and +100.
+- Section 9 says the init stubs pass "four DXGI formats". PTextureFormat__ctor stores five values,
+  +20 to +36, and +24 is the one a Texture2D is created with.
+- The 12,235 PMesh figure in Project Zanarkand's PROGRESS is low, the archive holds 12,266.
+
+### 15.8 Names proposed
+
+Applied to the IDB on 2026-10-12, all but 0x4D6C00, whose role is still uncertain.
+
+| VA | current | proposed | evidence |
+|---|---|---|---|
+| 0x55BC40 | sub_55BC40 | Phyre__PDataType__getSize | 51 entry id to byte size switch |
+| 0x4D6C00 | sub_4D6C00 | Phyre__PDataType__getComponentType | id to PType and count, low confidence on the role |
+| 0x58AB60 | sub_58AB60 | PRenderInterfaceD3D11__primitiveTopology | m_primitiveType switch, the FAN_NOT_SUPPORTED string |
+| 0x592C60 | sub_592C60 | PRenderInterfaceD3D11__drawIndexed | index format at 0x592C95, index buffer offset, DrawIndexed |
+| 0x592DE0 | sub_592DE0 | PRenderInterfaceD3D11__drawIndexedInstanced | the vtable +80 twin |
+| 0x58FC20 | sub_58FC20 | PTexture2DD3D11__createResource | D3D11_TEXTURE2D_DESC from the object and format +24 |
+| 0x590800 | sub_590800 | PTextureCubeMapD3D11__createResource | ArraySize 6, MiscFlags 4 |
+| 0x5903A0 | sub_5903A0 | PTexture3DD3D11__createResource | the 3D create, not decoded |
+| 0x5947D0 | sub_5947D0 | PRenderInterfaceD3D11__getTextureMipSkip | returns +0x1340 |
+| 0x58E000 | sub_58E000 | PRenderInterfaceD3D11__setTextureMipSkip | stores +0x1340 and reloads, fed TextureQuality |
+| 0x4C7260 | sub_4C7260 | PTextureCubeMap__setFormatAndSize | the cube twin of 0x4C40C0 in the skip path |

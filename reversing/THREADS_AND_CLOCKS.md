@@ -508,3 +508,16 @@ reproducible is R7 and R8 on the workers, and those are render only.
 - Where Phyre fills `vpx_codec_dec_cfg_t.threads` (T12).
 - The identity of the 1 Hz library thread `sub_947E30` (T13).
 - Whether any hold seconds reader of I2 decides anything (the `INPUT_LAYER.md` hold readers).
+
+## Correction 2026-10-13 (T7)
+
+T7 says the AsyncLoadManager request objects "are completed in place, and the step thread polls".
+That holds for the boot pass and for the character pending record, and is wrong in general. Both
+request classes run their body and their callback on the worker thread, and several of those
+callbacks write state the step thread decides on: `dword_112CA68` (the battle map load pending
+flag, cleared by `sub_782FD0` from the last map cluster callback `sub_65A6C0`, after which
+`FFX_Btl_StepSubPhase` case 34 rolls the ambush), gfx +4500/+4501 in
+`FFX_Gfx_LoadMapAssetHeader`, the magic texture flags gfx +36 and +96[], and the magic DLL exports
+in `MagicFile__onDllLoaded`. Only ROM reads through asset loader slot 0 marshal their callback
+back to the step thread (`FFX_AsyncLoad_DispatchCompletions 0x6427F0`). Full list in
+`ASYNC_LOAD_REQUESTS.md`. Verified in Hex-Rays.

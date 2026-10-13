@@ -633,3 +633,24 @@ The SKIPPING A MOVIE block said setting `g_ffxFmvSkipRequested` was a usable one
 `FFX_Fmv_StepPresentation` takes its stop branch on it. Wrong, section 4. Corrected in the header, in
 `RequestFmvSkip`, and in two IDB comments. It is listed here because the next person to read that header
 may have read the old version.
+
+## Correction 2026-10-13
+
+Found while writing VISUAL_CENSUS.md (PROGRESS 1.5.13). Each item was checked in the binary.
+
+- **Section 4, "mgr+1764 is PlaybackComplete, which is 0 for the whole of normal playback".** Wrong.
+  `FFX_Fmv_StepPresentation 0x6D7680` takes `lea ebx,[edi+6E4h]` at 0x6D769E and stores 1 through it
+  at 0x6D7775 after every successful frame upload, and the render-thread job `sub_6DAE00` does the
+  same for videos 46, 72 and 32. So the byte means "a frame has been shown", it is 1 from the first
+  frame on, and the third term of the keep-presenting condition is evaluated during normal playback.
+  The conclusions this section builds on the old reading (that `g_ffxFmvSkipRequested` alone never
+  reaches the stop branch, and what `FFX_Fmv_PlaybackFinished` returns mid-movie) need re-checking
+  against this. Writing the whole field set, as the mod does, is unaffected.
+- **Section 2, "nothing simulated reads any of it".** Wrong. `FFX_Fmv_ApplyMovieCamera 0x76EDC0`
+  runs in the step, reads the frame index through `sub_6410D0`, drives `FFX_Came_SetMatrixOverride`
+  from the movie's camera keyframes, and calls `FFX_SetMovieScreenMode(0)` when the index runs out.
+  That flag gates the magic overlay step and `FFX_RcBg_Step`. For videos 46, 72 and 32 the index is
+  written on the Phyre render thread (`sub_6DAE00`, queued by `sub_5B5880`).
+- **Section 2, the pacing.** The shown frame is popped by `sub_A284A0`, once per
+  `FFX_Fmv_StepPresentation` call, which is once per `FFX_MainStep`. The decode thread fills a queue
+  and can stall the step's consumption, but it does not choose the frame.

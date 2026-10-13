@@ -436,3 +436,40 @@ the one-shot callbacks. The first render is the only faithful one.
 - Submit mode 3 is not routed by `sub_6A52F0`. Either it is dropped or a subclass handles it.
 - The 2D list record layout.
 - The magic id sets in `sub_6721B0` beyond the ones listed in 3.3.
+
+## Correction 2026-10-13
+
+Found while writing VISUAL_CENSUS.md (PROGRESS 1.5.13). Each item was checked in the binary.
+
+- **Section 6, phase runner table: 0x2 and 0x4 are swapped.** `sub_6ADAD0` tests `flags & 2` and
+  `sub_6AD4E0` tests `flags & 4` (`test byte ptr [eax+0Ch], 2` and `4`). Both run from
+  `FFX_Frame_UpdateBoostersAndOverlays`, 0x2 first.
+- **Section 2, kind 44 "no helper found".** The appender is `sub_5B5880` (ecx = the PRenderer at
+  app+0x124). `FFX_Fmv_StepPresentation` uses it to queue `sub_6DAE00` for videos 46, 72 and 32.
+  A helper agent also names `sub_5B5940` as the appender Iggy uses, not re-checked.
+- **Section 11 open item, cluster contents.** The guess "map in +124, characters in +172" is
+  reversed. `sub_65CBF0` puts the map's section 1 scene into list +0xAC (172) at slot +0x10D4 and the
+  section 0 rcBg scene into list +0x8C (140) at slot +0x1128. List +124 (0x7C) holds the embedded
+  clusters gfx+0x11E4 (character mesh instances) and gfx+0x28C4, added by `sub_657A50` at 0x657AAE
+  and 0x657ABD.
+- **Section 5, mesh groups** are character instances (ChrInstance = CHR+0x830) pushed by
+  `sub_63A010` -> `sub_656590` from `FFX_Ch_StepAll` at 0x82F9ED, and skipped when
+  `g_ffxIsCatchUpStepRender` is set (0x82F9DE). They are not map pieces.
+- **Section 3.5, "FFX_Gfx_ResetDrawItemQueues runs twice per FFX_MainStep".** The call at 0x820C98 is
+  on the path taken when `g_ffxMenuSysRunning` is set at the top of the step, and that path skips the
+  gameplay call at 0x820F64. So it runs twice only on the step where the menu closes, once otherwise.
+- **Section 8, which 2D set the render reads.** `FFX_DynDrawList_SwapFrameSets 0x642320` is called at
+  0x820ED7 (`FFX_MainStep`) and 0x8A9DBD (`FFX_MenuSys_StepFrame`) on non-catch-up steps before any
+  append, so the render reads the set the latest non-catch-up step wrote.
+
+## Correction 2026-10-13 (dynamic meshes, PROGRESS 1.5.8)
+
+Found while writing DYNAMIC_MESHES.md. Checked in the binary.
+
+- **Section 7, "Mode 3 falls through and is not queued anywhere I found", and the section 11 open
+  item.** Mode 3 is the guide map. `sub_6414F0` (`FFX_Vfx_SubmitModelMode(key, 3)`, called only by
+  `sub_928020` on the `FFX_Field_DrawGuideMap` path) submits keys whose object is a
+  `GuildMapDynamicGeometry`. `FFX_Vfx_SubmitModelMode` calls vf02 virtually, and the GuildMap vf02
+  `0x6A5070` ignores the mode and appends the mesh instance to gfx+0x386C with `sub_656A00`. So
+  `sub_6A52F0` is only the VFX override of vf02, and the key registry `dword_CCCA6C` holds both
+  classes. The +0x386C list is drawn by `sub_650340` at 0x66AC18.

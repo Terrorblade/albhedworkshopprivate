@@ -256,7 +256,9 @@ entry_0_18:
 - **The text codec above `0x89`.** Only the ranges verified by diffing the embedded US table against
   `new_uspc` are decoded: `0x3A` space, `0x3B` `.`, `0x41` apostrophe, `0x4F` `?`, `0x50-0x69` A-Z,
   `0x70-0x89` a-z. Everything else prints as `{XX}`. Aligning a file containing digits and punctuation,
-  or finding the glyph order table in the FTCX block, would complete it.
+  or finding the glyph order table in the FTCX block, would complete it. Answered 2026-10-13: the
+  codec is the Latin glyph table in TEXT_RENDERING.md section 2.3 (0x8A..0x8D are `{ | } ~`), and
+  the FTCX block holds widths only, no order table.
 - **Opcodes `0x79` and `0x7A`.** `0x79` is used 1,566 times, so `sub_870D30` and `sub_86FAB0` are worth
   decompiling.
 - **Exact table sizes for libraries 7 and 11.** Usage bounds them below (235, 145) and the next `.data`

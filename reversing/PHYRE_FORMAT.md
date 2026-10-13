@@ -685,3 +685,37 @@ Applied to the IDB on 2026-10-12, all but 0x4D6C00, whose role is still uncertai
 | 0x5947D0 | sub_5947D0 | PRenderInterfaceD3D11__getTextureMipSkip | returns +0x1340 |
 | 0x58E000 | sub_58E000 | PRenderInterfaceD3D11__setTextureMipSkip | stores +0x1340 and reloads, fed TextureQuality |
 | 0x4C7260 | sub_4C7260 | PTextureCubeMap__setFormatAndSize | the cube twin of 0x4C40C0 in the skip path |
+
+## 16. Raw offset fixups, scene objects and fonts (2026-10-13)
+
+Project Zanarkand 5.2 and 5.6. The full write up is SCENE_OBJECTS.md, this section only records what
+changes the format notes above.
+
+- Correction: a raw offset fixup (dword 0 bit 31) is not the slot. `PPackedClass__findMemberAtRawOffset
+  0x47D3E0` adds each class's packed dword 5 (layout word 1) and takes the member covering the sum,
+  class by class along the chain, so PNode's 100,251 name fixups (raw 76) patch m_name at 80. The
+  camera names (raw 204) still land at 204 because the PCamera class that owns m_name has layout 0.
+  Every class with a zero layout, which is every mesh, material and texture class, is unaffected.
+  Section 8 and `slot_of` / `Cluster::SlotOf` treat the raw value as the slot. Verified, static and data.
+- PWorldMatrix m_matrix is a PMatrix4x3 stored as `[c1 c0.x | c2 c0.y | c3 c0.z]` (three floats of a
+  column, then one element of column 0). `PMatrix4x3__toMatrix4 0x451080`. Verified, static and data.
+- Correction 2026-10-13 (vptr shift): a member's table offset is within an object of the class that
+  owns it. In an object of a derived class it moves by the derived class's layout word 1 minus the
+  owner's. Layout word 1 counts the bytes a vptr puts in front of a base that has none. PCamera is a
+  plain class (layout 0, 332 bytes) and PCameraProjection adds a vptr (layout 4, 340 bytes, m_aspect
+  at 336), so in every camera object the PCamera subobject starts at +4: m_localToWorldMatrix +180,
+  m_nearPlane +184, m_farPlane +188, m_name +208 (`FFX_Gfx_FindGlobalCamera2 0x6519F0` reads the
+  name there, checked in IDA), the fog members +212 on. A raw offset counts no vptr, so the slot is
+  the raw offset plus the list class's layout word 1: camera names at raw 204 patch +208, not +204
+  as the note above said. PCamera inside a camera is the only base this moves in the shipped data
+  (scanned over a map, a character and an effect cluster). The near and far planes read before this
+  were a zero pad and the real near. Found by the 6.3.2 map render agent, rule applied in
+  `Namespace::ObjectOffset` (Zanarkand Cluster.h) and `Namespace.object_offset` (tools/phyre.py).
+- Every stored node world in the archive (14,625) equals, bit for bit, the local matrices composed up
+  the parent chain the way `PNode__composeWorldMatrix 0x506660` does it. The loader never recomputes it.
+- No cluster holds a PWorld, PLight or PSpriteCollection object.
+- A map's model cluster is changed after load by `FFX_Gfx_AdoptMapCluster 0x65AF60`: every mesh
+  instance world is multiplied by diag(-2.5, -2.5, 1) then translate(-256, -224, 0) on a field map, or
+  by diag(10, 10, 10) on a battle map, where the battle path also scales camera translations by 10.
+- The one PBitmapFont (tuffy.fgen.phyre) is the debug text font. The menu font is FFX's font 0x3C00,
+  DXT5 page textures under menu_us/base_ftc (menu/base_ftc for Japanese text) plus an FTCX width table.

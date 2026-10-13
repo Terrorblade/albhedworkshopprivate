@@ -762,3 +762,22 @@ battle animations and camera keep running while the CTB waits.
   `FFX_BtlMenu_BuildStagedCommand`) and that it is capped at 20 entries, but not the function
   that fills `g_ffxBtlMenuTargetCandMasks` with the per-ability target scopes. That is the piece
   you would need if you ever wanted to validate an incoming target mask rather than trust it.
+
+---
+
+## Correction 2026-10-13 (statuses and the CTB tick, from BATTLE_CTB_AND_STATUS.md)
+
+- `+0x616` bit 0x4000 is **Doom**, not confuse. `sub_799CD0` is the doom countdown: it counts
+  `+0x5C8` down once per own turn and at 0 commits the self-targeted id 0x3120, so 0x3120 is the
+  doom command, not "the confusion self attack". Confusion is status-1 `+0x606` bit 0x0100, which
+  `FFX_Btl_SendMenu` sends to `sub_799AC0(.., 1)`, and 0x0200 is Berserk. The ability data names
+  them: "Doom" carries status-2 0x4000, monster "Berserk" carries status index 9 = bit 0x0200.
+- `+0x606` value 0x0004 is **Petrify**, not "escaped", and `+0xDCE` is a mirror of that bit
+  rewritten by `FFX_Btl_ApplyPendingEffects`.
+- `+0x65D` is the base `3 * tick`, not a general reload value. `FFX_Btl_CtbTick` reloads from it
+  only for a unit whose `+0xDD6` (takes turns) is 0. A normal unit that reaches 0 stays at 0 and
+  gets `+0xDE8` (rank) reset to 3.
+- `g_ffxBtlDbgCtbSameOrder` does not clamp the decrement to 1. It sets every counter above 1
+  straight to 1, so everyone arrives at 0 together and acts in sort-key order.
+- `sub_78F000` (listed as unknown) is settled: `unit + 0x10000` for monster slots 20..27, else
+  `unit + ((255 - agility) << 8)`. No RNG, no non-determinism.

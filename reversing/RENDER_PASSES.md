@@ -149,3 +149,16 @@ matching the first.
 - The per-viewport vtbl+0xC call before render.
 - How far the main thread runs ahead of the render thread (renderThread+0x164 and renderer+0x44).
 - Which magic ids and events turn on each optional post effect, beyond the ones named above.
+
+## Correction 2026-10-13
+
+Found while writing VISUAL_CENSUS.md (PROGRESS 1.5.13). Each item was checked in the binary.
+
+- **Cluster contents (section 3 table and the open item).** "Map in +124 and characters in +172" is
+  reversed. +172 is the map's section 1 scene (`sub_65CBF0`, list +0xAC, slot +0x10D4). +124 holds
+  the character mesh instance cluster gfx+0x11E4 and gfx+0x28C4 (added by `sub_657A50` at 0x657AAE
+  and 0x657ABD). +140 is the section 0 rcBg scene (slot +0x1128). See DISPLAY_LIST.md's correction of
+  the same date.
+- **Prologue, "sub_6542B0 the shadow map pass".** `sub_6542B0` draws nothing. It only refreshes the
+  MySMScaleBias and MySMScaleBias2 material constants from the shadow map size, and only when a dirty
+  flag in `sub_6D2390()` is set.

@@ -204,10 +204,11 @@ namespace ffx
 	// Are the checkpoint words +0xB8 and +0xBA currently stale.
 	//
 	// Entering the title screen raises a latch that suppresses the checkpoint and history
-	// write for the next two map entries. So just after leaving a title screen the
-	// checkpoint names where the save FILE was, not where the player is. Anything that
-	// resumes from the checkpoint will land in the wrong place while this is true, which
-	// is precisely the window a co-op join happens in.
+	// write for the first map entered after it, the second one clears the latch and writes
+	// (maybe_FFX_Scene_Init 0x88E070, the count compare at 0x88E224). So just after leaving
+	// a title screen the checkpoint names where the save FILE was, not where the player is.
+	// Anything that resumes from the checkpoint will land in the wrong place while this is
+	// true, which is precisely the window a co-op join happens in.
 	bool CheckpointIsStale();
 
 	// How many simulation steps to wait before the load actually happens. The warp path

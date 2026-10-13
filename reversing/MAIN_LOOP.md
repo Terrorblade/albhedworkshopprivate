@@ -655,3 +655,12 @@ the FMV path.
 - **Where `maybe_FFX_Player__getTurboFlag` comes from.** It is OR-ed into the sub-step count, so the
   inner loop can run more than the stored number of times.
 - **The last hop of the vsync chain**, from the byte `sub_58E170` stores to the actual swap interval.
+
+## Correction 2026-10-13 (motion clock scaling)
+
+Section 4 says `FFX_Mot_AdvanceFrame` at `0x838DF3` multiplies by `g_ffxStepScale88`. It only does so
+when the CHR has `m_flags1` bit `0x100000` **and** `byte_12FBC34` is non-zero (`sub_8205A0`, printed
+by the debug window as `"KeepSp:%d"`, set by battle start and step, event jump and script `Sg_034`).
+Otherwise the motion delta is the plain integer
+`m_frameRateScale * ((m_speedMulA * m_playSpeed) >> 8) / 7680`. Still integer and deterministic.
+Details in `CHARACTER_MOTION.md` section 3.7.

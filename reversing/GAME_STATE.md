@@ -596,3 +596,15 @@ not accept a `0x66` prefix. The address is correct but the check would reject it
 the plugin. It is in the address list, which only bounds checks, and the comment in
 `addresses\GameState.h` says so at the declaration. Widening `LooksLikePrologue` to accept `0x66`
 would also be a reasonable fix, but that is a shared file and not mine to change.
+
+---
+
+**Correction, 2026-10-13** (BATTLE_START_AND_END.md 3.3 and 4.1). Two notes on the above.
+
+- `g_ffxTreasureStaging 0x2310EA0` is also the battle spoils buffer. Every kill pays gil, AP, items
+  and equipment into it, and the battle results screen commits it. It is not cleared at battle
+  start, so a battle that skips the results screen leaves its spoils for the next one. [V]
+- `FFX_Btl_CommitPartyToField` runs inside `FFX_Btl_CommitActorsToSave 0x785FC0`, right after
+  `sub_7AEEC0`, which restores a party arrangement a script pushed with `sub_7ADF90` (flag
+  `0x112C9E7`). So a party change made inside battle survives into the field only when no script
+  pushed one. [V]

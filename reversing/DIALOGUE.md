@@ -423,6 +423,10 @@ replicates with the script. It is driven once per simulation step out of `FFX_Ma
    glyph advance (0.73 vs 0.65) in `FFX_MesWin_MeasureTokenRun`. Its only writer is `sub_8AD900`
    0x8AD900, and that function **derives it from the language**: 1 for 2 fr, 3 sp, 4 de, 5 it and
    18, 0 for 0 jp and 1 en. So it is not an independent graphics option, it rides on the language.
+   Correction 2026-10-13 (TEXT_RENDERING.md section 10): `FFX_MesWin_MeasureTokenRun` does not
+   read the font mode for the advance. 0.73 and 0.65 are the 0x0B button icon scales, picked by
+   the style argument (1 or 3 against the rest). The glyph advance there is
+   `FFX_MesWin_MeasureGlyph 0x8B9330` at 0.78 or the font scale.
 3. **The option count itself** comes out of the localised message table, so a language with a
    different option count clamps the default cursor differently.
 

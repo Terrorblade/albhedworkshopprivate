@@ -282,3 +282,31 @@ geometry.
   probably authoring noise, all in large meshes, but could be deliberate one-way doors.
 - **7 maps have sections but no walkmesh** (`nagi05_b`, `omeg00_a`, `omeg01_a`, `sfia00_a`, `genk07`,
   `test11`, `titl01`). Several of those names look like test or title screens.
+
+## Correction 2026-10-13
+
+Found while writing `MAP_SECTIONS.md` (PROGRESS 1.7.10). Each item was checked in the binary or
+against all 491 shipped containers with `tools/mapfile.py census`.
+
+- **MAP1 header `+0x04`, "zero in all 491 files".** The dword at `+4` is 1 in 49 containers (48
+  field maps and `bsil03_a`) and it is read: `sub_908DD0` returns it, and `sub_871E50` copies bit 0
+  into save data byte +41 every field step. It is an indoor flag, see `MAP_SECTIONS.md` section 4.
+  Only `+8` and `+12` are zero everywhere and unread.
+- **Section 1 magic.** The first dword is `0x00214365` (`sub_90F900` compares against 2179941), not
+  `0x2140A5`. After the 64 byte header the records are not fixed 64 byte records. Each is a 64 byte
+  header (`+0` type, `+4` payload size) followed by its payload. One shipped section, `mihn05_a`, has
+  version `0x100` and is refused by `sub_90F8E0`.
+- **Section 10, "float6 records from +32".** The records are 80 bytes (`sub_72A7F0` advances by 80),
+  with twelve floats at +0, four more floats, a u16 effect group at +68 and a byte at +74. Section 10
+  is the field particle set, the same format as the loose `f_particle/m%03d.pdt`.
+- **Section 9, "always a single flat 1000 x 1000 two-triangle plane in all 38 maps".** True for 37.
+  `lmyt01` has a 259 triangle zone 7 walkmesh.
+- **"FFX_Map_LoadMapAsync ... the normal path".** It has one caller, `FFX_Btl_StepSubPhase`, and
+  loads asset group 26, the battle maps. Field maps load from asset group 19 through `sub_908630`
+  (the "MAPREG" task `sub_861650`), `sub_908600` (back from battle) and `sub_9085D0` (sync).
+- **Sections 11 and 12 as "background render data".** Both go through `rcbgMain`, but section 11 is
+  the guide map (minimap) model, a stream of `YNGM` chunks, and section 12 is the particle textures
+  for section 10, a stream of `YNFT` chunks. Only section 0 is the pre-rendered background.
+
+`tools/mapfile.py`'s `MAP1_SECTION_ROLES` still prints the old section 1 magic and the old section 10
+description in the `sections` output. It is left unchanged because another port reads that output.

@@ -1246,3 +1246,15 @@ is keyed by.
 For 13.6: `EncounterFieldAssetIndex`, `EncounterFieldPath`, `EncounterMonstersAt` and
 `LiveEncounterMonsters`, plus `ffx::SetBattleMonsterNames(true)` to put the monster names into the
 picker labels so the list can be filtered by typing a monster.
+
+---
+
+## Correction 2026-10-13 (status names, from BATTLE_CTB_AND_STATUS.md)
+
+- `+0x616` bit 0x0100, the non-HP death cause in section 2.3, is **Eject**, not Death. Bribe success
+  (`sub_78BDD0`) and a petrify shatter (`sub_78B4E0`) set it, and death by HP is status-1 `+0x606`
+  bit 0x0001. The inferred line saying it is the status FFX calls Death is wrong.
+- `+0x616` bit 0x4000 is **Doom**, not confuse. Confusion is `+0x606` bit 0x0100.
+- `+0x606` 0x0004 "removed from the field" is **Petrify**.
+- Full layouts of both words and the 13 counters are in BATTLE_CTB_AND_STATUS.md section 2, named
+  from the shipped ability and item data.

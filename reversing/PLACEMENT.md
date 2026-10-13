@@ -799,3 +799,14 @@ ATEL context offsets: `+0x02` bit `0x10` the dead placement latch, `+0x0A` bound
   submission path for it, so treat that as unexamined rather than clear.
 * **Whether `FFX_Ch_WalkmeshFindTri`'s cost is acceptable at the moment of a map load.** It is a
   linear scan with no index and the shipped triangle counts are not something I measured.
+
+## Correction 2026-10-13 (velocity after collision)
+
+Section 8 says velocity cannot survive a frame boundary. `FFX_Ch_ResolveCollisionsAll` runs up to two
+rounds, and a push computed by `FFX_Ch_SeparatePair` in the second round is written into
+`m_velX`/`m_velZ` after the last integrate, so it is still there when the function returns. It never
+moves anything, because pass 1 of the next `FFX_Ch_UpdateMotionAll` overwrites both fields before the
+next integrate, so the advice in section 8 stands. Only a reader between the two would see it. Also,
+the open question at the end about the slide loop with every neighbour blocked: after four blocked
+tests `FFX_Ch_WalkmeshMove` returns without writing position or ground state, as section 4 says.
+Details in `CHARACTER_MOTION.md` sections 3.5 and 4.4.

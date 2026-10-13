@@ -276,3 +276,74 @@ repacked for PParameterBuffer at load, from the file and runtime class sizes bei
 | sub_4EF3F0 | PEffect__buildContextKey | one virtual call per m_contextSwitches entry fills the key |
 | sub_4EEA10 | PNodeContext__compare | count first, then value by value |
 | sub_44A010 | PArray_PUInt8__resize | allocates the new size, frees the old storage |
+
+## 10. The scene and variant frequencies, and a whole map drawn (2026-10-13)
+
+Project Zanarkand's tests/gfx MapRenderer now fills cb0 from all four frequencies through the copy in
+section 4 and draws bsil01 (Besaid beach and port) through the shipped shaders. What that needed:
+
+**Scene frequency.** `sub_4FDEC0` (proposed PSceneWideParameters__getBuffer, called from
+PRenderer__captureDrawBuffers and from `sub_5B86D0`) switches on each scene definition's type over
+the 30 entry static table at 0xB23BC8 (name, type, data type, filled by `sub_4FD9E0`, proposed
+PSceneWideParameters__initialize). The values come from the scene context (app+80, held at
+gfx+0xCC): GlobalAmbientColor ctx+0, FogColor +16, FogNear +32, FogFar +36, FogCurve +40, FogLimit
++44, BGColor +48, GlobalTime +52, ViewProjection2 +64. ScreenWidthHeight is dword_C95100 and
+dword_C95104. FFX_Gfx_FinishMapLoad 0x65B8A0 fills the context from the map's GlobalCamera
+(FFX_Gfx_FindGlobalCamera 0x6518C0, stored at gfx+0x4F8):
+
+| scene value | GlobalCamera bytes | writer |
+|---|---|---|
+| FogColor | +212..+220 | `sub_66EE70` (proposed FFX_Gfx_ApplyGlobalCameraFog) |
+| FogNear, FogFar, FogCurve | +228, +232, +236 | same |
+| FogLimit | +240 divided by 255 | same |
+| BGColor, and the scene clear (alpha 1) | +244..+252 | same, also copied to gfx+68912 |
+| GlobalAmbientColor | +192..+200, only with a PLight or the character light flag, else 0 | `sub_651DE0` (proposed FFX_Gfx_ApplyGlobalCameraAmbient) |
+| glow and DOF, ctx+128..152 | +260..+284 | `sub_66F140` (proposed FFX_Gfx_ApplyGlobalCameraPostParams) |
+
+With no camera the fog defaults are colour (0.28, 0.35, 0.6), near 65536, far 65537, limit 1, curve
+1. The PCamera members in the file sit 4 bytes past the offsets the member table states (near +184,
+far +188, the reflected base is the object plus its vptr). PCameraProjection's m_aspect +336 and
+m_FOV +340 are where the table says. bsil01's GlobalCamera: fog (0.453, 0.58, 0.776), near 62, far
+9022, curve 0.8, limit 38, background (0.3059, 0.3569, 0.5373), ambient 0.
+
+Over every program bsil01's materials reach, each scene name sits at one scene buffer offset:
+ViewProjection2 +16, ViewProjection +80, ViewInverse +208, View +272, Projection +336, EyePosition
++480, BGColor +512, FogColor +524, GlobalAmbientColor +536, GlobalTime +548, ViewportWidthHeight +560,
+cameraNearFar +568, FogLimit +576, FogCurve +580, FogFar +584, FogNear +588, cameraFarMinusNear +604,
+cameraNearTimesFar +608, screenWidthHeightInv +8. No other scene name is read.
+
+**Variant frequency.** PRenderer__captureUntweakableBuffer 0x5B7FE0: 130 World (the instance world),
+131 WorldView (view x World), 132 WorldViewProjection ((projection x view) x World), 133 WorldInverse,
+134 WorldViewInverse (WorldInverse x ViewInverse), 143 BoneTransforms. The numbering is the SDK's.
+
+**Instance frequency and lights.** No bsil01 program has an instance location. PContextSwitchLights
+vf02 0x4D4140 takes the lights from scene context +156/+160, which `sub_651DE0` fills from the
+cluster PLights, and no map ships one, so a map draws in lighting context 0 (inferred, statically).
+
+**Samplers.** PSamplerStateD3D11__createState 0x595BF0 starts from `sub_583100` (the
+CD3D11_SAMPLER_DESC defaults, MinLOD -FLT_MAX, MaxLOD FLT_MAX), then filter from
+PSamplerStateD3D11__translateFilter (min 0/2 -> 0 or 4, 1/3 -> 16 or 20, 4 -> 1 or 5, 5 -> 17 or 21,
+the second when mag is nonzero, ANISOTROPIC when g_ffxAnisotropyLevel > 1, | 0x80 for m_flags 0x40),
+ComparisonFunc LESS_EQUAL when m_flags 0x40 else NEVER, MaxAnisotropy truncated from +12, the border
+colour bytes +16..+19 over 255. g_ffxAnisotropyLevel starts at 1.0 and `sub_58DE30` sets it from
+settings+0x2C in Phyre__PApplication__frameTick.
+
+**Pass types.** At msaa 0 the renderer asks for OpaqueNoMSAA and TransparentNoMSAA. bsil01: 62
+instances, 170 segments, 143 drawn opaque, 26 transparent, 1 whose variant only has postOpaque and
+postTransparent.
+
+| address | proposed name |
+|---|---|
+| sub_4FDEC0 | PSceneWideParameters__getBuffer |
+| sub_4FD9E0 | PSceneWideParameters__initialize |
+| sub_5A0600 | PSceneWideParameters__layout |
+| sub_5B86D0 | PRenderer__getSceneWideBuffer |
+| sub_66EE70 | FFX_Gfx_ApplyGlobalCameraFog |
+| sub_651DE0 | FFX_Gfx_ApplyGlobalCameraAmbient |
+| sub_66F140 | FFX_Gfx_ApplyGlobalCameraPostParams |
+| sub_66EB20 | FFX_Gfx_ApplyCharacterLights |
+| sub_6A8F80 | FFX_ChrLight_Initialize |
+| sub_6A9AD0 | FFX_ChrLight_IsFourLightSet |
+| sub_583100 | D3D11SamplerDesc__setDefaults |
+| sub_58DE30 | PRenderInterfaceD3D11__setAnisotropyLevel |
+| 0x4D4140 | PContextSwitchLights__getContextSwitchesForInstance |

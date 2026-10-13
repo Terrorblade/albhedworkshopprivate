@@ -241,6 +241,12 @@ reference `g_ffxAtelCtxArray`, and by a byte scan for `or ..., 80h`):
 * `FFX_Return_To_Title 0x46DA10` - sets the bit on **context 0 specifically**, then warps to
   `(23, 0)`.
 
+Correction 2026-10-13 (`MAP_TRANSITIONS.md`): there is a third setter the `or 80h` scan missed
+because it is a word store. `FFX_Atel_ResetContext` (RVA 0x46EE10, IDA VA 0x86EE10) stores 0x9880
+to context word 0 at VA 0x86EF59, which sets the bit, and `maybe_FFX_Map_SetupChars` runs it for
+context 0 on every map load. So the gate is re-armed by each map load as well as by the two
+setters above.
+
 So the game itself arms the bit immediately before warping. **A plugin should do the same:**
 
 ```c
@@ -1439,3 +1445,13 @@ because a brand new path misses the archive anyway and 12.2 then reads it off di
   single process-global 255-byte static, so it cannot be thread safe, which is strong evidence it is
   game-thread only, but I did not enumerate the call sites by thread. Do the slot 12 store from a
   game-thread hook regardless.
+
+## Correction 2026-10-13 (12.1, the substitution slot the game uses)
+
+12.1 says the game itself takes one substitution slot through
+`FFX_Ev_SetLocalizedEventDirForMode 0x479F00` (RVA). In retail it takes none. Both reachable
+callers, in `FFX_Ev_LoadEventPackage` at VA 0x872FB2 and the `sub_8799B0` / `sub_879A70` pair at
+VA 0x87331C, sit under `if (sub_887D10())`, and `sub_887D10` returns 0. The other three call sites
+of `sub_8795B0` (VA 0x8795A1, 0x879737, 0x8798AC) are in code nothing references. So all 16 slots
+are free for the life of the process, and the 15 slot cap advice is still safe. See
+`ASSET_PATHS.md` 7.2. Verified in Hex-Rays.

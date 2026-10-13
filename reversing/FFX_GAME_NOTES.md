@@ -94,7 +94,9 @@ Two things a mod has to respect:
    The pool itself is freed and reallocated on every map transition, so nothing survives that.
 2. `FFX_Ch_AllocChrArray 0x825670` allocates `2 * count * 0x880`. The upper half is **not** spare
    capacity - it is the shadow area `FFX_Ch_CopyToScratchSlot 0x828B30` uses for map save and
-   restore. The sanctioned headroom is the `+8` that `maybe_FFX_Map_SetupChars 0x875510` adds when
+   restore (correction 2026-10-13, `MAP_TRANSITIONS.md` section 4: the save is the battle round
+   trip and Save 36 through `FFX_Field_FreezeActorsToScratch 0x866240`, not a map save, and the
+   slots are freed with the pool on every map change). The sanctioned headroom is the `+8` that `maybe_FFX_Map_SetupChars 0x875510` adds when
    it sizes the pool (floor 36).
 
 CHRDATA is a fixed table, not a heap object: 40 entries of 300 bytes at
@@ -631,6 +633,15 @@ DLL opening a second screen is within the shipped design.
 Two shipped maps use it: `FFX_Came_ActivateScreen` special-cases screen 1 on map ids 152 and 601, and
 routes a 256-wide sub-screen's view matrix into a second gfx-context camera slot
 (`FFX_Gfx_SetCameraWorldMatrix2 0x638AA0`).
+
+**Correction 2026-10-13.** The paragraph above is wrong about map ids. 152 and 601 are magic ids:
+both `FFX_Came_ActivateScreen 0x7BC110` and `FFX_Came_PushViewToRenderCtx 0x7BC980` test
+`MagicFile__getMagicId() == 152 || == 601` together with screen 1 and its enable byte
+`byte_1137280`. They are also a different path from the 256-wide one. Magic 152 and 601 send the
+screen 1 view to camera slot 1 (`sub_639B30`, gfx+0xFA3C, camera gfx+0x394, flag gfx+0xFAA1), which
+`sub_653230` renders into an offscreen target. The 256-wide screen (screen+0x88 == 256.0) turns on
+split mode and uses `FFX_Gfx_SetCameraWorldMatrix2` (gfx+0x10D94, camera gfx+0x238). Verified in
+Hex-Rays. Details in `SCREENS_AND_FADES.md` section 3.3.
 
 **The catch:** the per-screen rect is folded into the projection matrix by
 `FFX_Came_BuildProjFromScreen 0x7C3D60`, PS2 style, and **there is no scissor**. Scene geometry is

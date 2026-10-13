@@ -601,6 +601,50 @@ The real problems:
   **The fix is one detour.** The reload values are already frame counts multiplied by 1/30, so
   feeding `FFX_Pad__stepAutoRepeatMask` a step-derived time instead of `FFX_Input__getTimeSeconds`
   makes every auto-repeat in the game deterministic.
+- **The step reads a value the renderer writes (found 2026-10-13, `reversing/READBACK_CENSUS.md`).**
+  `FFX_Gfx_FadeQuadCallback 0x6AE5B0` and three other render time writers set the fade colour at screen manager +0x1238C..+0x12398, and `FFX_MainStep` reads it back through `FFX_ScreenFade_GetColor` at 0x820D4F during a load hold (`FFX_ScreenFade_GetLoadHoldMode` 1 or 2), ending and restarting the fade when alpha is not 1.0. `FFX_MainStep_IsFadeBlocking 0x81FCD0` also gates step work on fade state while
+  loading. The queued fade quads are freed before every step, so what the step sees depends on
+  whether a render ran since the last step. A peer that skipped a render (catch-up, a hitch) can
+  take a different branch from one that did. Whether it diverges in practice needs a runtime probe.
+  The fix is to make the fade colour step state: apply the queued fade's colour at the end of the
+  step that queued it, not inside the render.
+  The visual census (`reversing/VISUAL_CENSUS.md` section 15) found more of the same kind. The
+  sharpest: gfx+4501, the map scene pending byte, is cleared inside `FFX_Frame_RenderScene` and
+  read by `FFX_MainStep_IsFadeBlocking`, so after a map load gameplay steps wait until a frame
+  renders. Two peers that render at different moments can unblock on different steps. The FMV
+  frame index of videos 46, 72 and 32 is written on the render thread and read by the step's
+  movie camera, which is the same hazard during those movies.
+  Loads are the same kind of hazard from another thread (`reversing/ASYNC_LOAD_REQUESTS.md` H1 to
+  H6). The AsyncLoadManager worker runs each cluster and task callback itself, and the last battle
+  map cluster's callback clears `dword_112CA68`, which `FFX_Btl_StepSubPhase` case 34 waits on
+  before it rolls pre-emptive or ambush. Two peers with different disks start the battle, and roll,
+  on different steps. The kit fix is to hold case 34 until every peer has reported the load done and
+  release it on a host ordered step.
+  The character motion write up (`reversing/CHARACTER_MOTION.md` section 2) adds two more. The
+  joint pose depends on the local camera: `FFX_Mot_BuildJointTransforms` picks a stateful smoothing
+  composer when `0x839140` finds the character within 30 units (50 for c10) of the active camera
+  slot and the camera pitch above -0.785 (checked in IDA). The pose sets the body centre and head
+  point, and those set the collision height band (inferred end to end), so two peers with different
+  cameras could resolve a collision differently. And `FFX_Ch_UpdateRenderJob` writes CHR +0x698,
+  +0x6A8 and flags1 0x200 on a job worker while a multi step frame's next step can read them
+  (call graph checked, the race inferred). Both want a runtime check before the kit works round them.
+  The map transition write up (`reversing/MAP_TRANSITIONS.md`) adds two more disk dependent steps.
+  The steps held after a map load by `FFX_MainStep_IsFadeBlocking` still tick
+  `g_ffxGameClock60Hz` but skip `FFX_MainStep_PublishStepScale`, so the first gameplay step
+  publishes `g_ffxStepScale88` = 0x100 x (k + 1) for k held steps. `FFX_Mot_AdvanceFrame` uses it
+  for characters with flags1 0x100000 while `g_ffxMotKeepSpeed` is set, which
+  `FFX_Ch_EventjumpInit` has just set (mechanism verified, size inferred). Peers that hold for a
+  different k animate those characters by a different amount. The kit fix is to have the host
+  order the release step and publish k, or freeze the clock during the hold. And the battle return
+  restore polls `FFX_Ch_DataReadSync` once per step, so the field comes back on a disk dependent
+  step and needs the same host ordered wait as H1.
+  The battle start write up (`reversing/BATTLE_START_AND_END.md`) adds the monster file chain:
+  monster params and the CTB init (with its kind 0 stream draws) run in the last monster file's
+  completion, dispatched by `FFX_AsyncLoad_DispatchCompletions` at the head of `FFX_MainStep` on
+  whichever step the read finishes. The same host ordered release as H1 covers it, as long as the
+  kit holds the completion and not just sub phase 34. Spoils also carry over silently between
+  battles that skip the results screen, so the staging buffer at 0x2310EA0 belongs in the world
+  hash.
 
 **Blitzball is NOT on this list any more, and the old entry was wrong in every part.** It claimed
 nine wall-clock sites through `FFX_Input__getTimeSeconds 0x630C40`. That address is

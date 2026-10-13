@@ -559,3 +559,22 @@ g_boosterEncounterRate          0x008421D8   int, 0 off / 1 normal / 2 high
 `g_ffxEncDistTotal` is the single best runtime probe in this whole area. Log it once a second while
 walking and it should climb at roughly the character's speed in world units per second, which
 confirms the position cache, the gate list and the accumulator in one reading with no breakpoints.
+
+---
+
+## Correction 2026-10-13 (the pre-emptive roll, from BATTLE_CTB_AND_STATUS.md)
+
+The `record+0x4A` bit 2 test in `FFX_Btl_RollPreemptiveOrAmbush` does **not** force the pre-emptive
+outcome. It subtracts `1 + threshold` (33) from the byte roll, so with the bit set a pre-emptive
+strike needs a roll below 65 (65/256 instead of 32/256) and an ambush (roll >= 223) can no longer
+happen. Read off the disassembly at 0x78D0D8..0x78D0FB. The ability is **Initiative**: bit 0x0004 of
+the auto-ability word is Initiative in `a_ability.bin` (Sensor 0x1, First Strike 0x2, Initiative
+0x4), and the behaviour matches. That the char record byte +0x4A is that word is inferred from the
+matching bit. The roll draws stream 1 even when `0x112A923` later forces the result.
+
+---
+
+**Correction, 2026-10-13** (BATTLE_START_AND_END.md 2.2). For a normal begin (mode 0)
+`FFX_Btl_BeginBattle` sets sub phase **4**, not 5, and tail calls `FFX_Btl_StepSubPhase 0x783020`.
+Phase 4 waits for the boot task queue (the MUSIC task) to drain. Only a non zero mode enters at 5.
+`0x112A8E0` is `g_ffxBtlSubPhase` in the IDB now, the name `g_ffxBtlPhase` above is the old one. [V]

@@ -48,9 +48,10 @@ MAP1_SECTION_TABLE_OFF = 16      # FFX_Map_GetSection reads base + 4*index + 16
 # What sub_9097C0 (the MAP1 consumer, 0x9097C0) does with each index. Anything marked
 # unknown is a section nothing has told us about yet.
 MAP1_SECTION_ROLES = {
-    0:  "background render data -> sub_91AA60 -> rcbgMain 0x921D60, sets draw flag 0x4000",
-    1:  "map object / instance table -> sub_90F8E0 -> sub_90F900. Own magic, the first two "
-        "dwords are 0x2140A5 and 0x110, then 64 byte records. Not decoded here.",
+    0:  "rcBg scene set (YN chunks YNPR, YNSC, YNTM) -> FFX_RcBg_LoadYnStream 0x91AA60 -> rcbgMain "
+        "0x921D60. Its scene camera overrides the field camera (FFX_RcBg_ApplySceneCamera 0x920C00)",
+    1:  "3D map stream -> FFX_Map_MountMapStream 0x90F8E0 -> FFX_Map_ParseMapStream 0x90F900. Magic "
+        "0x214365, version 0x110 (anything else is refused), records are a 64 byte header plus payload",
     2:  "walkmesh (ffxmap.id) for zone 0",
     3:  "walkmesh (ffxmap.id) for zone 1",
     4:  "walkmesh (ffxmap.id) for zone 2",
@@ -58,12 +59,12 @@ MAP1_SECTION_ROLES = {
     6:  "walkmesh (ffxmap.id) for zone 4",
     7:  "walkmesh (ffxmap.id) for zone 5",
     8:  "walkmesh (ffxmap.id) for zone 6",
-    9:  "walkmesh (ffxmap.id) for zone 7. In all 38 maps that have it this is a single flat "
-        "1000x1000 two-triangle plane, so it is a free-move / cutscene plane, not real geometry.",
-    10: "unknown -> sub_72A7F0. u8 at +1 sizes a 8KB*n buffer, u16 at +4 is a record count, "
-        "float6 records from +32. Not collision.",
-    11: "background render data -> sub_919D30, a thunk to the same sub_91AA60 as section 0",
-    12: "background render data -> sub_919B90, also a thunk to sub_91AA60",
+    9:  "walkmesh (ffxmap.id) for zone 7. In 37 of the 38 maps that have it this is a flat 1000x1000 "
+        "two-triangle plane. lmyt01 has a real 259 triangle walkmesh here.",
+    10: "field particle set (.pdt) -> FFX_MapFx_LoadParticleSet 0x72A7F0. 32 byte header, 80 byte "
+        "placed effect records from +32. Not collision.",
+    11: "guide map (minimap) model, YNGM chunks -> FFX_RcBg_LoadGuideMapSection 0x919D30",
+    12: "particle textures for section 10, YNFT chunks -> FFX_RcBg_LoadParticleTextureSection 0x919B90",
 }
 
 # Low 7 bits of the triangle attribute dword. sub_83E4E0 is the passability test and
@@ -510,6 +511,257 @@ def cmd_verify(args, archive):
         print("no anomalies: every triangle index, neighbour link and offset checks out")
 
 
+# -----------------------------------------------------------------------------
+# The other MAP1 sections. Added 2026-10-13 for reversing/MAP_SECTIONS.md. These
+# are new functions and new subcommands only, nothing above changed.
+#
+# Names, as far as the readers in the exe show them:
+#   header +4    map flags. Bit 0 = indoor, copied into save data byte +41 every
+#                field step by sub_871E50 (via the getter sub_908DD0)
+#   section 0    rcBg scene set ("YN" chunk stream), rcbgMain 0x921D60
+#   section 1    3D map stream, magic 0x00214365 version 0x110, sub_90F900
+#   section 2..9 walkmesh for zone 0..7 (the Walkmesh class above)
+#   section 10   field particle set, the .pdt format, sub_72A7F0
+#   section 11   guide map (minimap) model, YN stream of YNGM chunks
+#   section 12   particle textures, YN stream of YNFT chunks
+#   13..27       absent in every shipped file and no code asks for them
+
+YN_TAGS = ["YNDT", "YNPR", "YNSC", "YNTX", "YNTM", "YNSM", "YNST", "YNSP", "YNTT",
+           "YNSE", "YNFT", "YNGM", "YNED"]
+
+# What rcbgMain 0x921D60 does with each tag. It looks the tag up in
+# g_ffxYnSectionTags and switches on index - 1. Tags listed as skipped hit
+# either case 6 or the default case, which logs "Bin Data: Header Error"
+# through a nullsub and moves on.
+YN_TAG_HANDLING = {
+    "YNDT": "container magic, checked once at +0",
+    "YNPR": "scene count, rcbgPre 0x921770 + rcbgLoad 0x92B390",
+    "YNSC": "one scene: layers and the camera, rcbgLoad 0x92B5E0",
+    "YNTX": "skipped (default case)",
+    "YNTM": "skipped (default case)",
+    "YNSM": "sub_92B6B0",
+    "YNST": "sub_92B6E0",
+    "YNSP": "skipped (case 6)",
+    "YNTT": "texture transfer object 0x20003, rcbgTrxTex 0x9221B0",
+    "YNSE": "skipped (default case)",
+    "YNFT": "texture transfer object 0x20006 (particle texture), sub_9220C0",
+    "YNGM": "guide map model, rcbgModel 0x9283B0 + rcbgLoad 0x92B2F0",
+    "YNED": "end of stream",
+}
+
+S1_MAGIC = 0x00214365            # sub_90F900 compares *blob == 2179941
+S1_VERSION = 0x110               # sub_90F8E0 refuses anything else
+S1_RECORD_NAMES = {
+    0: "map part (model node), sub_90EDB0",
+    1: "part mesh, sub_90EF10, 16 byte entries",
+    2: "GS image upload (PS2 only, upload is a stub on PC)",
+    3: "GS transfer packet build, sub_917050",
+    4: "environment: fog colour and range, rotation, sub_90F090",
+    5: "part animation key table, 128 byte keys",
+    6: "map animation track (light, fog, node params)",
+    7: "16 float4 table, sub_90ED10",
+    8: "part animation key table, 32 byte keys",
+}
+
+
+def walk_yn(data, off, limit):
+    """Chunks of a YN stream as (tag, chunk_offset, body_size, u16_at_10).
+    Returns (chunks, ended) where ended says whether YNED was reached.
+    Layout from rcbgMain 0x921D60: a 16 byte YNDT header, then chunks of a
+    16 byte header (tag[4], u32 count of 16 byte body units, ...) and the body."""
+    if data[off:off + 4] != b"YNDT":
+        return None, False
+    p = off + 16
+    chunks = []
+    while p + 16 <= limit:
+        tag = data[p:p + 4].decode("ascii", "replace")
+        n16 = struct.unpack_from("<I", data, p + 4)[0]
+        u10 = struct.unpack_from("<H", data, p + 10)[0]
+        chunks.append((tag, p - off, 16 * n16, u10))
+        if tag == "YNED":
+            return chunks, True
+        p += 16 + 16 * n16
+    return chunks, False
+
+
+def walk_s1(data, off, limit):
+    """Section 1 header and records, as sub_90F900 walks them.
+    Header 64 bytes: +0 magic, +4 version, +8 u32, +12 record count.
+    Record: 64 byte header (+0 type, +4 payload size), then the payload.
+    An unknown type advances by the 64 byte header only."""
+    magic, ver, h8, count = struct.unpack_from("<4I", data, off)
+    p = off + 64
+    recs = []
+    for _ in range(count):
+        if p + 64 > limit:
+            return (magic, ver, h8, count), recs, False
+        ty, size = struct.unpack_from("<2I", data, p)
+        recs.append((ty, p - off, size))
+        p += 64 + (size if ty <= 8 else 0)
+    return (magic, ver, h8, count), recs, p <= limit
+
+
+def s10_header(data, off):
+    """Section 10 (particle set) header fields, as sub_72A7F0 and sub_711FA0 read them."""
+    b0, b1, b2, b3, n_placed, n_prog, n_20, n_24, n_28, h14 = \
+        struct.unpack_from("<4B6H", data, off)
+    o16, o20, o24, o28 = struct.unpack_from("<4I", data, off + 16)
+    return dict(format=b0, bufs8k=b1, work_class=b2, b3=b3, placed=n_placed,
+                programs=n_prog, n20=n_20, n24=n_24, n28=n_28, h14=h14,
+                off16=o16, off20=o20, off24=o24, off28=o28)
+
+
+def cmd_census(args, archive):
+    entries = sorted(iter_map_entries(archive), key=lambda e: e.name)
+    present = collections.Counter()
+    sizes = collections.defaultdict(list)
+    flag_maps = collections.defaultdict(list)
+    yn_tags = collections.defaultdict(collections.Counter)
+    yn_files = collections.defaultdict(collections.Counter)
+    yn_unended = collections.Counter()
+    s1_hdr = collections.Counter()
+    s1_types = collections.Counter()
+    s1_type_files = collections.Counter()
+    s1_bad = []
+    s10_fields = collections.defaultdict(collections.Counter)
+    s10_fit = collections.Counter()
+    combos = collections.Counter()
+    s12_vs_10 = collections.Counter()
+    zone7 = []
+    for e in entries:
+        d = archive.read(e)
+        m = Map1(d, e.name)
+        key = map_key(e.name)
+        kind = "btl" if "/btlmap/" in e.name else "fld"
+        flag_maps[(kind, m.header_unknown)].append(key)
+        if not any(m.sections):
+            continue
+        combos[tuple(i for i in (0, 1, 10, 11, 12) if m.section(i))] += 1
+        for i in range(MAP1_SECTION_COUNT):
+            off = m.section(i)
+            if off is None:
+                continue
+            present[(i, kind)] += 1
+            sizes[i].append(m.section_limit(i) - off)
+        for i in (0, 11, 12):
+            off = m.section(i)
+            if off is None:
+                continue
+            chunks, ended = walk_yn(d, off, m.section_limit(i))
+            if chunks is None or not ended:
+                yn_unended[i] += 1
+            for c in chunks or []:
+                yn_tags[i][c[0]] += 1
+            for t in set(c[0] for c in chunks or []):
+                yn_files[i][t] += 1
+        if m.section(12):
+            chunks, _ = walk_yn(d, m.section(12), m.section_limit(12))
+            has_ft = any(c[0] == "YNFT" for c in chunks or [])
+            s12_vs_10[("YNFT" if has_ft else "no YNFT",
+                       "s10" if m.section(10) else "no s10")] += 1
+        off = m.section(1)
+        if off is not None:
+            hdr, recs, ok = walk_s1(d, off, m.section_limit(1))
+            s1_hdr[(hdr[0], hdr[1])] += 1
+            if hdr[0] != S1_MAGIC or hdr[1] != S1_VERSION or not ok:
+                s1_bad.append("%s magic=0x%X version=0x%X walk %s"
+                              % (key, hdr[0], hdr[1], "ok" if ok else "ran off"))
+            for r in recs:
+                s1_types[r[0]] += 1
+            for t in set(r[0] for r in recs):
+                s1_type_files[t] += 1
+        off = m.section(10)
+        if off is not None:
+            h = s10_header(d, off)
+            for k in ("format", "bufs8k", "work_class", "b3", "h14"):
+                s10_fields[k][h[k]] += 1
+            s10_fit[32 + 80 * h["placed"] <= m.section_limit(10) - off] += 1
+            s10_fields["placed"][h["placed"]] += 1
+        off = m.section(9)
+        if off is not None:
+            wm = Walkmesh.try_parse(d, off, m.section_limit(9))
+            tc = wm.groups[0]["tri_count"] if wm and wm.groups else None
+            if tc != 2:
+                zone7.append("%s (%s triangles)" % (key, tc))
+
+    print("containers: %d" % len(entries))
+    print()
+    print("MAP1 header dwords +4, +8, +12 (field / battle, value -> maps):")
+    for (kind, val), maps in sorted(flag_maps.items()):
+        shown = " ".join(maps) if val != (0, 0, 0) else "(not listed)"
+        print("  %s %-12s %3d  %s" % (kind, val, len(maps), shown))
+    print()
+    print("per section: field maps, battle maps, size min / median / max (bytes)")
+    for i in range(MAP1_SECTION_COUNT):
+        s = sorted(sizes.get(i, []))
+        if not s:
+            print("  [%2d] absent in every container" % i)
+            continue
+        print("  [%2d] fld %3d  btl %3d  %8d / %8d / %8d"
+              % (i, present[(i, "fld")], present[(i, "btl")], s[0], s[len(s) // 2], s[-1]))
+    print()
+    print("which of sections 0, 1, 10, 11, 12 occur together (non-stub containers):")
+    for c, n in combos.most_common():
+        print("  %3d  %s" % (n, c))
+    print()
+    for i in (0, 11, 12):
+        print("section %d YN chunks (chunks / files): %s" % (i, ", ".join(
+            "%s %d/%d" % (t, yn_tags[i][t], yn_files[i][t]) for t in sorted(yn_tags[i]))))
+        if yn_unended[i]:
+            print("  %d streams without YNDT or YNED" % yn_unended[i])
+    print("section 12 YNFT against section 10: %s" % sorted(s12_vs_10.items()))
+    print()
+    print("section 1 magic/version: %s" % ", ".join(
+        "0x%X/0x%X x%d" % (k[0], k[1], v) for k, v in sorted(s1_hdr.items())))
+    for b in s1_bad:
+        print("  refused or broken: " + b)
+    print("section 1 record types (records / files):")
+    for t in sorted(s1_types):
+        print("  type %d  %6d / %3d  %s" % (t, s1_types[t], s1_type_files[t],
+                                         S1_RECORD_NAMES.get(t, "unknown")))
+    print()
+    print("section 10 header:")
+    for k in ("format", "bufs8k", "work_class", "b3", "h14"):
+        print("  %-10s %s" % (k, sorted(s10_fields[k].items())))
+    pl = sorted(s10_fields["placed"].elements())
+    if pl:
+        print("  placed effects per map min / median / max: %d / %d / %d"
+              % (pl[0], pl[len(pl) // 2], pl[-1]))
+    print("  32 + 80 * placed fits in the section: %s" % sorted(s10_fit.items()))
+    print()
+    print("section 9 (zone 7) that is not the 2 triangle plane: %s"
+          % (", ".join(zone7) or "none"))
+
+
+def cmd_chunks(args, archive):
+    name, m = load(archive, args.map)
+    d = m.data
+    print(name)
+    print("header dwords +4/+8/+12: %s  (bit 0 of +4 = indoor flag)" % (m.header_unknown,))
+    for i in (0, 11, 12):
+        off = m.section(i)
+        if off is None:
+            continue
+        chunks, ended = walk_yn(d, off, m.section_limit(i))
+        print("section %d YN stream at +0x%X%s" % (i, off, "" if ended else "  (no YNED)"))
+        for tag, coff, size, u10 in chunks or []:
+            print("  +0x%06X %s body %7d  u16@10=%-4d %s"
+                  % (coff, tag, size, u10, YN_TAG_HANDLING.get(tag, "unknown tag")))
+    off = m.section(1)
+    if off is not None:
+        hdr, recs, ok = walk_s1(d, off, m.section_limit(1))
+        print("section 1 at +0x%X magic 0x%X version 0x%X +8=%d records %d%s"
+              % (off, hdr[0], hdr[1], hdr[2], hdr[3], "" if ok else "  (walk ran off)"))
+        counts = collections.Counter(r[0] for r in recs)
+        for t in sorted(counts):
+            print("  type %d x%-6d %s" % (t, counts[t], S1_RECORD_NAMES.get(t, "unknown")))
+    off = m.section(10)
+    if off is not None:
+        h = s10_header(d, off)
+        print("section 10 at +0x%X: %s" % (off, " ".join("%s=%s" % (k, h[k]) for k in (
+            "format", "bufs8k", "work_class", "placed", "programs", "n20", "n24", "n28"))))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -536,6 +788,13 @@ def main(argv=None):
 
     p = sub.add_parser("verify", help="parse every map and report anomalies")
     p.set_defaults(fn=cmd_verify)
+
+    p = sub.add_parser("census", help="archive statistics for every MAP1 section")
+    p.set_defaults(fn=cmd_census)
+
+    p = sub.add_parser("chunks", help="the non-walkmesh sections of one map")
+    p.add_argument("map")
+    p.set_defaults(fn=cmd_chunks)
 
     args = ap.parse_args(argv)
     if not getattr(args, "fn", None):

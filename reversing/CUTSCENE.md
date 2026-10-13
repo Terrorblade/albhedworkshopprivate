@@ -912,3 +912,15 @@ hook during a cutscene, not the narrow `FFX_MainStep` gate.
 - **`sub_641DA0 0x641DA0`**, which reads `g_ffxGfxCtx + 0xFAF4` and is compared against values like
   7382 and 9465 inside `FFX_StepPacing_AllowCatchUp`. It is some kind of event or scene identity and
   it is the key to that function's long list of per-scene catch-up exceptions. Not identified.
+
+## Correction 2026-10-13
+
+Found while writing VISUAL_CENSUS.md (PROGRESS 1.5.13), checked in the binary.
+
+- **Section 7.1, "playback is paced by decode speed and the wall clock".** The shown video frame
+  advances once per `FFX_MainStep`: `FFX_Fmv_StepPresentation 0x6D7680` calls `sub_A284A0`, which pops
+  exactly one decoded frame and bumps the consumed count at player+256, and the frame index is
+  derived from that count. Nothing in the consume path reads a clock. Decode speed can only stall it
+  (an empty queue consumes nothing). The FMOD audio is the wall-clock part. The table row in section
+  1 that names `PlaybackComplete` at manager+1764 is also affected, see FMV_SYNC.md's correction of
+  the same date.

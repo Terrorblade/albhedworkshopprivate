@@ -1507,3 +1507,16 @@ grid node grants are a subset, see appendix C.
 313B Extra 35                  313C Extra 36                  313D Extra 37
 313E Extra 38                  313F Extra 39
 ```
+
+---
+
+**Correction, 2026-10-13** (BATTLE_START_AND_END.md 2.5). Readers found for fields marked "no reader"
+above.
+
+- Character record `+0x37` is read by `FFX_Btl_LoadUnitParams 0x79B4F0` into actor `+0x5BA`, the
+  poison damage percent (BATTLE_CTB_AND_STATUS.md 2.2). 25 in every template row matches poison's
+  25 percent. [V] for the read, [I] for the meaning of the value.
+- Equipment entry `+0x08`, `+0x09` and `+0x0A` are read by `FFX_Btl_LoadCharRecordIntoActor
+  0x79C5F0` for both equipped entries: `+0x08` -> actor `+0x5C1`, `+0x09` -> `+0x5C7`, `+0x0A` added
+  into `+0x5D8`. What those actor fields mean is still open. A dropped piece gets them from the
+  monster reward record `+46`, `+48`, `+47`. [V]

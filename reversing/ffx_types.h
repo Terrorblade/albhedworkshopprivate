@@ -140,7 +140,7 @@ struct CHR {
   /* 0x070 */ float m_offsetY;
   /* 0x074 */ float m_offsetZ;
   unsigned __int8 _unk_78[0x4];
-  /* 0x07C */ float m_groundNormalX;   // up-normal of the walkmesh triangle under the CHR. Forced to (0,-1,0) when m_flags1 bit 0x80 ends up clear
+  /* 0x07C */ float m_groundNormalX;   // up-normal of the walkmesh triangle under the CHR. Forced to (0,-1,0) when m_flags1 bit 0x80 ends up SET (test at 0x82AA93, corrected 2026-10-13)
   /* 0x080 */ float m_groundNormalY;
   /* 0x084 */ float m_groundNormalZ;
   unsigned __int8 _unk_88[0x4];
@@ -185,7 +185,7 @@ struct CHR {
   unsigned __int8 _unk_188[0x4];
   /* 0x18C */ int m_partyIndex;   // party/character index, 255 means not a party member
   /* 0x190 */ int m_objId;   // field-object / group id, -1 when unset. A child caches its parent's in m_parentUid
-  /* 0x194 */ unsigned int m_flags1;   // 0x40 externally driven clip: FFX_Ch_UpdateMotionAll skips the locomotion selector at 0x832E8C AND FFX_Mot_AdvanceFrame skips the whole sequence VM, 0x80 up-vector override, 0x100 no body collision, 0x200 THIS CHR IS THE PLAYER (maintained by FFX_Ch_UpdateRenderJob), 0x400 turn toward m_moveDir, 0x4000 bumped this frame, 0x8000 bumped last frame, 0x10000 blend settled, 0x20000 running, 0x40000 idshade, 0x200000 needs a cloned ClassCharacter, 0x1000000 needs a skin rebuild, 0x2000000 moved, 0x4000000 idle, 0x8000000 moving, 0x20000000 above water, 0x40000000 height-aware collision, 0x80000000 free move / raw anm clip. Bits 0x07000000 are cleared every frame by FFX_Ch_ClearFlags1StepBits
+  /* 0x194 */ unsigned int m_flags1;   // 0x40 externally driven clip: FFX_Ch_UpdateMotionAll skips the locomotion selector at 0x832E8C AND FFX_Mot_AdvanceFrame skips the whole sequence VM, 0x80 up-vector override, 0x100 no body collision, 0x200 THIS CHR IS THE PLAYER (maintained by FFX_Ch_UpdateRenderJob), 0x400 turn toward m_moveDir, 0x4000 bumped this frame, 0x8000 bumped last frame, 0x10000 blend settled, 0x20000 running, 0x40000 idshade, 0x200000 needs a cloned ClassCharacter, 0x1000000 needs a skin rebuild, 0x2000000 moved, 0x4000000 idle, 0x8000000 moving, 0x20000000 head under water (posY - 8.5 > water level with +Y down, corrected 2026-10-13, CHARACTER_MOTION.md), 0x40000000 height-aware collision, 0x80000000 free move / raw anm clip. Bits 0x07000000 are cleared every frame by FFX_Ch_ClearFlags1StepBits
   /* 0x198 */ unsigned int m_flags2;   // 0x4, 0x8, 0x20 skip the render pass, 0x80, 0x200, 0x400 inside FFX_Ch_Allocate. 0xC00 exempts the CHR from FFX_Ch_MoveChrMemory
   /* 0x19C */ struct CHR * m_parent;   // set by FFX_Ch_AttachToParentBone. Children are found by scanning the array for m_parent == this
   /* 0x1A0 */ int m_parentJoint;   // joint/bone index on the parent

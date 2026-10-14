@@ -22,6 +22,13 @@ namespace workshop
 	// 0 until ReadPeHeaders has run.
 	DWORD ModuleImageSize();
 
+	// The PE header's TimeDateStamp and CheckSum, 0 until ReadPeHeaders has run. Neither
+	// is rewritten by the loader, so together with SizeOfImage they identify the build
+	// on disk. Written into anything recorded from the running game, so a reader can
+	// tell which build a recording came from without trusting a file name.
+	DWORD ModuleTimeDateStamp();
+	DWORD ModuleCheckSum();
+
 	// RVA to a live address.
 	inline void* ModuleAddress(DWORD rva)
 	{

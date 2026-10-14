@@ -46,6 +46,19 @@ namespace ffx
 
 	}
 
+	bool ReadRandStreamState(int stream, DWORD* out)
+	{
+		// The state table is a module global, so its readability cannot change after the
+		// first answer. One check, then plain reads.
+		static int verdict = 0;
+		if (verdict == 0)
+			verdict = StreamPtr() ? 1 : -1;
+		if (verdict < 0 || !out || stream < 0 || stream >= RandStreamCount)
+			return false;
+		*out = ((const DWORD*)ModuleAddress(Rva::RandStreamState))[stream];
+		return true;
+	}
+
 	bool RandomStateAvailable()
 	{
 		return StreamPtr() != nullptr && BattlePtr() != nullptr && EffectPtr() != nullptr;

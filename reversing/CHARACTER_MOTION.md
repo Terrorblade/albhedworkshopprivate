@@ -779,3 +779,594 @@ Each proven against the binary in this pass.
 9. **`MGRP_FORMAT.md` and the PROGRESS wording** put "animate" before "integrate". The clip is chosen
    before the move, but it is advanced after the clamp (section 0). Not wrong as a call list, worth
    knowing for ordering.
+
+---
+
+## 10. 2026-10-13, porting pass: the move, the slide and the step (PROGRESS 10.5, 12.2)
+
+Written while porting `FFX_Ch_WalkmeshMove`, `FFX_Ch_WalkmeshSlideAlongEdge` and the whole of
+`FFX_Ch_UpdateMotionAll` into Project Zanarkand (`src/engine/map/WalkmeshMove`, `src/engine/chr/Motion`,
+cross checked bit for bit against an independent Python port in that repo's `tools/walkmesh_query.py` and
+`tools/chr_motion.py`). Every routine below was stack traced from the disassembly in this pass. IDA was
+read only.
+
+### 10.1 FFX_Ch_WalkmeshSlideAlongEdge 0x83E180, instruction by instruction [V]
+
+This settles the open point in section 8. `p` is the start (`CHR+0x3C`), `q` the attempted point, `a` and
+`b` the two vertices `g_ffxWalkmeshCrossedEdgeV0/V1` point at.
+
+```
+edge  = (fl(b.x - a.x), 0, fl(b.z - a.z), 0)        s16 differences, fild / fstp dword
+d     = (fl(q.x - p.x), 0, fl(q.z - p.z), 0)
+e     = FFX_Vec4_Normalize(edge)                    copy, then FFX_Vec3_NormalizeInPlace
+M     = identity, then m[0] = e.x, m[1] = 0, m[2] = -e.z, m[4] = 0, m[5] = 1, m[6] = 0,
+        m[8] = e.z, m[9] = 0, m[10] = e.x            column major, m[c * 4 + r]
+local = FFX_Mtx_TransformVec4(M, d)                 so local.x = e.x d.x + e.z d.z (along),
+                                                    local.z = -e.z d.x + e.x d.z (across)
+Minv  = FFX_Mtx_InverseRigid(M)                     through the thunk j_FFX_Mtx_InverseRigid 0x6ED450
+local.z = 0
+r     = FFX_Mtx_TransformVec4(Minv, local)
+while (r.z * e.x - r.x * e.z) > 0:                  double, fldz / fcomp / test ah, 5 / jp
+    local.z = fl(local.z - 1.0)
+    r = FFX_Mtx_TransformVec4(Minv, local)
+q.x = fl(r.x + p.x), q.z = fl(r.z + p.z)            q.y untouched
+```
+
+`FFX_Mtx_MulVec4 0x7058F0` (behind `FFX_Mtx_TransformVec4 0x6ED2E0`) sums each row as
+`fl(((m[r] v0 + m[4+r] v1) + m[8+r] v2) + m[12+r] v3)`, all four terms even when they are zero, so a NaN or
+an infinity in `d` spreads through the zero entries. `FFX_Mtx_InverseRigid 0x705DB0` copies the 3x3
+transposed and writes `t'[r] = fl(-((m[4r] t0 + m[4r+1] t1) + m[4r+2] t2))`, zero in `[3]`, `[7]`, `[11]`
+and 1 in `[15]`.
+
+So the slide is the projection of the move onto the line through the **start** parallel to the edge,
+not onto the edge itself: a character sliding along a wall keeps its distance from it. The loop only runs
+when rounding leaves the projection a hair across, and each pass steps one walkmesh unit back. A move at
+right angles to the edge projects to nothing and the character stays put for that try. The loop has no
+cap, so an across component near 2^24 would spin, which nothing in play reaches. [V for the arithmetic,
+I for "far side" as the name of the positive sign, which holds for the shipped winding in every case the
+grid test hit]
+
+### 10.2 FFX_Ch_WalkmeshMove 0x83E5F0, what section 3.5 leaves out [V]
+
+* `m_walkmeshPos[i] = fl(pos[i] * s)` goes through the stack temporary `var_18` and the same value is the
+  query point, so the two are always equal at the start of the move.
+* The no-clip re-test inside the slide loop (`0x83E793`) can never fire. The loop is only entered when
+  no-clip was false at the top, and nothing in between writes `g_ffxPlayerDebugNoClip`.
+* The `m_walkmeshTri != -1` test before the slide always passes from the move: the loop restores the
+  starting triangle after every try, and `FFX_Ch_WalkmeshTestEdgeCrossing` never writes -1.
+* `FFX_Map_WalkmeshGetTriNormal` writes all four floats, so `CHR+0x88` (the w after `m_groundNormalZ`) is
+  0 after any move that reaches the ground write. The no walkmesh path writes only x, y, z.
+* Off the mesh the move is `fl(vel.x * 10 + pos.x)` and `fl(10 * vel.z + pos.z)` and nothing else,
+  `m_walkmeshTri` stays -1, so the next sub-step scans again from the new point.
+* In a 40 by 40 grid of moves on bsil01, bvyt11 and klyt02 (6,740 moves) one blocked try happened 1,131
+  times, two 71, three 30 and four, the full refusal that leaves the character where it was, 49.
+
+### 10.3 Corrections to sections 3 and 4 [V]
+
+1. **Section 4.2, `if !(sum > d): continue`.** The test is `fcom / test ah, 41h / jnp`, which skips only
+   an ordered `sum <= d`. A NaN sum or distance goes on to `FFX_Ch_SeparatePair`.
+2. **Section 3.6, "ties take m_collisionRadiusScale".** `fcompp` of `m_514` against `m_4E4`, then
+   `test ah, 5 / jp` loads `m_514` unless `m_514 < m_4E4` ordered. A tie, and a NaN, take `m_514`. It only
+   shows for +0 against -0.
+3. **Section 2.3 item 5.** The `and byte [esi+180h], 13h` in pass 1 is a read-modify-write before the gate.
+   It clears hide bits 0x04, 0x08, 0x20, 0x40, 0x80 on every in-use CHR every sub-step, including ones the
+   gate then skips because 0x01, 0x02 or 0x10 remain.
+4. **Section 3.7, the clock.** On the normal path `m_frame` moves only while `m_seqPC` (0x714) is non-null.
+   The divide by 7680 is the `0x88888889` multiply, a signed divide that truncates toward zero, and the
+   KeepSp scale is `imul` then `shr 8`, unsigned. The half speed halve (`cdq / sub / sar`) also truncates
+   toward zero and comes after `m_frameDelta` is stored. With `m_flags1 & 0x40` the clock runs only when
+   `m_anmHeader` (0x800) is non-null. Without bit 0x80000000 it calls `FFX_Mot_WrapFrameAtEnd 0x8392D0`
+   first, which reads the **previous** `m_frameDelta`, and the new delta is never stored. With bit
+   0x80000000 (the `.anm` path) the frame advances by `m_playSpeed` alone, wraps on the s16 frame count at
+   `m_anmHeader[0]` (a count of 0 would hang in the first wrap loop), and skips the hokan countdown.
+5. **`FFX_Mot_WrapFrameAtEnd 0x8392D0`**, not written up before: clamp a negative frame to 0. If
+   `((frameDelta + 0x1FF + frame) & ~0xFF) > ((clipEnd + 1) & ~0xFF)` and `m_loopCount == 1`: frame =
+   `clipEnd & ~0xFF`, `m_clipPlaying = 0`, return 1. Otherwise while `frame > clipEnd`: a non-zero loop count
+   (read unsigned) is decremented, and on reaching 0 the frame is set to `clipEnd & ~0xFF`,
+   `m_clipPlaying = 0`, `m_playSpeed = 0`, return 1. A zero loop count with a zero `m_clipSpan` sets the
+   frame to `m_clipStart` and returns 1. Otherwise subtract `m_clipSpan` and test again. Return 0.
+6. **`FFX_Ch_AutoSwimAnim`** never touches `m_flags1` bits 0x4000000 or 0x8000000 and never calls
+   `FFX_Mot_SetPendingLoopCount`. Only the ground selector does both.
+7. **`g_ffxChrCollideList 0x1301B08` holds 40 entries** and `g_ffxChrCollideCount 0x1301BA8` follows it
+   directly. The build loop (`0x83D468`) has no bound. A 41st collider is stored over the count and then
+   immediately overwritten by the new count, and `FFX_Ch_SortCollideListByZ` would then read 41 as a CHR
+   pointer. A 42nd lands on `0x1301BAC` and a 43rd on `g_ffxPlayerCamDistPreset 0x1301BB0`. [V for the
+   layout and the missing check, I that the original crashes, since no scene was found with 41 colliders]
+8. `dword_1301B0C`, `dword_1301B10` and `dword_1301B14` are not globals, they are `g_ffxChrCollideList + 4,
+   + 8, + 12` as the four times unrolled inner loop of the sort addresses them. The unrolled loop uses the
+   same compare as the tail loop, so the tie rule of section 4.2 holds throughout.
+
+### 10.4 Capture recipe for the PROGRESS 10.5 done-when [I, not yet run]
+
+The recreation now reproduces the step from a CHR state, so the oracle is a per step dump from the
+running game on Besaid. Addresses are RVAs (VA - `0x400000`), which is what the Workshop takes.
+
+Hook `FFX_Ch_UpdateMotionAll` at entry (RVA `0x432E10`) and at its return. At entry, and again at return,
+copy:
+
+* the step identity: `g_ffxMainStepCounter` RVA `0x1FCBBF0`, `maybe_g_ffxSceneId` RVA `0xF30844`, the
+  current map name, and the dt argument (always `0x3D08B27A`, a check).
+* the globals: `g_ffxChrArray` RVA `0x1FC44E4`, `g_ffxChrCount` RVA `0x1FC44E0`,
+  `g_ffxWalkmeshScale` RVA `0xF01A90`, `g_ffxWalkmeshTriCount` RVA `0xF01A88`, `g_ffxWaterLevel`
+  RVA `0xF009D8`, `g_ffxWaterLevelMax` RVA `0xF009DC`, the remap codes 48..63 at RVA `0xF01A98..0xF01AD7`,
+  `g_ffxPlayerDebugNoClip` RVA `0x1FC44B4`, `byte_12FBBBB` (freeze) RVA `0xEFBBBB`, `byte_12FBC34`
+  (KeepSp) RVA `0xEFBC34`, `g_ffxStepScale88` RVA `0x1FCBBEC`, `g_ffxMotHalfSpeed` RVA `0xF017F8`,
+  `g_ffxControlledChr` RVA `0xF00788` (to mark which slot is the player).
+* per in-use CHR (stride 0x880 from `g_ffxChrArray`): `+0x000` id, `+0x002`, `+0x00C..0x02B` pos and
+  prevPos, `+0x03C..0x057` walkmeshPos and vel, `+0x05C`, `+0x064`, `+0x07C..0x08B` the normal, `+0x154`,
+  `+0x158`, `+0x168..0x173`, `+0x180..0x182`, `+0x186`, `+0x194`, `+0x198`, the seven CHRANIMF at
+  `+0x330..0x383`, `+0x4E4..0x523`, `+0x698`, `+0x6A8`, whether `+0x714` and `+0x800` are null, the s16 at
+  `[+0x800]`, `+0x718..0x72B`, `+0x736`, `+0x740`, `+0x750..0x757`, `+0x75C..0x7DB`, `+0x7E0`, `+0x824`,
+  `+0x828`.
+
+Replay: load the first entry dump into the recreation's CHR array, then for every later step overwrite
+only the fields something outside the step writes (`m_speed`, `m_moveDir`, `m_rotY` when a script set it,
+`m_flags1` bits other code sets, the hide bits, `m_motionRequestActive` and the clip fields the sequence
+VM owns, `+0x514`, `+0x698`, `+0x6A8` from the bone job, the globals), run one step, and compare the
+return dump. Position, `m_rotY`, velocity, `m_groundHeight`, `m_walkmeshTri`, `m_groundAttrs` and the
+`m_flags1` bits the step owns should match bit for bit under the C1 rule. Any mismatch confined to
+`m_velX/Z` after a non-zero `m_speed` points at `_CIcos` and `_CIsin` (section 5.3) rather than the port.
+Record with one sub-step per frame (section 2.3 item 3). A walk from the Besaid village entrance to the
+temple door, with a stop, a turn on the spot and a bump into an NPC, covers every branch the scripted walk
+in the recreation covers.
+
+---
+
+## 11. 2026-10-13, porting pass: motion playback (PROGRESS 10.4)
+
+Written while porting the playback half of `FFX_Mot_AdvanceFrame` into Project Zanarkand
+(`src/engine/chr/MotionLibrary` for the registry and the .chr fields, `src/engine/chr/MotionPlayback` for
+the rest), cross checked bit for bit against an independent Python port in that repo's
+`tools/chr_anim.py` on Tidus's shipped `resident0.mgrp`. Every routine below was read from the
+disassembly in this pass, floats stack traced. IDA was read only. `MGRP_FORMAT.md` has the file layout
+and the opcode census, this section has the runtime behaviour.
+
+### 11.1 FFX_Mot_AdvanceFrame 0x838C90(chr, applyBlend), the whole function [V]
+
+```
+flags = m_flags1
+if flags & 0x40:
+    if m_anmHeader (0x800) == 0: return                      no weapon copy either
+    if flags & 0x80000000: .anm clock (section 10.3 item 4), FFX_Mot_EvalAnmClip 0x838750, -> weapon copy
+    else: WrapFrameAtEnd, delta = clock, halve -> jump to EVAL (skips the applyBlend test)
+elif m_seqPC (0x714) == 0: -> weapon copy
+else:
+    delta = clock, KeepSp scale, m_frameDelta = delta
+    FFX_Mot_StepSequence 0x8377C0
+    halve
+    if applyBlend == 0: -> ADVANCE                          FFX_Ch_UpdateMotionAll passes 1
+EVAL:
+    FFX_Mot_EvalChannels 0x8393C0
+    FFX_Mot_BlendChannels 0x8395B0(chr, (s16)m_hokanCountdown)
+    FFX_Mot_BuildJointTransforms 0x838F70
+    hokan countdown (section 10.3)
+ADVANCE:
+    m_frame += delta
+weapon copy (0x838E6F): m_parent (0x19C) set and m_id in 0x403D..0x4041 ->
+    joint 1, 2, 3 dwords 57..60 = parent's joint 9, 10, 11 dwords 57..60      (rotation and its w lane)
+```
+
+So `FFX_Mot_StepSequence` sees `m_frame` before this step's delta, and so do the channels. The new
+frame only shows on the next step.
+
+### 11.2 Registration [V]
+
+`FFX_Mot_RegisterBundle 0x836C90(hdr, kind, id, modelId)` takes the first null slot of
+`g_ffxMotBundleTable 0x13011E0` (50 x 12 bytes: header, s16 kind, s16 id, s32 modelId). A full table
+asserts "nb mgrp err" and stores nothing, but the banks are still registered. It relocates the bundle,
+then calls `FFX_Mot_RegisterGroup 0x836D30` per bank in file order: the first slot of
+`g_ffxMotGroupTable 0x1300A08` (100 x 20 bytes: bank, s16 model from `bank+4`, u16 chained, next same
+model, next model, owning header) whose bank is null, then `FFX_Mot_RebuildGroupChains 0x838170`.
+
+The rebuild clears every chained flag and next same model, then walks the slots in order. Each unchained
+slot becomes a model head: `g_ffxMotGroupChainHead 0x13011D8` is the first, each head's next model is the
+next head. Under each head, every other unchained slot of the same model is appended in slot order and
+marked chained. So a freed slot refilled by a later bundle goes ahead of older banks of its model.
+
+`FFX_Ch_SetMotionKey 0x837AC0` resolves an id by walking heads (movsx model against `id >> 16`, so a
+model id of 0x8000 or more never matches), then that one chain, comparing each entry's u16 index
+against `id & 0xFFFF`, first match wins. It never looks at a second head of the same model, there is
+none by construction.
+
+`FFX_Ch_ReleaseResource 0x836E20(kind, id, modelId)`: `FFX_Mot_FindBundle 0x836F10` matches all three,
+`FFX_Mot_UnregisterGroup 0x836DE0` per bank (each rebuilds the chains), `FFX_Mot_UnregisterBundle
+0x836DA0`, the free, then `FFX_Ch_ClearResourcePtrs 0x837540`, which zeroes `m_seqPC`, `m_motionId` and
+`m_motionBundle` (0x7E8) on every in-use CHR whose `m_motionBundle` was that header.
+
+### 11.3 FFX_Ch_SetMotionKey 0x837AC0(chr, id) and FFX_Mot_SetByModeIndex 0x837D00 [V]
+
+SetMotionKey, in order:
+
+1. `m_jointRemap` (0x758) = 0. If `(u16)m_id != (id >> 16) & 0xFFFF`, search the motreltabs at CHRDATA
+   `+0x114` (s16 count at `+0x110`) for one whose s16 model is the motion's. None: `m_motionRequestActive
+   = 0`, `m_clipPlaying = 1`, return 1.
+2. Same id and `m_i730` (0x730) zero: return 1, nothing written.
+3. `m_flags3 |= 2`, `m_i730 = 0`. If `(m_id & 0xF000) == 0` and the high words of the old and new id
+   differ, `m_nextHokan = 1`. `m_motionId = id`. `sub_824800` (the motion patch flag, 11.10).
+4. The chain walk fails: byte 0x7ED = 1, `m_motionRequestActive = 0`, `m_clipPlaying = 1`, return 1.
+   The id is kept, so asking again for the same id returns at step 2.
+5. Found: `m_motionGroup` (0x710) = bank, `m_motionEntry` (0x70C) = entry, `m_seqPC` = entry `+0xC`, the
+   dword at 0x728 = 0 (that is `m_clipPlaying` and `m_seqWait` together), `m_pendingLoopCount = -1`, the
+   word at 0x737 = 0x00FF (`m_seqWaitKey = -1`, byte 0x738 = 0), `m_motionRequestActive = 1`,
+   `m_blendFrames` (0x73A) = `m_nextHokan` and then `m_nextHokan = 0` and `m_flags3 |= 4` when it was
+   set, else 4. `m_flags1 |= 0x1000000`, `m_motionBundle` = the group's header, `m_eventCursor` (0x7E4) =
+   -1, the word at 0x7ED = 0, byte 0x73E = 1. Return 0.
+
+So a CHR's first motion, and any motion of another model, starts with a one frame hokan, which snaps
+every channel to the new clip instead of blending over four steps.
+
+SetByModeIndex, the .chr shape (CHRDATA `m_flags` bit 1, which `FFX_Ch_BlkAllocate` always sets): the
+table is the section `g_ffxMotModeToSetSlot 0xC49784[mode]` = {5, 6, 7, 8}. A null table returns. Then
+loop: if `m_flags2 & 0x200` and mode 1 and index 16, `sub_83D040(chr, 4, 1)` (a texture animation
+pattern, 11.10). A non-zero `table[index]` goes to SetMotionKey. A zero one in mode 1..3 restarts at mode
+0 index 0, in mode 0 it returns. The index is not bounded. The viewer shape at CHRDATA `+0x108` is not
+used by the game.
+
+The two locomotion selectors (section 3.1) call SetMotionKey for a slot whose low word is 0x1000 or
+more, else SetByModeIndex(chr, mode, slot), and only then or `m_flags1` with 0x8000000 or 0x4000000
+(memory read modify write, so the setter's own or of 0x1000000 survives).
+
+### 11.4 The sequence VM [V]
+
+`FFX_Mot_StepSequence 0x8377C0` runs `FFX_Mot_SeqExec 0x837900` until it returns non-zero, then: 1 ->
+`FFX_Mot_WrapFrameAtEnd`, 2 -> WrapFrameAtEnd and, if `m_clipPlaying` is 0, `m_motionRequestActive = 0`,
+3 -> byte 0x734 = 1 and `m_motionRequestActive = 0`, -1 -> the "seq err" assert and nothing else. A
+JUMP to itself would hang the game. No shipped sequence has a JUMP.
+
+SeqExec reads the opcode with `movsx`, so 0x80..0xFF are negative and take the default case. The
+handler column is each case's target in the jump table at 0x83791D (read from the switch, 2026-10-13).
+
+| op | handler | bytes | effect | returns |
+|----|---------|-------|--------|---------|
+| 0 END | 0x837924 | 1 | nothing, the PC stays | 2 |
+| 1 PLAY | 0x837946 | 9 | below | 0 |
+| 2 WAIT_CLIP_END | 0x8379DB | 1 | `m_clipPlaying != 0` -> block, else PC += 1 | 1 or 0 |
+| 3 WAIT_FRAMES | 0x837A1E | 3 | `m_seqWait == 0` -> load the u16, then `--m_seqWait`, zero -> PC += 3 | 1 or 0 |
+| 4 JUMP | 0x837A55 | 3 | PC = entry `+0xC` + (s16)labels[(s16)n], labels at entry `+8` | 0 |
+| 5 STOP | 0x837935 | 1 | nothing | 3 |
+| 6 WAIT_KEY | 0x8379F4 | 3 | `(s16)(s8)m_seqWaitKey < (s16)n` -> block, else PC += 3 | 1 or 0 |
+| other | 0x837A82 | | "unknown motion sequence code" | -1 |
+
+PLAY (s16 clip, s16 loop, s16 start marker, s16 end marker): the clip entry is `[m_motionGroup + 0x10] +
+16 * clip`, markers at entry `+8` as s16. start = markers[start index], end = markers[end index], and the
+end is incremented unless the end index (compared as a u16) is 1 or the loop count is 1. Then
+`FFX_Mot_StartClip(chr, entry+0xC, loop, start << 8, end << 8)`, PC += 9, byte 0x73E = 0.
+
+`FFX_Mot_StartClip 0x839B80(chr, clip, loop, start, end)`:
+
+1. The hardcoded patch: model name "c001", `maybe_g_ffxSceneId == 122`, start 0x3000 and end -256 (the
+   "to the clip end" marker) -> end = 0x2800.
+2. `m_frameRateScale = 7680`, then `FFX_Mot_BindChannels`, which overwrites it from the clip.
+3. `m_clipStart = start`. A negative end is `(s16)clip[0] << 8`. `m_clipSpan = end - start`, `m_clipEnd
+   = end - 1`. `m_loopCount = m_pendingLoopCount` unless that is -1, then the operand.
+   `m_pendingLoopCount = -1`, `m_playSpeed = 256`, `m_frame = m_clipStart`, `m_hokanCountdown =
+   m_blendFrames` (1 when that is 0), `m_flags1 &= ~0x10000`, `m_clipPlaying = 1`.
+
+### 11.5 Channels and key streams [V]
+
+A channel is 44 bytes, nine a joint (rotation x, y, z in turns, translation x, y, z, scale x, y, z), the
+array at CHR `+0x748`, sized by the skeleton's joint count (`[CHR+0x1C0] + 10`) and zeroed by
+`FFX_Ch_BuildSkeletonInstance`. Fields: `+0` next streamed channel, `+4` mode, `+5` is angle, `+6` u16
+repeat, `+8` stream start, `+0xC` cursor, `+0x14` u16 delta, `+0x16` u16 key, `+0x18` u16 previous key,
+`+0x1A` u16 key saved by a rewind, `+0x1C` float target, `+0x20` float current, `+0x28` byte dirty.
+
+`FFX_Mot_BindChannels 0x839980(chr, clip)`: `m_frameRateScale = (s16)clip[+4]`. A non-zero s16 event
+count at `+6` sets `m_eventCount` and `m_eventArray = clip + [clip+0x10]`, a zero one clears only the
+array. Channels = 9 x min(skeleton joints, (s16)clip joints), signed. Modes are 2 bits a channel, low
+bits first, refilled as a 64 bit pair every 32 channels from `clip + [clip+8]`. Values run from `clip +
+[clip+0xC]`:
+
+* mode 0 -> target 0.0, mode 1 -> target 1.0, mode 2 -> target = Key12(next u16), values += 2.
+* mode 3 -> streamed: is angle = channel % 9 < 3, start = cursor = values + 2, repeat 0, the dword at
+  `+0x14` = 0 (delta and key), pushed on the front of the stream list, values += 2 x ((s16)len / 2) where
+  len is the u16 at values, the stream's byte length including itself.
+* every bound channel gets dirty = 1. Channels past the clip's joint count keep what they had.
+
+Then `m_streamList` (0x74C) = the list head (the last streamed channel), `FFX_Mot_DecodeKeyStream(chr,
+1)`, previous key = key on every list channel, `m_frameCursor` (0x7DC) = 1.
+
+`FFX_Mot_DecodeKeyStream 0x8394D0(chr, n)`, per list channel, nothing when n <= 0, else n times:
+
+```
+if repeat: repeat -= 1                                    the old delta again
+else: b = *cursor++
+    b < 0x80:          delta = sext7(b)
+    b & 0xC0 == 0xC0:  delta = sext14((next byte << 6) | (b & 0x3F)), cursor++
+    b & 0xC0 == 0x80:  repeat = b & 0x3F                  this frame takes the old delta too
+prev = key, key = (u16)(key + delta)
+```
+
+`FFX_Mot_RewindChannels 0x8398F0`: per list channel cursor = start, saved = key, repeat = delta = key =
+0, then one frame decoded, then previous = saved on every list channel, `m_frameCursor = 1`.
+
+`FFX_Mot_EvalChannels 0x8393C0`:
+
+```
+whole = (m_frame + 0x1FF) >> 8, last = (m_clipEnd + 1) >> 8, m_frameSnapshot (0x744) = m_frame
+if whole > last: whole = (m_loopCount == 1) ? last : whole - (m_clipSpan >> 8)
+n = whole - m_frameCursor
+if n < 0 (sign of the subtraction): Rewind, n = whole - 1
+if whole > m_frameCursor (re-read after the rewind): Decode(n), m_frameCursor += n
+frac = m_frame & 0xFF, per list channel:
+    frac == 0:  target = Key12(key)                       no 12 bit mask, so it can leave [0, 1)
+    angle:      target = LerpAngle12((s16)prev, (s16)key, frac)
+    else:       a = Key12(prev), d = fl(Key12(key) - a), target = fl(Frac8(frac) * d + a)
+```
+
+`Key12ToFloat 0x839DD0(k)` = fl(fl((float)(s16)k) * 2^-12), `Frac8ToFloat 0x839E00(f)` = fl(fl((float)(s16)f) *
+2^-8). `FFX_Mot_LerpAngle12 0x839E80(prev, cur, frac)`: a = Key12(prev & 0xFFF), b = Key12(cur & 0xFFF), t
+= Frac8(frac), d = fl(b - a). If d >= 0.5 (ordered): a = fl(a + 1), d = fl(b - a). Then if d <= -0.5
+(ordered): b = fl(b + 1), d = fl(b - a). Result fl(a + d * t). Exactly half a turn apart forward takes
+both unwraps, so lerping 0x000 to 0x800 gives 1.25 at the midpoint, not 0.75. Harmless, it is the same
+angle.
+
+### 11.6 The hokan blend [V]
+
+`FFX_Mot_BlendChannels 0x8395B0(chr, n)` with n = `(s16)m_hokanCountdown`:
+
+* `m_flags1 & 0x10000` (settled): the stream list only. Angle channels current = StepAngle(current,
+  target, n), the others the linear step. Every one dirty = 1.
+* otherwise every channel block of every skeleton joint, including joints the clip does not cover:
+  channels 0..2 StepAngle, 3..8 linear, all dirty = 1. Then `m_flags1 |= 0x10000` when n == 1.
+
+The linear step: d = fl(target - current), skipped only for an ordered d == 0, else current = fl(d /
+(float)n + current).
+
+`FFX_Mot_StepAngle 0x839F50(cur, target, n)`: a = fl(cur - (float)trunc(cur)), plus 1 if negative. d =
+fl(a - target), e = fl(d - (float)trunc(d)), plus 1 if negative. An ordered e == 0 returns a. An ordered
+0.5 > e returns fl(a - e / n), anything else fl(a + (1 - e) / n). Truncation is `__ftol2_sse`.
+
+Consequence: the full blend zeroes every channel the clip never bound, scale included. For c001 the clips
+cover 118 of the 136 joints, so joints 118..135 compose to scale 0. No hierarchy node of the c001 mesh
+remaps to them, so nothing visible collapses.
+
+### 11.7 FFX_Mot_BuildJointTransforms 0x838F70 and the composers [V]
+
+s = fl(fl(CHRDATA `+0x38`) * (double)0.001f). The composer:
+
+```
+if CHR byte 0x871:                                          Smoothed for every joint, no scene override
+else if CHR byte 0x870 == 0 or m_flags3 & 4:                Plain
+else:
+    mode = IsNearlyStationary ? (IsNearCamera ? Smoothed : Auto) : Plain
+    scene overrides to Plain: 368, 285, 80 with m_id 4, 311 with m_id 0x5045, 100 with m_id != 0,
+    60 while FFX_Story_GetProgress() < 0x9A
+```
+
+Then per channel block i < skeleton joints: with a motreltab, stop at i >= its u16 count at `+2`, the
+destination joint is the u16 at `+8 + 2i`, 0xFFFF skips. Without one, joint i. The composer writes:
+
+| composer | rotation k (dirty) | translation k (dirty) | scale k (dirty) | every call |
+|----------|--------------------|-----------------------|-----------------|------------|
+| Plain `0x838280` | r -> dwords 57+k and 69+k | t -> 61+k and 73+k | c -> 65+k and 77+k | |
+| Smoothed `0x838470` | r -> 69+k | t -> 73+k | c -> 65+k and 77+k | 57+k = SmoothAngle(69+k, 57+k, 0.7f, 0, 10), 61+k = SmoothLinear(73+k, 61+k, 1, 0, 1) |
+| Auto `0x838240` | joint byte 324 (`+0x144`) set -> Smoothed, else Plain | | | |
+
+with r = `0x83A010`(fl((current * 2.0) * (double)3.141592f)), the same wrap loop as `FFX_Ch_WrapAnglePi`,
+and t = fl((current * s) * 4096.0). Each clears the channel's dirty byte.
+
+`sub_839CD0`(raw, cur, k, floor, m): if raw - cur > pi', cur = fl(cur + 2pi'). Then if cur - raw > pi',
+cur = fl(cur - 2pi'). w = fl(k - |raw - cur| * m), floor it (ordered floor > w), return
+`sub_839CB0`(raw, cur, w) = fl((1 - w) * raw + w * cur). `sub_839D70` is the same without the wrap. With
+k 0.7 and m 10 an angle more than 0.07 radians off snaps to the raw value, closer ones keep up to 70
+percent of the old one. Translation with k 1 and m 1 keeps 1 - |d| of the old one.
+
+`FFX_Ch_IsNearlyStationary 0x839200`: false while `g_ffxBtlSubPhase` is non-zero or ATEL context byte 0
+bit 2 is set (the byte `g_ffxAtelCtx` points at), else true iff |`m_prevBodyCentre` (0x684) -
+`m_bodyCentre` (0x694)| < 2.0 on x, y and z, ordered, the difference unrounded on the x87. `FFX_Ch_IsNearCameraForSmoothing 0x839140`: v = fl(`m_bodyCentre` - eye) per component with the
+eye at `g_ffxCameActiveSlot + 0x65C`, len2 = fl((x x + y y) + z z) (`sub_6ED9B0`), near = 2500 if the
+model name contains "c10" else 900, pitch = slot `+0x6B0` when slot byte `+0x64D` is set, else slot
+`+0x6D0`. True iff near > len2 and pitch > -0.785398006439209, both ordered.
+
+The joint byte 324 comes from `FFX_Ch_BuildSkeletonInstance 0x8277F0` (0x827BB9): `maybe_FFX_Ch_InitJointNode
+0x828B60` sets it to 1 on every joint and on the embedded root node at CHR `+0x1C8`. Bone points 7 and 8
+(`FFX_Ch_GetBoneNodeIndex`) are walked up the parent pointers in step until they meet. If both are
+non-zero and they meet on a node, that node gets 0, then in joint order every joint whose parent has 0
+gets 0 (the meeting node's subtree), then the path from the meeting node to the root, root node
+included, gets 0. Points at different depths would walk one side off the null root parent, which no
+shipped .chr does. For c001 the points are joints 95 and 82 and 31 of 136 joints end at 0.
+
+### 11.8 Motion events [V]
+
+`FFX_Ch_DispatchInBatches 0x833390`, called from `FFX_MainStep` after the step, joins the render jobs,
+then two passes over the CHR array, root CHRs then CHRs with `m_parent`. A live, visible (hide byte 0 or
+`m_b181`), unfrozen CHR with `m_flags1 & 0x1000000` runs `FFX_Mot_RunEvents 0x834350` and clears
+`m_flags1 & 0x1000`, the others set 0x1000.
+
+RunEvents: nothing without `m_eventArray`. cur = `m_frameSnapshot >> 8`, last = (s16)`m_lastEventFrame`
+(0x7F2). If cur > last, for each of the s16 `m_eventCount` records (u8 type, s8 payload dword count, s16
+start, s16 end, s16 id, the payload, stride 8 + 4 x count): fire when last < end and cur >= start. Type 1
+`SndKickFoot(chr, id)`, 2 the callback at `[CHR+0x7F8]` with (`[CHR+0x7FC]`, id) when set, 3
+`sub_77E940([CHR+0x700], id >> 8, id & 0xFF, [CHR+4], [CHR+0x830])` when `[CHR+0x6FC]` is non-zero, 5
+`sub_7B74D0([CHR+0x18C], id, 0)`. Always `m_lastEventFrame = cur`. Because the test is "last < end", an
+event fires on every step that ends at or past its start while the previous step was still before its
+end, not once per crossing. c001's walk and run clips carry four SND events each, the idle none.
+
+### 11.9 Globals read, with their writers [V]
+
+| global | VA | RVA | read by | writers |
+|--------|----|-----|---------|---------|
+| `g_ffxMotGroupTable` | `0x1300A08` | `0xF00A08` | SetMotionKey | RegisterGroup, UnregisterGroup, RebuildGroupChains |
+| `g_ffxMotGroupChainHead` | `0x13011D8` | `0xF011D8` | SetMotionKey | RebuildGroupChains |
+| `g_ffxMotBundleTable` | `0x13011E0` | `0xF011E0` | FindBundle | RegisterBundle, UnregisterBundle |
+| `g_ffxMotModeToSetSlot` | `0xC49784` | `0x849784` | SetByModeIndex | none, `.rdata` {5, 6, 7, 8} |
+| `maybe_g_ffxSceneId` | `0x1330844` | `0xF30844` | StartClip, BuildJointTransforms | `maybe_FFX_Scene_Init` |
+| `g_ffxStoryProgress` | `0x112D67C` | `0xD2D67C` | BuildJointTransforms (scene 60) | the save block, `FFX_InitNewSaveData` and the event scripts |
+| `g_ffxCurrentEventId` | `0x12FBC40` | `0xEFBC40` | `sub_824800` | `FFX_Ev_LoadEventPackage` |
+| `g_ffxBtlSubPhase` | `0x112A8E0` | `0xD2A8E0` | IsNearlyStationary | the `FFX_Btl_*` phase code, 11 writers |
+| `g_ffxAtelCtx` | `0x1326B28` | `0xF26B28` | IsNearlyStationary (bit 2 of the byte it points at) | the ATEL interpreter |
+| `g_ffxCameActiveSlot` | `0x2311430` | `0x1F11430` | IsNearCameraForSmoothing | `FFX_Came_ActivateScreen`, `FFX_Came_Init` |
+| `g_ffxMotKeepSpeed` | `0x12FBC34` | `0xEFBC34` | AdvanceFrame | debug GUI |
+| `g_ffxStepScale88` | `0x23CBBEC` | `0x1FCBBEC` | AdvanceFrame | `FFX_MainStep_PublishStepScale` |
+| `g_ffxMotHalfSpeed` | `0x13017F8` | `0xF017F8` | AdvanceFrame | `FFX_Mot_SetHalfSpeed`, debug GUI |
+| `g_ffxMotEventLog` | `0x13008DB` | `0xF008DB` | RunEvents, log only | `FFX_Mot_SetEventLogEnabled` |
+| `g_ffxMainStepCounter` | `0x23CBBF0` | `0x1FCBBF0` | RunEvents, log only | `FFX_MainStep` |
+
+No random number is drawn anywhere in this tree.
+
+### 11.10 Corrections and new facts [V]
+
+1. **`m_flags3` (0x820) bit 4 is not "hidden".** SetMotionKey sets it when the hokan came from
+   `m_nextHokan` (a one frame snap), `FFX_Ch_SetBlendFrames` and `FFX_Ch_SetHideFlagBits` also set it,
+   and the only clears are in `FFX_Ch_StepSecondaryPhysics 0x822DE0` (at `0x822FD9`, `0x822E32` and
+   `0x823161`), which runs on the render job from `FFX_Ch_JointOverrideJob` and only for CHRs with
+   `m_flags1` 0x200000 and 0x400000. While it is set, BuildJointTransforms uses the plain composer. So a
+   CHR without secondary physics that ever snapped keeps the plain composer until something else clears
+   the bit. Tidus has the physics, so for him it lasts one step. Proposed meaning: "secondary physics
+   reset pending".
+2. **Bind rotations round once.** `0x827A3D`: `fild` then `fstp` to a float (exact for an s16), then v /
+   100 x (double)3.141592f / 180 on the x87 and one `fstp`, then `FFX_Ch_WrapAnglePi`. There is no
+   intermediate rounding.
+3. **`sub_824800`**, which SetMotionKey calls: `m_flags3 &= ~8`, then sets 8 for CHR 2 and 102 when the
+   motion id is in 0x2113D..0x2113F or is 0x6610CC (signed compares) or `g_ffxCurrentEventId` is 161, and
+   for CHR 7 and 107 in events 183 and 309. It prints "CLOTHJIMEN" when set. Proposed
+   `FFX_Ch_UpdateClothGroundFlag`.
+4. **`sub_83D040(chr, a, b)`** calls `sub_77E940([CHR+0x700], a, b, [CHR+4], [CHR+0x830])` when
+   `[CHR+0x6FC]` is non-zero, the same call the TEX motion event makes. So both are texture animation
+   pattern switches.
+5. `m_seqWait` (0x72A) has no reset of its own. The dword store at SetMotionKey step 5 clears it together
+   with `m_clipPlaying`, and WAIT_FRAMES leaves it at 0 when it passes.
+
+### 11.11 Proposed IDB names [I for the names, V for the behaviour]
+
+| VA | current | proposed | why |
+|----|---------|----------|-----|
+| `0x83A010` | `sub_83A010` | `FFX_Mot_WrapJointAngle` | the composers' copy of the pi wrap loop |
+| `0x839CB0` | `sub_839CB0` | `FFX_Mot_SmoothMix` | fl((1 - w) a + w b) |
+| `0x839CD0` | `sub_839CD0` | `FFX_Mot_SmoothAngle` | the smoothed composer's rotation damping |
+| `0x839D70` | `sub_839D70` | `FFX_Mot_SmoothLinear` | the smoothed composer's translation damping |
+| `0x838470` | `sub_838470` | `FFX_Mot_ComposeJointSrtSmoothed` | 11.7 |
+| `0x838240` | `sub_838240` | `FFX_Mot_ComposeJointSrtAuto` | 11.7 |
+| `0x839140` | `sub_839140` | `FFX_Ch_IsNearCameraForSmoothing` | 11.7 |
+| `0x6ED9B0` | `sub_6ED9B0` | `FFX_Vec3_LengthSq` | (x x + y y) + z z, stored |
+| `0x824800` | `sub_824800` | `FFX_Ch_UpdateClothGroundFlag` | 11.10 item 3 |
+| `0x83D040` | `sub_83D040` | `FFX_Ch_SetTexAnimPattern` | 11.10 item 4 |
+| `0x77E940` | `sub_77E940` | `FFX_TexAnim_SetPattern` | the callee of both, takes the CHR's tex anim block |
+| `0x7B74D0` | `sub_7B74D0` | `FFX_Btl_OnMotionEvent` | the type 5 motion event |
+| `0x832540` | `sub_832540` | `FFX_Ch_MarkEventsDispatched` | the last call of DispatchInBatches, sets `byte_13009E4` |
+| `0x828B60` | `maybe_FFX_Ch_InitJointNode` | `FFX_Ch_InitJointNode` | confirmed: parent 0, byte 324 = 1, dwords 57..64 = 0, 65..68 = 1 |
+
+### 11.12 Capture recipe for the PROGRESS 10.4 done-when [I, not yet run]
+
+The recreation reproduces the joint outputs from a CHR state, the loaded `.mgrp` and the composer inputs.
+The oracle is a per step dump of Tidus (`m_id` 1) on a field map. Addresses are RVAs (VA - `0x400000`).
+
+Hooks, all on the step thread:
+
+* `FFX_Mot_AdvanceFrame` entry and return, RVA `0x438C90`. Filter on `[esp+4]` being Tidus's CHR.
+* `FFX_Ch_IsNearlyStationary` RVA `0x439200` and `FFX_Ch_IsNearCameraForSmoothing` RVA `0x439140`,
+  return values only, as a check on the composer choice.
+* Optional: `FFX_Mot_StepSequence` RVA `0x4377C0` entry and return, to split a mismatch between the VM
+  and the channels. `FFX_Ch_SetMotionKey` RVA `0x437AC0` entry (the id argument) to log clip changes.
+* `FFX_Mot_RunEvents` RVA `0x434350` entry and return, to log `m_lastEventFrame` and what fired.
+
+At AdvanceFrame entry, copy:
+
+* the step identity: `g_ffxMainStepCounter` RVA `0x1FCBBF0`, `maybe_g_ffxSceneId` RVA `0xF30844`.
+* the globals: `g_ffxStoryProgress` RVA `0xD2D67C` (u16), `g_ffxCurrentEventId` RVA `0xEFBC40`,
+  `g_ffxBtlSubPhase` RVA `0xD2A8E0`, the byte `g_ffxAtelCtx` RVA `0xF26B28` points at,
+  `g_ffxMotKeepSpeed` RVA `0xEFBC34`, `g_ffxStepScale88` RVA `0x1FCBBEC`, `g_ffxMotHalfSpeed` RVA `0xF017F8`,
+  and through `g_ffxCameActiveSlot` RVA `0x1F11430`: byte `+0x64D`, floats `+0x65C..0x667`, `+0x6B0`,
+  `+0x6D0`.
+* the CHR: `+0x000` id, `+0x194` `m_flags1`, `+0x198`, `+0x19C` parent, `+0x684..0x6A3` the two body
+  centres, `+0x70C..0x75B` (entry, group, PC, clip fields, waits, motion id, hokan, frames), `+0x7DC..0x7FF`,
+  `+0x800`, `+0x820`, `+0x870`, `+0x871`, and the pointer `+0x7E8` (`m_motionBundle`) and `+0x748` (channels).
+* the channel array: `[CHR+0x748]`, skeleton joints x 396 bytes, the skeleton joint count being the u16
+  at `[CHR+0x1C0] + 10` (136 for c001).
+* the joints: `[CHR+0x328]`, stride 352, per joint dwords 57..79 (bytes `+0xE4..0x13F`) and byte `+0x144`.
+
+At AdvanceFrame return, copy the channel array, the joint block and the CHR range `+0x70C..0x7FF` again.
+
+Pointers become offsets before replay: every stream pointer in a channel (`+8`, `+0xC`), `m_seqPC`,
+`m_motionEntry`, `m_motionGroup` and `m_eventArray` minus the header address of the bundle they point
+into, which for Tidus's locomotion is his `resident0.mgrp` (the dword at `m_motionBundle` is its header,
+relocation leaves every offset the shipped file has). The next channel pointer at `+0` becomes an index,
+(ptr - `[CHR+0x748]`) / 44.
+
+Replay: load the entry dump into a MotionChr (channels, joints, the CHR fields, the bundle registered the
+way the game did), set the MotionWorld globals and camera from the dump, run the recreation's
+AdvanceFrame (through `FFX_Ch_UpdateMotionAll` pass 4, or directly), and compare the return dump. Joint
+dwords 57..79 and every channel's key, previous key, target and current should match bit for bit. A
+mismatch only in dwords 57..63 with an agreeing 69..75 is the composer choice, which the two hooked
+returns settle. Between steps, the recreation has to be handed what the render job wrote: `m_bodyCentre`,
+`m_prevBodyCentre` and the `m_flags3` bit 4 clear from `FFX_Ch_StepSecondaryPhysics`. Taking each step's
+entry dump as the state, rather than chaining the recreation's own output, sidesteps all of them.
+
+A session that covers the done-when: stand for two idle loops, walk, break into a run, drop back to a
+walk, stop, all with the camera both far (the auto composer) and pulled close (the smoothed one). Any
+field map works, the motion code reads nothing from the map but the scene id.
+
+### 11.13 Still open
+
+1. `FFX_Mot_EvalAnmClip 0x838750`, the `.anm` path for `m_flags1` 0x40 | 0x80000000, is not traced.
+2. The viewer shape of `FFX_Mot_SetByModeIndex` (CHRDATA `+0x108`) is not traced. No game CHR uses it.
+3. The joint smoothing reads the camera, so the pose is per viewer. Section 2.3 item 1 still stands.
+4. `FFX_Ch_StepSecondaryPhysics` and the bone pass that writes `m_bodyCentre` run on worker jobs and
+   feed the next step's composer choice. Neither is ported. Correction 2026-10-13: StepSecondaryPhysics
+   is not on the render job. Its only caller is `FFX_Ch_JointOverrideJob 0x82E390`, which `FFX_Ch_StepAll`
+   posts to worker 0 (0x82FD9A, 0x82FDD6). It also calls the CRT `rand()` at 0x82395B (`rand() % 1000`,
+   a jitter scale). MSVCR110 keeps the rand seed per thread, so that draw does not move the main thread's
+   sequence, see `CHR_POOL.md` section 5.3.
+
+---
+
+## 12. 2026-10-13, CHR field naming pass (PROGRESS 1.6.5)
+
+`ffx_types.h` had 12 runs longer than 16 bytes of `m_i`/`m_f`/`_unk_` fields with no comment saying what
+reads them (CHR 0x0C8, 0x378, 0x40E, 0x4EC, 0x508, 0x6A4, 0x804, 0x840, CHRDATA 0x018, 0x03C, 0x0F9, CHRPART
+0x019). Now there are 2 such runs, CHR `_unk_CC` (0x0CC..0x10B) and `_unk_114` (0x114..0x153), and both say
+why nothing reads them. Sizes and offsets are unchanged. The IDB was read only for this pass.
+
+How the readers were found: every Hex-Rays function where the base is typed CHR, CHRDATA or CHRPART (a ctree
+walk over all 49149 functions), every `[reg+disp]` and immediate in the chr module 0x81F000..0x846000 with
+the base checked by hand, and the external hits in functions that call `FFX_Ch_*`, `FFX_Atel_GetActorChr` or
+`FFX_Battle_GetActor`. The magic DLLs are not in the IDB and not covered. Two IDB typing traps showed up: the
+first loop of `FFX_Ch_RelocateChrData 0x8347A0` walks `g_ffxChrDataTable` through a `CHR *`, and
+`FFX_BtlAi_SetProperty` has battle unit records typed `CHR *`. Their "CHR" hits at 0x12C, 0x384, 0x3F0,
+0x4B0, 0x51C and 0x008..0x00B are not CHR accesses.
+
+Named, with the evidence (all [V] unless marked):
+
+| struct, offset | was | now | evidence |
+|---|---|---|---|
+| CHR 0x0C8 | `_unk_C8` | `m_effectW` | copied with the effect colour by `FFX_Ch_CopyState` 0x8286F2, nothing else [I for the name] |
+| CHR 0x10C | `m_i10C` | `m_rootMatrixOverride` | `FFX_Ch_BuildSkinMatrices` 0x832944 copies it into the root world matrix when there is no parent |
+| CHR 0x110 | `m_f110` | `m_rootScaleDivisor` | 0x832AAD..0x832AD1 divide the CHR scale by it for the second root matrix (0x210) |
+| CHR 0x15C..0x164 | `_unk_15C` | `m_tiltX`, `m_tiltXTarget`, `m_tiltXStep` | `sub_8357F0` 0x8357F0 (ATEL 0xA79ADD) sets them, BuildSkinMatrices 0x8329AD..0x8329F8 slews and applies an X rotation |
+| CHR 0x17C | `_unk_17C` | `m_f17C` | blob shadow parameter, `sub_830CB0` writes 0.2, `sub_82E3E0` 0x82E527 reads it |
+| CHR 0x188 | `_unk_188` | `m_lightOverrideMask` | `sub_836250` 0x836250 picks CHR light slot k over the default per bit k |
+| CHR 0x360 | `m_anim360` | `m_animBrightness` | debug label "P", `FFX_Ch_StepAll` 0x82F5C0 multiplies the material RGB by it while it moves |
+| CHR 0x384, 0x3C4 | `_unk_384` | `m_lightColor[16]`, `m_lightDir[16]` | `FFX_Ch_AccumulateLights` 0x8305A0 resets and sums 4 float4 each |
+| CHR 0x40C..0x4D3 | `_unk_40C`, `_unk_40E`, `_unk_4D0` | `m_lookAtEnabled`, `m_lookAtKindApplied`, `m_lookAtWeightTarget`, `m_lookAtWeight`, `m_lookAtYaw`, `m_lookAtBlendFrames`, `m_lookAtYawMin`, `m_lookAtYawMax`, `m_lookAtRestMatrix`, `m_lookAtMatrix`, `m_lookAtPrevQuat`, `m_lookAtSwitchBlend`, `m_lookAtSide` | `FFX_Ch_UpdateLookAt` 0x8348D0, `sub_834F60`, `sub_834E60` (limits 20 and 160 degrees), `sub_835020` (6.0 frames) |
+| CHR 0x4F0 | `m_f4F0` | `m_height` | `maybe_FFX_Btl_GetUnitHeight` 0x7950F0, and the unit centre is pos.y - height / 2 (0x794C20) |
+| CHR 0x4F4 | `m_f4F4` | `m_rootPointLift` | subtracted from bone 0 y for `m_rootPoint` in `FFX_Ch_UpdateBonePositions` 0x8350F0 |
+| CHR 0x4FC, 0x500, 0x510, 0x514, 0x51C, 0x520 | | `m_waterFloatDepth`, `m_pushWeight`, `m_bodyHeight`, `m_feetDepth`, `m_collisionHeight`, `m_collisionTopY` | the section 6 proposals, applied |
+| CHR 0x6A4, 0x6B4 | `m_vec6A4`, `m_vec6B4` | `m_headPoint`, `m_rootPoint` | section 6 proposals. `m_rootPoint` is also read by ATEL `Ch_056` 0xA7A2C9 |
+| CHR 0x6C4 | `_unk_6C4` | `m_lightPoint[4]` | written by the bone pass, the origin `FFX_Ch_AccumulateLights` measures from |
+| CHR 0x6DC..0x6F4 | `m_p6DC`, `_unk_6E0` | `m_texAnimBlock`, `m_texAnimSlots`, `m_texListA`, `m_texListACount`, `m_texListATotal`, `m_texListB`, `m_texListBCount`, `m_texListBTotal`, `m_texAnimSlotCount` | `sub_83CDD0` 0x83CDD0 lays them out from `CHRDATA.m_texData` |
+| CHR 0x6FC, 0x700 | `m_i6FC`, `m_i700` | `m_texAnimProgram`, `m_texAnimHandle` | `sub_83D0A0` 0x83D0A0, `movie_str__f77C950` 0x77C950, `FFX_Ch_SetTexAnimPattern` 0x83D040 |
+| CHR 0x704, 0x708 | `m_i704`, `m_p708` | `m_texListACopy`, `m_texListACopyActive` | `sub_83C710` copies, `sub_83C940` switches, `sub_83C810` frees |
+| CHR 0x7EC..0x7EE | `_unk_7EC` | `m_anmJointCopyMode`, `m_motionMissing`, `m_b7EE` | `FFX_Mot_EvalAnmClip` 0x8388DE, `FFX_Ch_SetMotionKey` 0x837C03 and 0x837CDD |
+| CHR 0x804..0x81C | `_unk_804`, `m_f814`, `m_f818`, `_unk_81C` | `m_windYaw`, `m_windPitch`, `m_windStrength`, `m_swaySettleAlways`, `m_swaySettleIters`, `m_swayGainY`, `m_swayGainXZ`, `m_swayBattleClamp` | `FFX_Ch_StepSecondaryPhysics` 0x822DE0, `sub_824C90`, `sub_824920` [I for "gain"] |
+| CHR 0x840..0x863 | `_unk_840` | `m_cdfBoundsMin`, `m_cdfBoundsMax`, `m_cdfBoundsInvSize` | `sub_826340` 0x826340 from `FFX_ChCache_GetCdf`, no reader |
+| CHRDATA 0x018..0x068 | `_unk_18`, `m_f1C`, `m_f28`, `m_f2C`, `_unk_3C` | `m_texDataAux`, `m_collisionRadiusScale`, `m_height`, `m_rootPointLift`, `m_f3C`, `m_lookAtMirror`, `m_headSwayAxis`, `m_headSwayFlip`, `m_headRestRot`, `m_paramRevision`, `m_specIntensity`, `m_specPower`, `m_p68` and placeholders with comments | `FFX_Ch_InitChrDataFromBlob` 0x825EE0 (the section 9 parameter block), `FFX_Ch_UpdateBlink`, `FFX_Ch_UpdateLookAt`, `FFX_Ch_StepAll` [I for the two spec names] |
+| CHRDATA 0x0FC..0x11C | `_unk_F9` | `m_anmFrames`, `m_anmFile`, `m_anmName`, `m_sysMotTbl`, `m_relationTbl`, `m_motRelCount`, `m_motRelTabs`, `m_p11C` | `FFX_Ch_LoadAnmFile` 0x8283C0, `sub_837FA0`, `FFX_Ch_SetMotionKey` 0x837B05, `FFX_Ch_DataFree` 0x8258D0 |
+| CHRPART 0x01C, 0x034 | `_unk_19`, `_unk_34` | `m_swayPrevPos[3]`, `m_boneBufBFilled` | `FFX_Ch_StepSecondaryPhysics`, base `m_parts` stride 56 |
+
+Corrections to the old comments:
+
+- `m_p708` is a byte flag (`movsx` at 0x82716B), not a heap block, and `m_i700` is a slot index in the
+  texture animation table at 0x2310000, not a pointer. `FFX_Ch_MoveChrMemory` relocates the slot's data
+  through `sub_77E9F0` / `sub_77EA10`, not the field.
+- `m_p6DC` is the texture animation block, not cloth. `CHR_POOL.md` proposes `FFX_Ch_ReleaseClothBlock` for
+  `sub_83C810`, which frees `m_texListACopy` (0x704). "Cloth" is wrong there too, a better name is
+  `FFX_Ch_FreeTexListACopy`.
+- `m_blinkState` (0x4D4) is the idle head sway on bone 13, as the IDB comment on `FFX_Ch_UpdateBlink` says.
+- `sub_82E3E0` never reads its second argument, so the 64 bytes at 0x114 that both shadow callers pass are
+  dead in this build.
+
+Still unnamed, each with a comment in `ffx_types.h`: CHR `_unk_CC` (64 bytes) and `_unk_114` (64 bytes),
+`_unk_404`, `_unk_40F`, `_unk_508`, `_unk_518`, `_unk_6D4`, `_unk_6F8`, `_unk_864`, `m_f4EC`, `m_f4F8`,
+`m_f17C`, `m_i408`, `m_anim378`, and in CHRDATA `m_f20`, `m_f24`, `m_f30`, `m_f3C`, `m_f50`, `m_f60`,
+`m_b64`, `m_b65`, `m_p68`, `m_p11C`. Most have a writer and no reader in the IDB, so only the magic DLLs or
+nothing at all can give them meaning.

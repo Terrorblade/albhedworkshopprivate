@@ -180,6 +180,24 @@ namespace ffx
 		return false;
 	}
 
+	int CountColliders()
+	{
+		Character* base = *Game.chrArray;
+		int count = *Game.chrCount;
+		if (!base || count <= 0)
+			return 0;
+		int colliders = 0;
+		for (int i = 0; i < count; ++i)
+		{
+			BYTE* entry = (BYTE*)base + Chr::Stride * (DWORD)i;
+			if (*(volatile BYTE*)(entry + Chr::InUse) == 0)
+				continue;
+			if ((*(volatile DWORD*)(entry + Chr::Flags1) & ChrFlag1::NoCollide) == 0)
+				++colliders;
+		}
+		return colliders;
+	}
+
 	Character* LivePlayerCharacter()
 	{
 		Character* player = Game.GetPlayerChr();

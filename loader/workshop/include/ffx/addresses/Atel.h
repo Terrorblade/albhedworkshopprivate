@@ -111,7 +111,7 @@ namespace ffx
 		// write it.
 		const DWORD AtelActorCachePtr = 0x00F270E4;   // void *, the cached actor
 		const DWORD AtelActorCacheId = 0x00F270E0;    // WORD, which id it is
-		const DWORD AtelActorCacheGen = 0x00F270DC;   // WORD, the ctx+26 it was valid for
+		const DWORD AtelActorCacheCtx = 0x00F270DC;   // WORD, the context index (ctx+0x1A) it was valid for
 		const DWORD AtelActorClampCount = 0x00F270D8; // DWORD, bumped on an out of range id
 		// Which actor the ATEL frame loop is on. FFX_Atel_GetActorPos uses it as the
 		// FALLBACK for an out of range actor id, so a bad id does not fault, it quietly
@@ -404,7 +404,7 @@ namespace ffx
 				AtelFindActorByPartyChar,
 				AtelActorCachePtr,
 				AtelActorCacheId,
-				AtelActorCacheGen,
+				AtelActorCacheCtx,
 				AtelActorClampCount,
 				AtelCurrentActorIndex,
 				AtelGetPlayerActorId,

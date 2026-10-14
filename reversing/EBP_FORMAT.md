@@ -266,3 +266,30 @@ entry_0_18:
 - **Which `.ebp` the game loads for a given map.** `sub_88D2C0(12, 18*gameModeId)` indexes a resource
   table by mode id. Dumping that table gives the map-id to event-name mapping, which is what the mod
   needs in order to know which script owns a given field.
+
+## 2026-10-13: header readers, the pool segments and the package slots
+
+Traced for the recreation's ATEL loader (PROGRESS 11.1). The full write-up, with the actor constructor,
+the context reset and the three context setups, is `ATEL_CONTEXT.md`. Corrections to the tables above:
+
+- **`atel+0x08` is the end of the entry record table**, not only the name string. `FFX_Atel_GetEntryRecord
+  0x86BFE0` computes `base + 32 * entryPoint` and falls back to record 0 when that reaches `+0x08`. The
+  name string starts there because it follows the table. 390 of 390 spans are a multiple of 32.
+- **`atel+0x18` is the system actor id**, `0xFFFF` for none. `FFX_Atel_StartEntryArrivalScript 0x86ED80`
+  runs the doorway arrival script on it, and the Came syscalls compare their actor against it through
+  `FFX_Atel_GetSystemActorId`. It names a type 1 actor in 383 files and is `0xFFFF` in 14.
+- `atel+0x1A` is 0 in 383 files, `0xFFFF` in 11, 1 in 2 and 4 in 1. Still no reader, nor for `+0x00`,
+  `+0x1E`, `+0x24`, `+0x28`.
+- Definition `+0x10` is the size of the actor's class 3 storage. The constructor clears that many bytes
+  at `block + def[+0x2C]` in the loaded image, so the image is written to at map load.
+- **The segment decides the slot, the type has to fit it.** Over all 397 files every type sits in exactly
+  one pool segment: type 1 in the 2904 byte one, type 4 in 1368, types 2 and 3 in 1464, types 5 and 6 in
+  744, type 0 in the 48 byte small segment. All 361 monster blocks hold only type 2 actors.
+- **The loader reads fixed container slots**, `+0x04`, `+0x08`, `+0x0C` and `+0x14`, never the `-1`
+  terminated list, and never `+0x10`. In the 32 four-section packages `+0x14` is the end of data
+  sentinel (the file size in all 32), which the loader takes as the default message table, so that
+  table points one past the image. Ten of them are reachable by event id: 0, 2, 230, 240, 321, 323,
+  340, 352, 354, 359.
+- **Which `.ebp` a map loads** (the last known unknown above): asset kind 12, row `18 * eventId`, 402
+  event ids, 348 rows named, 330 of them shipped. The boot scenes 393..399 have empty rows and take
+  their paths from `off_C334B8` (`host0:/ffx/master/jppc/event/obj/sc/sceneN/sceneN.ebp`).

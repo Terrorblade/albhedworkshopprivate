@@ -645,6 +645,20 @@ The real problems:
   kit holds the completion and not just sub phase 34. Spoils also carry over silently between
   battles that skip the results screen, so the staging buffer at 0x2310EA0 belongs in the world
   hash.
+  The motion port found a hard cap that spawned bodies run into. `FFX_Ch_ResolveCollisionsAll
+  0x83D3B0` appends every in use, visible CHR without flags1 0x100 to `g_ffxChrCollideList 0x1301B08`
+  every step with no bound check. The list holds 40 and `g_ffxChrCollideCount 0x1301BA8` sits right
+  after it, so a 41st collider's slot is the count and the Z sort then reads the number 41 as a CHR
+  pointer (checked in IDA). Every spawned co-op body adds a collider, so the kit has to count the
+  map's colliders before a spawn and refuse (or set 0x100 on the body) at 40.
+  Summons (`reversing/SUMMONS.md`) are a design question more than a desync. `FFX_Btl_BeginSummon
+  0x7ADF90` swaps every other party member out, including characters other players own, and the
+  summon state (`g_ffxBtlSummonPushed`, `g_ffxBtlAeonOut`, `g_ffxBtlSummoner` at 0x112C9E7..E9 and
+  the two saved order arrays) is one slot, so only one aeon can be out. The aeon's input belongs
+  to whoever owns the summoner (aeon +0x6D1). The entrance waits on disk loads and the Ixion, Shiva
+  and Anima effect DLLs draw the battle LCG by different amounts for the full and short entrance,
+  so peers must agree on option bit 0x800 and on each aeon's first summon bit, and the release
+  needs the same host ordered wait as H1.
 
 **Blitzball is NOT on this list any more, and the old entry was wrong in every part.** It claimed
 nine wall-clock sites through `FFX_Input__getTimeSeconds 0x630C40`. That address is

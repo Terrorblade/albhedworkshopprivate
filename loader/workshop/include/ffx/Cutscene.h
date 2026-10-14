@@ -502,6 +502,13 @@ namespace ffx
 	// file says. CALL FROM THE FRAME THREAD ONLY, it walks several subsystems.
 	bool CatchUpAllowed();
 
+	// The same question without the fallback. CatchUpAllowed answers "yes" when the
+	// function cannot be called, which is the right default for a co-op decision and the
+	// wrong one for a recording, where a guessed value would be read back as the
+	// engine's. This returns false and leaves out alone when the function is not
+	// callable, so the caller can record "unknown". Same thread rule.
+	bool QueryCatchUpAllowed(bool* out);
+
 	// ---------------------------------------------------------------------------
 	// FMV
 	//

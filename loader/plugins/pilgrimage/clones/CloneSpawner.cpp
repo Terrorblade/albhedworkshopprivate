@@ -179,6 +179,13 @@ namespace pilgrimage
 			Log("%s refused: pool full, %d live of %d", why, Game.CountLive(), *Game.chrCount);
 			return -1;
 		}
+		const int colliders = CountColliders();
+		if (colliders >= CollideListCapacity)
+		{
+			SetStatus("map has %d colliding characters, the engine's limit is %d", colliders, CollideListCapacity);
+			Log("%s refused: %d colliders already, one more overruns g_ffxChrCollideList", why, colliders);
+			return -1;
+		}
 		if (!EnsureCharacterDataLoaded(chrId))
 			return -1;
 

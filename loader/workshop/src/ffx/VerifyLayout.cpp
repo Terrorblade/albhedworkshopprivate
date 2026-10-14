@@ -45,6 +45,8 @@ namespace ffx
 			{ "data file", &Rva::DataFileRvaList },
 			{ "debug", &Rva::DebugRvaList },
 			{ "memory", &Rva::MemoryRvaList },
+			{ "camera build", &Rva::CameraRvaList },
+			{ "motion", &Rva::MotionRvaList },
 			// Add new areas here, one line each, after adding the include to
 			// include/ffx/Addresses.h.
 		};

@@ -114,6 +114,11 @@ namespace workshop
 	bool LoadSettings(const wchar_t* fileName);
 	bool SaveSettings(const wchar_t* fileName);
 
+	// The full path Load and Save use for fileName, for a plugin that wants to notice the
+	// file being edited while the game runs and load it again. False if the game's own
+	// path could not be read.
+	bool SettingsPathFor(const wchar_t* fileName, wchar_t* out, size_t count);
+
 	// A hash over every SettingShared value, so two peers can tell in one comparison
 	// whether their game-changing settings agree. Local settings are not included,
 	// which is the whole point. The accumulation is order independent, so two builds

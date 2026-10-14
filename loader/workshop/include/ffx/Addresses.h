@@ -64,6 +64,7 @@
 
 #include "ffx/addresses/Atel.h"
 #include "ffx/addresses/Battle.h"
+#include "ffx/addresses/Camera.h"
 #include "ffx/addresses/Character.h"
 #include "ffx/addresses/Cutscene.h"
 #include "ffx/addresses/DataFile.h"
@@ -78,4 +79,5 @@
 #include "ffx/addresses/MenuSystem.h"
 #include "ffx/addresses/Memory.h"
 #include "ffx/addresses/Minigames.h"
+#include "ffx/addresses/Motion.h"
 #include "ffx/addresses/WorldState.h"

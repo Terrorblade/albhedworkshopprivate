@@ -198,6 +198,7 @@ and that is where the game-logic data lives.
 |---|---|---|---|
 | `VBF_FORMAT.md` | `vbf.py` | the archive container | complete, header MD5 verified, 412 sampled files decompress exactly |
 | `EBP_FORMAT.md` | `ebp.py` | the ATEL event scripts, container and full bytecode | 397/397 parse, 17.1M instructions decode, disassembler works |
+| `ATEL_CONTEXT.md` | `ebp.py` | the event package load, the actor pool segments, the actor constructor and the script context setups | traced in IDA, segment census over 397/397, ported in the recreation |
 | `CHR_FORMAT.md` | `chrfile.py` | the character containers | 865/865 parse, 0 errors |
 | `MGRP_FORMAT.md` | `mgrp.py` | motion groups and the sequence bytecode | 3,156/3,156 parse, 0 rejections |
 | `MAP_FORMAT.md` | `mapfile.py` | map containers and the walkmesh | 491/491 parse, exports OBJ |

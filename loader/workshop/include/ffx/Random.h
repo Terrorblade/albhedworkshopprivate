@@ -32,6 +32,15 @@ namespace ffx
 	// True when the three globals are readable.
 	bool RandomStateAvailable();
 
+	// The game RNG has 68 streams, FFX_Rand_Stream 0x7988F0 picks one by index and each
+	// keeps one dword of state. Camera shake draws stream 9, so the state of stream 9
+	// before and after a call bounds the draws the call made. Reads one dword, and the
+	// span is validated once rather than on every call, so this is cheap enough for a
+	// per step recorder. False for an index outside 0..67.
+	const int RandStreamCount = 68;
+	const int RandStreamCameraShake = 9;
+	bool ReadRandStreamState(int stream, DWORD* out);
+
 	void LogRandomState();
 
 }

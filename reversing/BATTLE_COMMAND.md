@@ -330,7 +330,7 @@ So there are two places to look for "what is this actor doing": the live queue s
 | `FFX_Btl_CmdQueue_GetActorCmdOrLast` (falls back to actor+0x72C) | 0x7B09B0 | 0x3B09B0 |
 | `FFX_Btl_CmdQueue_RemoveAt` | 0x7B0860 | 0x3B0860 |
 | `FFX_Btl_CmdQueue_RemoveAllForActor` | 0x7B0830 | 0x3B0830 |
-| `FFX_Btl_CmdQueue_FindByVariant` | 0x7B0720 | 0x3B0720 |
+| `FFX_Btl_CmdQueue_IsVariantAbsent` | 0x7B0720 | 0x3B0720 |
 | `FFX_Btl_CmdQueue_FindByPriority` | 0x7B0770 | 0x3B0770 |
 | `FFX_Btl_CmdQueue_ActorHasOtherPending` | 0x7B07D0 | 0x3B07D0 |
 
@@ -723,7 +723,7 @@ battle animations and camera keep running while the CTB waits.
   paths I read.
 * **Command record `+0x01`, the variant, beyond 0 and 1.** The executor rejects >= 1 for
   units 0..30 with the internal error "com", and the CTB tick always pushes 0. I read 1 as
-  "counter or extra turn" from `FFX_Btl_CmdQueue_FindByVariant` being called with 1 in
+  "counter or extra turn" from `FFX_Btl_CmdQueue_IsVariantAbsent` (formerly FindByVariant, it returns 1 when absent) being called with 1 in
   `FFX_Btl_RunAiAndCommit`, but I did not find the site that pushes a 1 for a real counter, so
   that reading is **inferred**.
 * **Command record `+0x06`, the post action kind.** It is copied into `actor+0xDEA` and

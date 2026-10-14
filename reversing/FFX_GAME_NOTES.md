@@ -119,6 +119,11 @@ Per-frame passes over the whole array, all called straight from `FFX_MainStep 0x
 | `0x82ED50` | `FFX_Ch_StepAll` | per-viewport render state, 4272 bytes |
 | `0x830180` | `FFX_Ch_ShadowPassAll` | only CHRs with `m_flags2` bit 0x10 |
 
+2026-10-13: `FFX_Ch_UpdateCameLenAndZClip 0x82E220` runs inside `FFX_Ch_StepAll`'s third walk (0x82F256), so
+before the shadow pass, not after it. `FFX_Ch_ShadowPassAll` is dead in retail: its one caller pushes the
+effects pass index, 0 on the only path that reaches it, and it returns on 0. The pool itself, the spawn and
+dispose rules, the worker jobs each pass posts and a capture recipe are in `CHR_POOL.md`.
+
 Both batch passes queue `FFX_Ch_UpdateRenderJob 0x833530` on the Phyre worker pool via
 `FFX_Ch_DispatchUpdateJob 0xA44B90`. Render side: `FFX_Ch_BuildSkinMatrices 0x832760` builds the
 joint palette and `FFX_ChrInstance_UploadBoneMatrices 0x63BE60` memcpys it into the Phyre mesh

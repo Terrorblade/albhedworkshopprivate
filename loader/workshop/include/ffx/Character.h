@@ -59,6 +59,18 @@ namespace ffx
 	// documented precondition.
 	bool PoolHasFreeSlot();
 
+	// g_ffxChrCollideList 0x1301B08 holds 40 CHR pointers and FFX_Ch_ResolveCollisionsAll
+	// fills it every frame with no bound check. The count g_ffxChrCollideCount sits in
+	// the slot after the 40th, so a 41st collider overwrites it and the Z sort then reads
+	// the number 41 as a CHR pointer. Every spawned body is a collider, so a spawn must
+	// leave CountColliders() below this.
+	const int CollideListCapacity = 40;
+
+	// In use CHRs without ChrFlag1::NoCollide. The engine also skips hidden ones, but
+	// visibility changes from frame to frame, so this counts them anyway and errs on the
+	// safe side.
+	int CountColliders();
+
 	// Convenience wrapper, because Game.IsLive returning 0 for live reads backwards
 	// at every call site.
 	inline bool IsLive(Character* chr)

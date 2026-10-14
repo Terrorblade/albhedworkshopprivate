@@ -680,6 +680,15 @@ namespace ffx
 		return allow() != 0;
 	}
 
+	bool QueryCatchUpAllowed(bool* out)
+	{
+		if (!out || !Callable(Rva::StepPacingAllowCatchUp, &allowCatchUpVerdict, "allow catch-up"))
+			return false;
+		IntNoArgsFn allow = (IntNoArgsFn)(UINT_PTR)ModuleAddress(Rva::StepPacingAllowCatchUp);
+		*out = allow() != 0;
+		return true;
+	}
+
 	// ---------------------------------------------------------------------------
 	// FMV
 	// ---------------------------------------------------------------------------

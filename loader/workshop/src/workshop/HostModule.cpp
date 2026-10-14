@@ -11,6 +11,8 @@ namespace workshop
 
 		BYTE* base = NULL;
 		DWORD imageSize = 0;
+		DWORD imageTimeDateStamp = 0;
+		DWORD imageCheckSum = 0;
 
 		// Set by SweepImage below, which MEASURES whether the whole host image is
 		// committed and readable rather than assuming it. Readable's fast path is off
@@ -145,6 +147,16 @@ namespace workshop
 		return imageSize;
 	}
 
+	DWORD ModuleTimeDateStamp()
+	{
+		return imageTimeDateStamp;
+	}
+
+	DWORD ModuleCheckSum()
+	{
+		return imageCheckSum;
+	}
+
 	bool ReadPeHeaders()
 	{
 		const IMAGE_DOS_HEADER* dos = (const IMAGE_DOS_HEADER*)base;
@@ -161,8 +173,12 @@ namespace workshop
 			return false;
 		}
 		imageSize = nt->OptionalHeader.SizeOfImage;
-		Log("  header: in-memory ImageBase=0x%08X SizeOfImage=0x%08X",
-		    nt->OptionalHeader.ImageBase, nt->OptionalHeader.SizeOfImage);
+		imageTimeDateStamp = nt->FileHeader.TimeDateStamp;
+		imageCheckSum = nt->OptionalHeader.CheckSum;
+		Log("  header: in-memory ImageBase=0x%08X SizeOfImage=0x%08X TimeDateStamp=0x%08X "
+		    "CheckSum=0x%08X",
+		    nt->OptionalHeader.ImageBase, nt->OptionalHeader.SizeOfImage, imageTimeDateStamp,
+		    imageCheckSum);
 
 		SweepImage();
 		return true;

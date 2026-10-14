@@ -99,7 +99,7 @@ namespace ffx
 		const DWORD BtlCmdQueueInsert = 0x003B0A30;
 		const DWORD BtlCmdQueueRemoveAt = 0x003B0860;
 		const DWORD BtlCmdQueueRemoveAllForActor = 0x003B0830;
-		const DWORD BtlCmdQueueFindByVariant = 0x003B0720;
+		const DWORD BtlCmdQueueIsVariantAbsent = 0x003B0720;
 		const DWORD BtlCmdQueueFindByPriority = 0x003B0770;
 		const DWORD BtlCmdQueueActorHasOtherPending = 0x003B07D0;
 		const DWORD BtlCmdConsumeItems = 0x003B0C20;
@@ -976,7 +976,7 @@ namespace ffx
 				BtlCmdQueueInsert,
 				BtlCmdQueueRemoveAt,
 				BtlCmdQueueRemoveAllForActor,
-				BtlCmdQueueFindByVariant,
+				BtlCmdQueueIsVariantAbsent,
 				BtlCmdQueueFindByPriority,
 				BtlCmdQueueActorHasOtherPending,
 				BtlCmdConsumeItems,

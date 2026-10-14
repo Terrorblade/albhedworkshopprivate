@@ -69,7 +69,7 @@ Read with: `BATTLE_CTB_AND_STATUS.md` (CTB init, the per-unit stream map), `RAND
 | 0x112C9FF | (`dword_112C9FC` byte 3) | escape mode. 0 roll, 1 never, 2 always. `Btl 166` writes it, begin resets it to 0 | [V] |
 | 0x112CA00 | `g_ffxBtlEscapeAllowed` | 1 at begin, `Btl 184` writes it, read by `FFX_Btl_GetEscapeCommandId` | [V] |
 | 0x112C9E5 | `g_ffxBtlScriptMode` | `Btl 275` = 1, `Btl 276` = 2. Zeroed at begin by the dword store of 0xFF to 0x112C9E4 | [V] |
-| 0x112C9E7 | (byte 3 of that dword) | party arrangement was pushed by `sub_7ADF90`, so the commit restores it | [V] |
+| 0x112C9E7 | (byte 3 of that dword) | party arrangement was pushed by `FFX_Btl_BeginSummon`, so the commit restores it | [V] |
 | 0x1326B48 | `g_ffxFieldBootMode` | the battle options, section 3.4 | [V] |
 | 0x1136068 | `dword_1136068` | 31 x 280 byte reward records, allocated and zeroed per battle | [V] |
 | 0x2310EA0 | `g_ffxTreasureStaging` | the spoils buffer, 432 bytes, section 4.1 | [V] |
@@ -145,14 +145,14 @@ At the top of every call: with `g_ffxBtlDbgDvdSlowStart` and `byte_112A919` non 
 | 34 | | `g_ffxBtlMapLoadPending == 0`, cleared on the loader **worker** (H1) | disk, off thread [V] |
 | 10 | section 2.6 | runs once, falls into 11 | [V] |
 | 11 | spoils participation flags, party CHR loads, section 2.6 | falls into 12 | [V] |
-| 12 | | `sub_7AD180() == 0` or `g_ffxBattleChrLoadsInFlight <= 0` (H5), then event 117 and `FFX_Btl_LoadMonsterData` | disk, off thread [V] |
+| 12 | | `FFX_Btl_GetPendingChrLoads() == 0` or `g_ffxBattleChrLoadsInFlight <= 0` (H5), then event 117 and `FFX_Btl_LoadMonsterData` | disk, off thread [V] |
 | 13 | set by `FFX_Btl_LoadMonsterData` while monster files load, one read per distinct monster, each completion re-enters it through `sub_783990` | the last one calls `FFX_Btl_RegisterMonsterMotions` and sets 14 | ROM reads [V] |
 | 14 | monster CHR loads for slots 20..27 with a type id and `+0x24` | to 15 | [V] |
 | 15 | | the CHR loads drain, then event 118, `FFX_Btl_LoadFootData(field monster section +2)` | disk [V] |
 | 17 | (not in the switch) | foot data read completes, its callback `0x783DD0` | ROM read [V] |
 | 18 | `FFX_Btl_LoadWeaponModel` for each front party unit 0..17, one per completion | all issued, to 19 | ROM reads [V] |
-| 19 | weapon CHR loads `sub_7AD3F0(2, ..)` for units 0..17 with `+0xDC8` | to 20 | [V] |
-| 20 | | `sub_7AD180() == 0` (or the story flag path) | disk [V] |
+| 19 | weapon CHR loads `FFX_Btl_QueueChrLoad(2, ..)` for units 0..17 with `+0xDC8` | to 20 | [V] |
+| 20 | | `FFX_Btl_GetPendingChrLoads() == 0` (or the story flag path) | disk [V] |
 | 21 | the advantage message: pre-emptive `sub_79CFD0(2, 0, 0, 17, 25)`, ambush `sub_79CFD0(3, 0, 0, 17, 25)`, or 100 for battle id 0x01E60046 | to 22 | [V], "message" [I] |
 | 22 | | `dword_112C910 == 0` (the message box), `dword_113618C == 0`, no actor with `+0x433`, `dword_112CA64 == 0`. Then `g_ffxBtlSubPhase = 1`, `word_112C022 = 1`, `sub_7982A0(5, ..)`, event 124 | text, timers [V] |
 
@@ -208,7 +208,7 @@ Then `FFX_Btl_LoadCharRecordIntoActor 0x79C5F0`: max HP / MP (record +0x24, +0x2
 and from each of the two equipment entries in the save block: entry +8 -> +0x5C1, +9 -> +0x5C7,
 +10 added into +0x5D8, and every auto-ability row ORed in (a_ability.bin, the +0x6BC / +0x6BE words
 among them). Then `sub_78D270`, a clamp of HP and MP to max. [V] Then `+0xF88 =
-dword_1136068 + 280*k` (an all zero record, 4.2), `sub_78D790`, `sub_79BB50` (command lists),
+dword_1136068 + 280*k` (an all zero record, 4.2), `FFX_Btl_ComputeOverdriveRefDamage`, `sub_79BB50` (command lists),
 `FFX_Btl_BuildActorEquipLists`, and with `byte_112C9CE` or script mode 2 `sub_79B470(k, 0x3002, 1)`.
 [V]
 
@@ -245,7 +245,7 @@ The roll is in BATTLE_CTB_AND_STATUS.md 1.3. The battle count is also bumped by
 
 **Phase 11**: `g_ffxBattleChrLoadsInFlight = 0`, then for units 0..17 on the field
 `g_ffxTreasureStaging[unit] = 1` (the participation flag, 4.1) and the body load
-`sub_7AD3F0(0, unit, unit, +4, 1)`, then `sub_7AD470(unit, 3)`. [V]
+`FFX_Btl_QueueChrLoad(0, unit, unit, +4, 1)`, then `sub_7AD470(unit, 3)`. [V]
 
 **Phase 12 -> 13 -> 14.** `FFX_Btl_LoadMonsterData 0x783680` loads one mNNN.bin per call and
 returns. Its completion `sub_783990` binds the sections and calls it again. A slot whose type id
@@ -308,7 +308,7 @@ Read off the disassembly at 0x7928D0..0x7929AF. [V] Notes:
   count as kills when `a3 == 0` (4.2), so 4 needs something that never calls it. [V] / [I] which
   shipped battles reach 4
 - While an aeon is out (`(u8)unk_112C9E8 != 0`), results 1 and 3 are not an end. End phase 2 calls
-  `sub_78E0A0` (the aeon gets 0 HP and a recovery countdown), then either `sub_7AE1A0` or
+  `sub_78E0A0` (the aeon gets 0 HP and a recovery countdown), then either `FFX_Btl_QueueAeonTransition` or
   `sub_7AEF20(0)`, which brings the party back, and goes back to phase 1. That is item 1.11.11. [V]
 
 ### 3.2 `FFX_Btl_EndPhaseStep 0x7917D0`, the end phases
@@ -349,7 +349,7 @@ returnMode = 0;
 
 **`FFX_Btl_CommitActorsToSave 0x785FC0`**, exactly: [V]
 
-1. `sub_7AEEC0`: if `0x112C9E7` is set (a script pushed the arrangement with `sub_7ADF90`), restore
+1. `FFX_Btl_RestorePushedPartyOrder`: if `0x112C9E7` is set (a summon pushed the arrangement in `FFX_Btl_BeginSummon 0x7ADF90`, corrected 2026-10-13, see `SUMMONS.md`), restore
    `g_ffxBattlePartyOrder[7]` from 0x112C89C and `g_ffxBattleAeonOrder[17]` from 0x112C8B4, and
    clear the flag. So a forced party does not leak into the field.
 2. `FFX_Btl_CommitPartyToField 0x786930`: `g_ffxBattlePartyOrder[0..2]` -> saveData+0x3D58..0x3D5A.
@@ -741,7 +741,7 @@ screen as one replicated commit, or apply the staged spoils itself at a fixed st
 - **ASYNC_LOAD_REQUESTS.md** H1: phase 7 goes to phase 10 directly when the battle map equals the
   current scene id, and then H1 does not apply. [V]
 - **GAME_STATE.md**: `g_ffxTreasureStaging 0x2310EA0` is also the battle spoils buffer (4.1), and
-  `FFX_Btl_CommitPartyToField` is preceded by `sub_7AEEC0`, which restores a pushed arrangement, so
+  `FFX_Btl_CommitPartyToField` is preceded by `FFX_Btl_RestorePushedPartyOrder`, which restores a pushed arrangement, so
   "a party change made inside battle survives" holds only when no script pushed one. [V]
 - **CHEAT_SAVEDATA.md** 4.1: equipment entry +0x08, +0x09, +0x0A do have a reader,
   `FFX_Btl_LoadCharRecordIntoActor` (+8 -> actor +0x5C1, +9 -> +0x5C7, +10 added into +0x5D8). [V]
@@ -775,7 +775,7 @@ These are appended as dated notes to the four docs.
 | 0x783990 | sub_783990 | `FFX_Btl_OnMonsterFileLoaded` | binds and re-enters the loader |
 | 0x79CB10 | sub_79CB10 | `FFX_Btl_LoadEnemyUnitParams` | LoadUnitParams for slots 20..27 |
 | 0x79A0E0 | sub_79A0E0 | `FFX_Btl_ClampUnitHpMp` | clamp HP and MP to max |
-| 0x7AEEC0 | sub_7AEEC0 | `FFX_Btl_RestorePushedPartyOrder` | undoes `sub_7ADF90` before the commit |
+| 0x7AEEC0 | FFX_Btl_RestorePushedPartyOrder | `FFX_Btl_RestorePushedPartyOrder` | undoes `FFX_Btl_BeginSummon` before the commit |
 | 0x78E0A0 | sub_78E0A0 | `FFX_Btl_StartAeonRecovery` | HP 0, countdown = ply_rom +43 + 1 [I] meaning |
 | 0x7B1540 | sub_7B1540 | `FFX_Btl_ApplyVictorOverdrive` | mode 11 counter and +20 gauge [I] mode name |
 | 0x78A780 | sub_78A780 | `FFX_Btl_RollEscape` | kind 0 draw < 191 |

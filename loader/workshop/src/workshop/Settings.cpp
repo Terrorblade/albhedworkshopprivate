@@ -346,6 +346,13 @@ namespace workshop
 		return true;
 	}
 
+	bool SettingsPathFor(const wchar_t* fileName, wchar_t* out, size_t count)
+	{
+		if (!fileName || !out || count == 0)
+			return false;
+		return SettingsFilePath(fileName, out, count);
+	}
+
 	bool LoadSettings(const wchar_t* fileName)
 	{
 		wchar_t path[MAX_PATH];

@@ -230,6 +230,11 @@ namespace ffx
 		// bit gets only the flag set, which is why MarkDirty is cheap in the common case.
 		const DWORD HasPartVertexBuffers = 0x00200000;
 
+		// Leaves the character out of the CHR against CHR collision sweep.
+		// FFX_Ch_ResolveCollisionsAll 0x83D3B0 appends every in use, visible CHR
+		// WITHOUT this bit to g_ffxChrCollideList every frame. See CollideListCapacity.
+		const DWORD NoCollide = 0x00000100;
+
 	} // namespace ChrFlag1
 
 	// ---------------------------------------------------------------------------

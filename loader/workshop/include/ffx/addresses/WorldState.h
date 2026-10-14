@@ -248,6 +248,14 @@ namespace ffx
 		// from the package's own entry record. Not a warp argument.
 		const DWORD SaveDataGetSceneId = 0x0048D690;
 
+		// int, the IDB's maybe_g_ffxSceneId. The event id the scene loader is loading or has
+		// loaded, written only by FFX_Scene_Init 0x88E070 BEFORE the unload and load, so it
+		// changes a step earlier than save word +0x00 and earlier than EvCurrentEventId.
+		// 23 at the retail title. Read as a per scene patch key by 36 sites, among them
+		// FFX_Came_ActivateScreen (scene 208, the magic 540 near plane) and
+		// FFX_Ch_WalkmeshMove (scene 298), which is why a recording of either carries it.
+		const DWORD LiveSceneId = 0x00F30844;
+
 		// ---------------------------------------------------------------------------
 		// THE MAP/EVENT LIST. Asset kind 12 of the game's own path table, which is always
 		// populated, unlike the name table below.
@@ -413,7 +421,7 @@ namespace ffx
 			    MapScreenFadeRate, MapReturnToTitle, SceneInit, MapLeaveFieldRequest,
 			    AutoTestJumpMap, MapChangePending, MapChangeDelayFrames,
 			    MapChangeDelayFlag, SceneLoaded, QuitPseudoMapId, DebugMode,
-			    SaveDataGetMapId, SaveDataGetEntryPoint, SaveDataGetSceneId,
+			    SaveDataGetMapId, SaveDataGetEntryPoint, SaveDataGetSceneId, LiveSceneId,
 			    GetAssetLoader, AssetLoaderTable, AssetSelectKind, AssetGetPathForIndex, AssetGetSizeForIndex,
 			    AssetCurrentKindBase, AssetCurrentKind, AssetResolvePath, AssetKindBaseTable,
 			    AssetPathTable, AssetPathSubstKeys, AssetPathSubstValues,

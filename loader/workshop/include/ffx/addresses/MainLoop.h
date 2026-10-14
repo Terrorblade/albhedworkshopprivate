@@ -85,6 +85,15 @@ namespace ffx
 		const DWORD CatchUpExtraSteps = 0x00EFB814; // int, pacing mode 1 only
 		const DWORD PacingMode = 0x00EFB8A0;        // int, 0 accumulator, 1 timing track
 
+		// The two fractions FFX_StepPacing carries between frames in mode 0, both float.
+		// Frac60 is the part of a 1/60 s tick left over, Frac30 the part of a 1/30 s step.
+		// Every mode 0 decision is a function of these two, the dt argument, the 0.3 clamp
+		// and FFX_StepPacing_AllowCatchUp, so these are what a recorded pacing run has to
+		// carry for a recreation to reproduce PendingSteps. Both are reset to 0 when the
+		// catch-up gate refuses.
+		const DWORD PacingFrac60 = 0x00EFB7F8; // float, g_ffxPacingFrac60
+		const DWORD PacingFrac30 = 0x00EFB7FC; // float, g_ffxPacingFrac30
+
 		// ---------------------------------------------------------------------------
 		// The engine's own simulate-without-presenting switch.
 		//
@@ -278,6 +287,8 @@ namespace ffx
 				PendingSteps,
 				CatchUpExtraSteps,
 				PacingMode,
+				PacingFrac60,
+				PacingFrac30,
 				IsCatchUpStep,
 				IsCatchUpStepRender,
 				PhyreFrameTickCount,

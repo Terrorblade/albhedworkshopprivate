@@ -232,7 +232,8 @@ bytes from the copy strides]. Index type 8 is u32 [I].
 - `ClothInstancingDynamicMesh` is a decorator. +28 the inner mesh (the original mesh of the segment,
   or a `DynamicMeshDefaultImplmenetation` stub), +32 the Color semantic, +36 type 3 (float4). [V]
 - Installed by `sub_6E2600` from `sub_6A1320` from `ClassCharacter__createInstance 0x63C540` (at
-  0x63C65F), only for segments whose m_clothmodelIndex and m_clothIndex (+32, +36) are not -1. The
+  0x63C65F), once per mesh instance when any segment of its mesh has m_clothmodelIndex and m_clothIndex
+  (+32, +36) both not -1 (0x6A1364, 0x6A136A, see CHR_CLUSTER.md 4). The
   callers of `createInstance` are `FFX_Ch_Allocate` (battle and field spawns) and
   `FFX_Chr_ProcessPendingAttachments` from `FFX_MainStep`, so installation is on the step. Binding
   object `sub_6E0800`, 20 bytes. [V]
@@ -515,12 +516,13 @@ positions) stays on the CPU.
 | 0x6E2600 | Cloth_InstallInstancingMesh | m_clothmodelIndex, m_clothIndex |
 | 0x6E2000 | ClothInstancingDynamicMesh__injectClothStream | Color stream memcpy |
 | 0x6E2AC0, 0x6E2B10 | ClothInstancingDynamicMeshInstance__setSourceBuffer, __setClothObject | |
-| 0x6A1320 | ClassCharacter_SetupDynamicMeshes | from `ClassCharacter__createInstance` |
+| 0x6A1320 | ClassCharacterInstance__addClothBinding | from `ClassCharacter__createInstance`, see CHR_CLUSTER.md 4 |
 
 ## 12. Open
 
-- The setter of the cloth instance dirty flag, `sub_6E17F0`, and the undefined setters at 0x6E2B30,
-  0x6E2BC0 and 0x6E2BE0.
+- The setter of the cloth instance dirty flag and the undefined setters at 0x6E2B30,
+  0x6E2BC0 and 0x6E2BE0. `sub_6E17F0` is not that setter, it is
+  `ClothInstancingDynamicMesh__buildStreamDescs` (CHR_CLUSTER.md 4).
 - Whether the step write versus render thread memcpy race on the Distortion, RadialLine and
   BrokenScreen arrays shows in practice. It depends on how far the main thread runs ahead of the
   render thread (THREADS_AND_CLOCKS.md).

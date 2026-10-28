@@ -317,7 +317,8 @@ numbers are the switch cases in the input handler, cross-checked against the lab
 9  Game Section:                      1..113, confirm key calls FFX_Debug_ApplyViewerSave
 10 Saveload fake slot :               1..99
 11 Disable CRC check:                 sets maybe_g_ffxSaveCrcSkip 0xCCB9A4 to 0 or 1
-12 Achievements Reset :               toggle, and when set calls sub_6F1420
+12 Achievements Reset :               toggle, and when set calls StatsAndAchievements__resetAllStats
+                                      0x6F1420, ISteamUserStats ResetAllStats(true). STEAM_ACHIEVEMENTS.md
 ```
 
 `Game parameter config`, 15 rows, from `FFX_DebugPage_gameParams_initLabels` 0x6B9CD0. The cheat
@@ -454,7 +455,7 @@ FFX_DebugPage_mapSwitching_updateInput(page, Phyre__getApplication());   // RVA 
 ### What the input handlers reach
 
 `Game parameter config` 0x6B8CE0 calls `FFX_Debug_FullItem`, `FFX_Debug_FullGil`,
-`FFX_Debug_FullSphereLevels`, `FFX_Blitz_DebugFullBlitz`, `FFX_Btl_LoadPlayerData`,
+`FFX_Debug_FullSphereLevels`, `FFX_Blitz_DebugFullBlitz`, `FFX_SaveData_GrantAllAbilities`,
 `FFX_SaveData__setPlaytime`, `FFX_SaveData__reloadCharNames`, `DebugMenuManager__close`, plus
 `sub_787220`, `sub_787350`, `sub_790420`, `sub_820360`, `sub_906740`, `sub_A431F0`. The first
 four are the cheats and a plugin can call them directly with no menu at all.

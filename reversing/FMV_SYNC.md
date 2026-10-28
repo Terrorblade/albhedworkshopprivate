@@ -125,8 +125,8 @@ nothing simulated reads any of it.
 
 | slot | what it is | completion test |
 | --- | --- | --- |
-| Movie:1 | wait for the open movie to finish | `FFX_Fmv_IsPlaying()` or `FFX_Fmv_IsDecoderBusy()` |
-| Movie:9 | wait, fullscreen | `FFX_Fmv_IsDecoderBusy()` or `FFX_Fmv_PlaybackFinished()` |
+| Movie:1 | wait for the open movie to finish | `FFX_Fmv_IsPlaying()` or `FFX_Fmv_IsStartPending()` |
+| Movie:9 | wait, fullscreen | `FFX_Fmv_IsStartPending()` or `FFX_Fmv_FirstFrameShownOrStopped()` |
 | Movie:10 | play a movie and wait | `g_ffxFmvScriptBlocking` and then the same pair as Movie:9 |
 | Movie:11 | wait or skip | `FFX_Fmv_IsFinishedOrSkipped()` |
 
@@ -240,13 +240,16 @@ circuits, so the third is never evaluated and **the flag never makes the present
 branch**. I had written the opposite in the function comment.
 
 Meanwhile Movie:1 tests `FFX_Fmv_IsPlaying`, and Movie:9 and Movie:10 test
-`FFX_Fmv_PlaybackFinished 0x645DC0`, which is `mgr[1744] ? mgr[1764] : 1`. None of the three reads the
-flag. So **setting the flag alone would have ended Movie:11 and left Movie:1, Movie:9 and Movie:10
-playing to the natural end of the video.** The remote-cancel path and the give-up path would both have
-silently not worked.
+`FFX_Fmv_FirstFrameShownOrStopped 0x645DC0`, which is `mgr[1744] ? mgr[1764] : 1`. None of the three reads the
+flag. So **setting the flag alone would have ended Movie:11 and left Movie:1 waiting for the natural
+end of the video.** The remote-cancel path and the give-up path would both have silently not worked
+for it. Movie:9 and Movie:10 are not end waits at all. `mgr+1764` is set after the first shown frame
+(Correction 2026-10-13 below), so those two finish on the first frame, or at once when nothing is
+playing, and by the time anyone can skip they have usually finished already
+(`ATEL_MOVIE_SAVE_LIBRARIES.md` 1.5).
 
 What actually ends a movie is **clearing the manager's IsPlaying byte at `mgr+1744`**. That makes
-`FFX_Fmv_PlaybackFinished` return 1, makes `FFX_Fmv_IsPlaying` false, and stops
+`FFX_Fmv_FirstFrameShownOrStopped` return 1, makes `FFX_Fmv_IsPlaying` false, and stops
 `FFX_Fmv_StepFromMainStep` from doing anything at all, since it is gated on the same byte. The engine
 has a one-line helper that does nothing else, `FFX_Fmv_StopPlaying 0x6DAC40`, called from Movie:4's
 poll.
@@ -268,11 +271,15 @@ the player's time is never read again before teardown. The engine's own skip get
 the seek either. And the **prompt-hide draw call** `sub_6E78C0` is a UI object the kit has no wrapper
 for, while the flag it would be hiding is cleared anyway, which is what `FFX_Fmv_DrawFrame` reads.
 
-`mgr+1824`, which guards the IsPlaying clear, is only ever written to 0. I scanned `.text` for every
-`mov byte ptr [reg+720h], imm` encoding and the only two writers are `FFX_Fmv_CreatePlayer` and the
-manager constructor, both writing 0. The guard is still honoured rather than assumed away, because if
-it ever were set the real button path would leave the movie playing too and matching the engine is the
-honest choice.
+`mgr+1824` (0x720) guards the IsPlaying clear, and it does get set. I first scanned `.text` only for
+`mov byte ptr [reg+720h], imm` encodings and found `FFX_Fmv_CreatePlayer` and the manager constructor,
+both writing 0. That missed `sub_6437F0 0x6437F0`, which writes a register (`mov [eax+720h], bl` at
+0x643800). movie:0 calls it with 1 when its flags have bit 0x2000 (30 of the 165 movie:0 calls in the
+shipped events), and movie:4's start calls it with 0 (`ATEL_MOVIE_SAVE_LIBRARIES.md` 1.6). While it is
+set neither the natural end nor the Square press clears IsPlaying, and those scripts end the movie with
+movie:3 loops, movie:11 and movie:4 instead. So honouring the guard, rather than assuming it away, is
+what matches the engine on those movies. The IDB comment on `FFX_Fmv_Manager_Construct` that reports
+the old scan result is out of date.
 
 ### The local skip is not suppressed
 
@@ -304,7 +311,7 @@ New readers, all guarded, all game thread:
 `playbackState == 2`, which was the misnaming leaking into a reader.
 
 `FmvDecoderBusy()` needed a fix after the first draft. `FFX_Fmv_GetManager` returns 0 with a TTY warning
-before the singleton exists and `FFX_Fmv__isDecoderBusy` does `mov esi, [ecx+4]` with no null check, so
+before the singleton exists and `FFX_FmvMgr_IsStartPending` does `mov esi, [ecx+4]` with no null check, so
 calling it unconditionally would fault early in startup. It resolves and checks the manager pointer
 first.
 
@@ -420,7 +427,8 @@ and failing to arm costs a desync, so lean towards arming.
 The answer is read out of LOCAL state. The only case where two machines disagree about it is the case
 where a video failed to open on one of them, because Movie:10 start sets `g_ffxFmvScriptRunning` and
 `g_ffxFmvScriptBlocking` **only on success** and Movie:10's poll completes on its first look when
-blocking is 0. So machine A has a movie and arms, machine B has none and does not, A parks waiting for a
+blocking is 0. (2026-10-27: that premise is inverted, see the correction of that date at the end. The
+decision to arm every wait still stands.) So machine A has a movie and arms, machine B has none and does not, A parks waiting for a
 report B is never going to send, and A sits there for the full 600 steps before forcing a skip. Twenty
 seconds of stall and a script offset, produced by the cleverness.
 
@@ -500,7 +508,7 @@ addresses file under its wrong name and nothing in my code calls it.
 Earlier in the session the same pass named `FFX_Fmv_PollSkipButtons`, `FFX_Fmv_StepFromMainStep`,
 `FFX_Frame_StepSuspendOverlay`, `FFX_Frame_ToggleSuspendOverlay`, `FFX_Frame_SetCutsceneSuspend`,
 `FFX_Cutscene_StepPauseOverlay`, `FFX_Cutscene_EnterPauseOverlay`, `FFX_Fmv_DrawFrame`,
-`FFX_Fmv_StepPresentation`, `FFX_Fmv_PlaybackFinished`, `FFX_Fmv_IsFinishedOrSkipped` and
+`FFX_Fmv_StepPresentation`, `FFX_Fmv_FirstFrameShownOrStopped`, `FFX_Fmv_IsFinishedOrSkipped` and
 `FFX_Fmv_AbortForSceneChange`.
 
 ### Function comments written or corrected
@@ -543,7 +551,7 @@ Ranked worst first. None of this has run.
    about entirely from the shape of the code.
 
 3. **`FmvWait01Hook` duplicating Movie:1's test.** Because Movie:1 has side effects on its done path, the
-   shim mirrors `FFX_Fmv_IsPlaying() || FFX_Fmv_IsDecoderBusy()` itself instead of calling the original
+   shim mirrors `FFX_Fmv_IsPlaying() || FFX_Fmv_IsStartPending()` itself instead of calling the original
    speculatively. If that mirror is not byte-for-byte the same condition, Movie:1 either completes a step
    early, which loses nothing, or never completes, which hangs that script. It is two calls and both are
    wrapped, so I rate this fairly low, but it is the only place the kit re-implements an engine
@@ -639,12 +647,12 @@ may have read the old version.
 Found while writing VISUAL_CENSUS.md (PROGRESS 1.5.13). Each item was checked in the binary.
 
 - **Section 4, "mgr+1764 is PlaybackComplete, which is 0 for the whole of normal playback".** Wrong.
-  `FFX_Fmv_StepPresentation 0x6D7680` takes `lea ebx,[edi+6E4h]` at 0x6D769E and stores 1 through it
-  at 0x6D7775 after every successful frame upload, and the render-thread job `sub_6DAE00` does the
+  `FFX_Fmv_StepPresentation 0x6D7680` takes `lea ebx,[edi+6E4h]` at 0x6D769E, puts that pointer in the
+  upload job at 0x6D7775, and stores 1 through it at 0x6D7828 after every successful frame upload, and the render-thread job `sub_6DAE00` does the
   same for videos 46, 72 and 32. So the byte means "a frame has been shown", it is 1 from the first
   frame on, and the third term of the keep-presenting condition is evaluated during normal playback.
   The conclusions this section builds on the old reading (that `g_ffxFmvSkipRequested` alone never
-  reaches the stop branch, and what `FFX_Fmv_PlaybackFinished` returns mid-movie) need re-checking
+  reaches the stop branch, and what `FFX_Fmv_FirstFrameShownOrStopped` returns mid-movie) need re-checking
   against this. Writing the whole field set, as the mod does, is unaffected.
 - **Section 2, "nothing simulated reads any of it".** Wrong. `FFX_Fmv_ApplyMovieCamera 0x76EDC0`
   runs in the step, reads the frame index through `sub_6410D0`, drives `FFX_Came_SetMatrixOverride`
@@ -654,3 +662,33 @@ Found while writing VISUAL_CENSUS.md (PROGRESS 1.5.13). Each item was checked in
 - **Section 2, the pacing.** The shown frame is popped by `sub_A284A0`, once per
   `FFX_Fmv_StepPresentation` call, which is once per `FFX_MainStep`. The decode thread fills a queue
   and can stall the step's consumption, but it does not choose the frame.
+
+## Correction 2026-10-27
+
+Found while writing `MOVIE_DECODE.md` (PROGRESS 1.9.6). Each item was checked in the binary.
+
+- **Section 7 and the IDB comment on `FFX_Fmv_StartVideo`, "Movie:10 start sets ScriptRunning and
+  Blocking only on success".** Inverted. `FFX_Fmv_CreatePlayer` returns 0 at 0x6DA184 (`xor eax,eax`) on
+  success and on a missing path (the `jmp` at 0x6D9E19), and nonzero only when the sampler state create
+  `sub_58CF80` fails (`jnz` at 0x6D9E67). `FFX_Fmv_StartVideo` folds that to 0 or 1 (neg/sbb/neg at
+  0x6416AF). Movie:10 start does `test eax,eax / jz` at 0x76EBB2, so on every normal start it skips
+  `SetFullscreenMode(0)`, ScriptRunning and Blocking. `SetFullscreenMode` is the only path to
+  `startVideoDecodingThread`, so movie:10 never decodes on PC and its poll finishes on its first look on
+  every machine. The asymmetry this section describes does not exist for Movie:10. A missing file is
+  still invisible to every caller, which matters for Movie:0 (`MOVIE_DECODE.md` section 12 hazard 4).
+- **Section 2 and the waits table, `FFX_Fmv_IsStartPending`.** It never looks at the decoder. It is true
+  only when the manager's command list holds a play command or mgr+0x704 is 0, the list is only pushed
+  from inside its own processor and mgr+0x704 is only ever written with 1. So it is constant 0, and the
+  kit's `FmvDecoderBusy()` and the decoderBusy term of `MovieWasInvolved()` read a constant.
+  `MOVIE_DECODE.md` 10.4.
+- **Section 2, "decoded on `_VideoDecodingThread` with a `GetTickCount` timebase".** The tick is stored
+  to `dword_1A84C80` at 0xA27F84 and that is the variable's only reference. The decoder has no clock.
+  The step consumes one frame per `FFX_MainStep` and, once 30 frames are buffered, **blocks** on an
+  empty queue (`WaitForSingleObject(INFINITE)` at 0xA3DFE9) rather than skipping.
+- **What that means for the barrier.** A movie:0 movie holds on its first frame (the player is paused
+  in `FFX_Fmv_StepPresentation` at 0x6D7857 while `g_ffxFmvScriptRunning` is 0) until Movie:9's resi
+  sets ScriptRunning and unpauses it. With the Movie:9 barrier that resi runs on the same step on both
+  machines, and from then on the frame index, movie:3, the movie camera and the Movie:11 end test are
+  step deterministic, except for the render thread upload of videos 46, 72, 32 and looping movies, a
+  local pause or focus loss, the skip, and a file with fewer frames than its Duration.
+  `MOVIE_DECODE.md` section 11.

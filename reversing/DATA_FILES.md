@@ -191,9 +191,9 @@ list is the set of `chr/<cat>/<name>/mdl/<name>.chr` paths. A map list is the `.
 | +16 | `VbfArchive*[5]`, the mount slots |
 | +36 | `CRITICAL_SECTION`, 24 bytes |
 | +60 | `rootPathLen` |
-| +64 | `rootPath` copy |
+| +64 | `char*` to a heap copy of `rootPath`, `FFX_Malloc(len + 1)` in `setRootPath`. Corrected 2026-10-28, this read as an inline copy, which a 68 byte object has no room for |
 
-`FFX_VbfArchive`:
+`FFX_VbfArchive`, 96 bytes, `FFX_Alloc(0x60)` in `mountArchive`, built by `FFX_VbfArchive__ctor 0x61D460`:
 
 | off | what |
 |---|---|
@@ -202,9 +202,9 @@ list is the set of `chr/<cat>/<name>/mdl/<name>.chr` paths. A map list is the `.
 | +52 | total chunk count |
 | +56 | `u16 chunkStoredSize[]`, points into the header block |
 | +60 | per chunk raw/compressed flag bytes |
-| +64 | the `.vbf` path, a 260 byte buffer |
+| +64 | `char*` to a 260 byte heap buffer holding the `.vbf` path (`FFX_Malloc(0x104)` in `open`) |
 | +68 | `CRITICAL_SECTION` over the stream slots |
-| +92 | the 15 stream slots, 32 bytes each |
+| +92 | pointer to a heap array of the 15 stream slots, 32 bytes each. Corrected 2026-10-28, +64 and +92 are pointers, the object ends at +95 |
 
 `FFX_VbfStream`, 32 bytes, 15 per archive:
 
@@ -246,8 +246,10 @@ path.
   the archive first and only falls back to `CreateFileW` on a miss.
 - **A second mounted archive in a lower slot wins outright.** The slot loop runs 0..4 and
   breaks on the first hit. `FFX_InitFileSystem` uses slot 0 for `FFX_Data.vbf`, so a side
-  archive would need the mount order changed or an existing slot taken. Untested against the
-  running game.
+  archive would need the mount order changed or an existing slot taken. `mountArchive` takes the
+  first free slot, so calling it after boot lands in slot 1 and loses every duplicate. Nothing else
+  in the binary writes a slot, see "The mount slots" in [VBF_FORMAT.md](VBF_FORMAT.md). Untested
+  against the running game.
 
 ## What else is in there that a data-driven UI wants
 
@@ -285,6 +287,16 @@ and the field holds 36,944.
 A record's first `u16` is the offset of its name inside the blob, and the `u16` at +4 is the
 offset of its description. Strings are NUL terminated. A purely numeric table has no blob,
 and then both offsets are 0 and point at nothing.
+
+**Correction, 2026-10-27** (projectzanarkand PROGRESS 13.2, CHEAT_SAVEDATA.md section 0). The
+description is at **+8**, not +4. A text row starts with four u32 slots: +0 name, +4 the name's
+variant, +8 help, +12 the help's variant, and only the low half of each is the offset.
+`FFX_Menu_GetAbilityName 0x8C1A20` reads `row + 4 * alt` and `FFX_Menu_GetAbilityHelp 0x8C19E0`
+reads `row + 8 + 4 * alt`. The header is also not a u32 1 at +0: it is a signed u16 range count,
+`movsx` in `FFX_KernelTable_GetRow 0x7AB870`, then from +8 that many 12 byte ranges. Every
+shipped file has one. And the "read it from" column below is where to get English text, not
+what the game reads: the game reads `new_<lang>pc` for every table that has a copy there and
+`jppc` for the rest, never `inpc`. CHEAT_SAVEDATA.md section 0 has the reader of each file. [V]
 
 ### The text encoding
 

@@ -24,12 +24,17 @@ numbers and the new ones.
 
 2. **581 DLLs, `magicFiles/FFX/magic_NNNN.dll`, 24 KB to 3.4 MB each.** `NNNN` is
    `g_ffxMagicFileId`. Every one exports exactly `GetEffectOverlayTable` and `InitMagicPRX`. Across
-   all 581, **640 distinct slots** are either called or copied out of the table, highest index 946.
+   all 581, **892 distinct slots** are either called, tail-jumped to, or copied out of the table,
+   highest index 946, so 55 are never reached. (This read 640 until 2026-10-27. The scanner only saw
+   `call` instructions and missed the forwarding thunks every DLL carries, which end in `jmp eax`.
+   Section 7 has the figures, `MAGIC_DLL_CONTENTS.md` section 4 says what the thunks are.)
 
 3. **The thing that changes the determinism argument: `g_ffxIsCatchUpStep` is slot 936, and all
    581 DLLs copy it into a global of their own at init.** `g_ffxMainStepCounter` is slot 764 and is
-   copied by the same 581. So magic DLL code is handed the catch-up flag and the frame number. I
-   did not find a DLL that branches on either, and I cannot show that none does. See section 5.
+   copied by the same 581. So magic DLL code is handed the catch-up flag and the frame number. A
+   later scan of loads through the copied pointers (`EFFECT_OVERLAY.md` section 9) found 4 DLLs that
+   read the catch-up flag (0515, 0611, 0667, 0668) and 20 that read the step counter. The one
+   catch-up reader decompiled gates draw bookkeeping only. See section 5.
    (This used to read 576 of 581. The five were an artefact of the old byte-walking init reader,
    which mis-synced in them. All 581 have the same init body.)
 
@@ -61,7 +66,7 @@ numbers and the new ones.
 | `MagicFile__load` | `0x5DA480`ish | loads it |
 | `MagicFile__onDllLoaded` | `0x5DB100`ish | resolves the two exports |
 | `MagicFile__start` | `0x5DA7F0` | **hands over the table** |
-| `MagicFile__getEffectOverlayTable` | `0x5DA370`ish | the other export |
+| `MagicFile__getEffectOverlayTable` | `0x5DA370` | tail jumps to the other export, see `EFFECT_OVERLAY.md` |
 | `MagicFile__stop` | `0x5DA880`ish | unloads |
 
 `MagicFile__start` is small enough to quote:
@@ -120,9 +125,12 @@ is the mistake section 7 describes. Each DLL has its own pointer global: `0x100F
 
 ### How a DLL gets stepped, and why it is step-driven
 
-`FFX_Magic_CallOverlayStep` fetches an overlay table from `actor+3980` and from `dword_1133360` and
-calls slot 3 or slot 4 of it depending on its argument, setting `g_ffxInMagicOverlayCall` (the global
-at `0xD3335C`, itself exposed as table slot 827) around each call.
+`FFX_Magic_CallOverlayStep` calls the exe's resident table first, then fetches an overlay table from
+`actor+3980` (for each actor whose effect state is 4 or 5) and from `dword_1133360`, and calls slot 3
+or slot 4 of it depending on its argument. It sets `g_ffxInMagicOverlayCall` (RVA `0xD3335C`, itself
+exposed as table slot 827) around a call only when the stored table equals the current DLL's
+`GetEffectOverlayTable`, never around the resident one, and DLLs set it themselves around their own
+Oef2 calls. The full contract is in `EFFECT_OVERLAY.md`.
 
 **It is called from three places in `FFX_MainStep`, and none of them is gated on
 `g_ffxIsCatchUpStepRender`.** That is worth stating plainly because two catch-up tests sit right next
@@ -131,9 +139,9 @@ the stripped profiler markers `nullsub_196("1")` and `nullsub_196("3")`.
 
 | call | where | guard | runs |
 | --- | --- | --- | --- |
-| `CallOverlayStep(0)` | inside `for (i < FFX_Player__getSubStepCount())` | `byte_12FB8FB == 0` | once per sub-step |
-| `CallOverlayStep(0)` | the `subStepCount == 0` arm | none | once, when there were no sub-steps |
-| `CallOverlayStep(1)` | inside `for (k < max(subStepCount, 1))` | `byte_12FBBB8 && !byte_12FB8FC && !byte_12FB8FD` | once per sub-step |
+| `CallOverlayStep(0)` | inside `for (i < FFX_Player__getSubStepCount())` | `g_ffxMovieScreenMode == 0` | once per sub-step |
+| `CallOverlayStep(0)` | the `subStepCount == 0` arm | none, not even the movie mode | once, when there were no sub-steps |
+| `CallOverlayStep(1)` | inside `for (k < max(subStepCount, 1))` | `g_ffxEffectsPassEnabled && !g_ffxMovieScreenModePrev && !g_ffxScriptEffectsPassOff` | once per effects pass |
 
 So overlay step 0 runs exactly once per step whichever arm is taken, and both overlay steps are
 driven by `FFX_Player__getSubStepCount()`, which is simulation state. **The engine calls magic DLL
@@ -181,7 +189,7 @@ up early. It also picked the wrong table pointer global in nine DLLs for the sam
 | **764** | `0x1FCBBF0` | **`g_ffxMainStepCounter`**, the game's own frame number |
 | 765 | `0x83E6C0` | unnamed, byte |
 | 769 | `0x864CE0` | unnamed, sits immediately before the table itself |
-| **827** | `0xD3335C` | **`g_ffxInMagicOverlayCall`**, set around every overlay call |
+| **827** | `0xD3335C` | **`g_ffxInMagicOverlayCall`**, set around a DLL overlay call when the table is the current DLL's, and by DLLs around their own Oef2 calls |
 | 850 | `0x8CCA58` | unnamed |
 | 880 | `0x1F0FCA0` | unnamed |
 | 919 | `0xD33398` | unnamed |
@@ -271,9 +279,10 @@ qualitatively. The number is 92. It was reported as 83 until the scanner was fix
 loose scan in `OVERDRIVES.md` reported 99 DLLs and 292 sites, which is the raw count of
 `mov reg,[reg+0x510]` instructions with no check that the base register holds the table. 18 of those
 292 are struct field accesses, so 7 of those 99 DLLs do not call it at all. Section 7 lists them.
-The particle operator library at `0x72C730..0x733F70` is also exposed (its operator
-names are the `pppRand*` / `pppSRand*` strings at `0xB50258..0xB511D4`), which is the second path to
-the same place.
+The particle operator library at VA `0x72D1B0..0x75E4B0` is also exposed, through host data slot
+921 (the 273 record table at VA `0xC3BBB0`, see `YONISHI_ENGINE.md`). Its `pppRand*` and `pppSRand*`
+operators are the run at VA `0x72F4B0..0x733FEC`, and the operator name strings are interleaved
+through VA `0xB50230..0xB513A0`. That is the second path to the same place.
 
 **The CRT stream position is deliberately tied to the step count.**
 `maybe_FFX_Yonishi__feedPadStateBothPorts 0x3FF680` calls `rand()` once per sub-step and discards the
@@ -315,8 +324,10 @@ I set out to decide whether the magic DLLs introduce a frame-rate dependency int
 - **But `g_ffxIsCatchUpStep` is table slot 936 and `g_ffxMainStepCounter` is slot 764, and all
   581 DLLs copy both into their own globals at init.** A DLL that reads the catch-up flag and skips
   work on a catch-up step would be doing exactly what the engine's own render path does, and it would
-  be invisible to every check described above. I found no DLL that branches on it, and a negative
-  from a byte scan over 581 stripped binaries is not evidence of absence.
+  be invisible to every check described above. A load scan through the copied pointers later found
+  4 DLLs that read the catch-up flag and 20 that read the step counter (`EFFECT_OVERLAY.md` section
+  9). In magic_0515 the catch-up reader is a VFX callback that skips a trail mesh build, DLL private
+  draw bookkeeping. The other three are not decompiled.
 
 So the confirmed hazard is **coupling**: effect playback and per-character simulation share RNG
 state, through 92 DLLs calling a gameplay RNG directly and a re-seed path through the particle
@@ -352,8 +363,8 @@ RVAs. Add 0x400000 for the IDA VA.
 | `0x88F728` | `int` | `g_ffxEffectRandInited` |
 | `0x4344F0` | `FFX_Ch_UpdateBlink` | CRT `rand`, on a worker thread, harmless |
 | `0x433530` | `FFX_Ch_UpdateRenderJob` | job-dispatched, no code xrefs |
-| `0x72C730..0x733F70` | library | the particle operators, exposed to the DLLs |
-| `0xB50258..0xB511D4` | strings | `pppRand*` / `pppSRand*` operator names |
+| `0x32D1B0..0x35E4B0` | library | the ppp particle operators, exposed to the DLLs through host data slot 921. The `pppRand*` / `pppSRand*` run is `0x32F4B0..0x333FEC` |
+| `0x750230..0x7513A0` | strings | all ppp operator names, `pppRand*` / `pppSRand*` among them |
 
 Table slots of note: **324 = `FFX_Btl_Rand`** (92 DLLs, 274 sites), **632 =
 `FFX_Ch_AttachToParentBone`** (2 DLLs, 8 sites, byte offset `0x9E0`), **634 =
@@ -397,12 +408,12 @@ have argument pushes in between. That was only the smallest of four blind spots:
 
 Replacing it changed the headline figures like this:
 
-| figure | old matcher | fixed scanner |
-| --- | --- | --- |
-| distinct slots called | 459 | 608 |
-| total call sites | 49442 | 74612 |
-| highest slot called | 942 | 946 |
-| distinct slots called or copied | 491 | 640 |
+| figure | old matcher | fixed scanner | with tail jumps, 2026-10-27 |
+| --- | --- | --- | --- |
+| distinct slots called | 459 | 608 | 860 |
+| total call sites | 49442 | 74612 | 115728, of which 41116 are `jmp eax` |
+| highest slot called | 942 | 946 | 946 |
+| distinct slots called or copied | 491 | 640 | 892 |
 | slot 324 `FFX_Btl_Rand` | 83 DLLs, 224 sites | **92 DLLs, 274 sites** |
 | slot 630 `FFX_BtlOd_StartMinigameForActor` | 0 DLLs | **6 DLLs, 6 sites** |
 | slot 632 `FFX_Ch_AttachToParentBone` | 2 DLLs, 2 sites | **2 DLLs, 8 sites** |
@@ -451,6 +462,17 @@ from a slot 329 load by fallthrough and from a slot 554 load by a `jmp`, and 152
 are shared like that. The scanner takes the union at control-flow joins for that reason, so a site
 count counts reachable (slot, call) pairs rather than distinct call instructions.
 
+**The fifth blind spot, tail jumps, fixed 2026-10-27.** Every one of the 581 DLLs carries a block of
+17 byte forwarding thunks, `55 8B EC A1 <tbl> 8B 80 <disp32> 5D FF E0`, that is `push ebp; mov ebp,
+esp; mov eax,[tbl]; mov eax,[eax+disp]; pop ebp; jmp eax`. magic_0003 has one per slot from 39 up at
+0x10006EC0 on, and magic_0021's Oef2 opcode table at header +0x7C is nothing but these. The scanner
+only recorded `call`, so a slot reached only through a thunk counted as unused. It now records `jmp
+reg` too, under the same provenance test, and counts those sites as `tail_jump` in its stats. 39612
+of the 41116 thunks are referenced, by an `E8` or a relocated address, mostly from the `pppProg`
+particle operator rows each DLL carries (`MAGIC_DLL_CONTENTS.md` section 4). 246 slots are reached
+only that way. The other columns of the table above count call instructions only and stay as they
+were.
+
 What it still does not follow: the table pointer spilled to a stack slot and reloaded, and loop back
 edges, where the state at the loop head is cleared rather than iterated to a fixpoint. Both can only
 undercount. The residue is measurable and small: for slot 324 every one of the 292 candidate
@@ -461,15 +483,17 @@ left unexplained.
 
 Ranked.
 
-1. **Whether any DLL branches on `g_ffxIsCatchUpStep` or `g_ffxMainStepCounter`.** 576 DLLs hold
-   pointers to both. This is the open question that decides whether DLL code is frame-dependent, and
-   section 5 says why a static answer is not worth chasing and what runtime experiment to run
-   instead.
+1. **What the DLLs that read `g_ffxIsCatchUpStep` or `g_ffxMainStepCounter` do with it.** All 581
+   hold pointers to both, 4 read the catch-up flag and 20 the step counter (`EFFECT_OVERLAY.md`
+   section 9). magic_0515 and magic_0446 are read and look like presentation. 0611, 0667 and 0668
+   are the catch-up readers still to decompile. The runtime experiment in section 5 still settles it.
 2. **Whether the two attaching DLLs attach on a step-driven schedule.** The overlay step that drives
    them is step-driven, which is a strong argument but not a proof about the DLL's own control flow.
    This decides whether checksum region 15 is stable during spell animations.
-3. **The 640-distinct-slot figure** is the tool's, across both its call scanner and its init-copy
-   decoder. It is a lower bound by construction: the scanner does not follow the table pointer
+3. **The 892-distinct-slot figure** (640 before tail jumps were counted) is the tool's, across both
+   its call scanner and its init-copy decoder. It counts a slot that has a referenced thunk as
+   reached, which says the slot is wired in, not that any effect calls it at run time. It is a lower
+   bound by construction otherwise: the scanner does not follow the table pointer
    through a stack spill or around a loop back edge, so a DLL that only ever reaches a slot that way
    is missed. Section 7 says how small the measured residue is.
 4. **27 of the 34 exposed globals are unnamed**, including an eleven-slot cluster in one small

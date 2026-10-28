@@ -415,11 +415,15 @@ The five HD boosters are polled every frame in
 |-------------|--------------|-------------|---------|---------------------|
 | 0x10000 | 28 | F1 | **fast forward, 1x / 2x / 4x** | **`g_boosterSpeedIndex` 0xCE82B4** |
 | 0x20000 | 29 | F4 | auto battle | `g_boosterAutoBattle` 0x133D6E0 |
-| 0x40000 | 30 | unbound | nothing uses it | - |
-| 0x80000 | 31 | F5 | a toggle on FFXApp+69068, messages 752/753 | FFXApp+69068 |
-| 0x100000 | 32 | unbound | FMV skip | - |
-| 0x200000 | 33 | F2 | invincibility | `g_boosterInvincible` 0x12FB7CC |
+| 0x40000 | 30 | key 0, unreachable | Free Camera, in `FFX_Frame_StepSuspendOverlay` (corrected, see `BOOSTERS.md` 4) | `*g_ffxFmvState + 0` |
+| 0x80000 | 31 | F5 | Hide HUD, messages 752/753 (corrected, the owner is `g_ffxGfxCtx`) | `*g_ffxGfxCtx + 0x10DCC` |
+| 0x100000 | 32 | key 0, unreachable | Time Stop, the frame suspend toggle that stops `FFX_MainStep` (corrected, it is not an FMV skip) | `*g_ffxFmvState + 0x338` |
+| 0x200000 | 33 | F2 | Supercharge (the IDB says invincible), a turn start HP / MP / overdrive refill | `g_boosterInvincible` 0x12FB7CC |
 | 0x400000 | 34 | F3 | encounter rate 0 off / 1 normal / 2 high | `g_boosterEncounterRate` 0xC421D8 |
+
+Correction 2026-10-27 (`BOOSTERS.md`): rows 30 and 32 are the Free Camera and Time Stop toggles,
+which the action map binds to key 0 so they never fire, and row 31 is Hide HUD. The Change Parameters
+page holds three more boosters, one-shot actions that write the save block, see `BOOSTERS.md` 5.
 
 The mask for a booster action index `i` is `1 << (i - 12)`. That pattern holds for all
 of them and ties the Special Feature page rows (28, 33, 34, 29, 31) and the Keyboard
@@ -583,7 +587,9 @@ Shared, must match on both machines:
 - `g_boosterEncounterRate` (0xC421D8). Changes whether and how often encounters fire,
   read by 0x780D10. Divergent values mean one side enters a battle and the other does
   not.
-- `g_boosterInvincible` (0x12FB7CC). Read by the damage path at 0x792A90. Game changing.
+- `g_boosterInvincible` (0x12FB7CC). Read at 0x792A90, which is `FFX_Btl_SendMenu`, the turn start,
+  not a damage path (corrected 2026-10-27, `BOOSTERS.md` 3.2). It refills HP, MP and the overdrive
+  gauge at each turn. Game changing.
 - `g_boosterAutoBattle` (0x133D6E0). Read by roughly thirty battle AI functions. It
   decides who issues commands, so it must match.
 - The two persisted keys `Invincible` (19) and `EncounterRate` (20) would be shared if
@@ -917,12 +923,17 @@ the menu.
 |--------|----|-----|--------------|---------|
 | `g_boosterAutoBattle` | 0x133D6E0 | 0xF3D6E0 | 31 instructions in 22 distinct battle functions, nearly all `cmp ..., 1` | MUST MATCH, it decides who issues commands |
 | `g_boosterEncounterRate` | 0xC421D8 | 0x8421D8 | one gameplay site, the encounter roll at 0x780D73 | MUST MATCH, one side enters a battle and the other does not |
-| `g_boosterInvincible` | 0x12FB7CC | 0xEFB7CC | the damage path, four reads in 0x792A90 | MUST MATCH, different HP from the first hit |
+| `g_boosterInvincible` | 0x12FB7CC | 0xEFB7CC | four reads in `FFX_Btl_SendMenu` 0x792A90, the turn start (corrected, not a damage path) | MUST MATCH, different HP from the first refill |
 
-All three are written in exactly one place, `FFX_Frame_UpdateBoostersAndOverlays` 0x657140,
-from a hotkey. None is persisted and none has a config key, so a bare store from a mod is
-safe: nothing caches them and nothing overwrites until the player presses the key again. That
-is why the kit's setters are plain writes rather than calls.
+All three are written by `FFX_Frame_UpdateBoostersAndOverlays` 0x657140 from a hotkey. Correction
+2026-10-27 (`BOOSTERS.md` 3.4): auto battle has a second writer, `FFX_Booster_CancelAutoBattleInBattle
+0x7871F0`, called from the battle step, the per frame `FFX_Booster_IsAutoBattleAllowed` check clears it
+in listed battles, and the title (events 23, 348, 349) resets all three every frame.
+
+None is persisted, and the two config keys `Invincible` and `EncounterRate` are never read back
+(section 8), so a bare store from a mod is safe: nothing caches them. It is not true that nothing
+overwrites them until the player presses the key again, see the correction above. That is why the
+kit's setters are plain writes rather than calls.
 
 And the other half of the co-op answer, now expressible as data rather than prose: all 24
 persisted keys are presentation only, so `ffx::ConfigKeyAffectsSimulation` returns false for

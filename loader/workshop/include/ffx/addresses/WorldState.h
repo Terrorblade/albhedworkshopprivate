@@ -93,10 +93,10 @@ namespace ffx
 		const DWORD MenuApplySaveMovieOption = 0x004724A0;
 
 		// ATEL Core 450, called by the title screen's load branch and nowhere else:
-		// if ((save.dword[0xE0] - 2) <= 3) save.dword[0xE0] = 1. An old-save sanity
-		// clamp. Listed for completeness, NOT called by the transplant, because the host
+		// if ((save.dword[0xE0] - 2) <= 3) save.dword[0xE0] = 1. +0xE0 is the premovie
+		// state (core:432, 433, 437), so this resets a premovie left mid flight. Listed for completeness, NOT called by the transplant, because the host
 		// already ran it on its own block before the bytes were ever sent.
-		const DWORD SaveDataClampOptionWordE0 = 0x00473D30;
+		const DWORD SaveDataResetPremovieState = 0x00473D30;
 
 		// The ATEL script opcode whose whole body is memcpy(&g_ffxSaveData, arg + 64,
 		// 0x68C0) and return 1. Library 12 function 87. Used by exactly one shipped
@@ -413,7 +413,7 @@ namespace ffx
 			    SaveFileInstallBlock, SaveDataReencodeCharNames, SphereGridRecomputeDerived,
 			    SaveDataClearEquipStatBonus, MenuApplySaveConfigBit5EC,
 			    MenuApplySaveSoundOptions, MenuApplySaveMovieOption,
-			    SaveDataClampOptionWordE0, TitleScreenActive,
+			    SaveDataResetPremovieState, TitleScreenActive,
 			    TitleExitCheckpointSuppress, AtelSysCore573BeginNewGame,
 			    AtelSysSave087, SaveDataSetSceneAndSub,
 			    MapRequestChange, MapRequestResumeFromCheckpoint, MapSetTransitionFrames,

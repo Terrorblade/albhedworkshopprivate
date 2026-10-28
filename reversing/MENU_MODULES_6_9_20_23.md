@@ -863,6 +863,8 @@ Listed with file, the line as it reads, and the correction. I have not edited an
     (the equipment shop, module 12), 13 -> "Items" (the item shop, module 13), 15 -> "Save",
     16 -> "Load", which all match the doc. I did not read module 14's exec, so this is flagged rather
     than asserted.
+    Settled 2026-10-28: module 14 is Name Entry, proved from its exec, `FFX_NameInput_CommitName` and
+    the sg:29 0x4008xxxx scripts. See `MENU_SYSTEM.md` third pass.
 
 ### 8.2 IDB comments
 
@@ -919,6 +921,7 @@ Listed with file, the line as it reads, and the correction. I have not edited an
 
 5. **Module 14.** I flagged it as probably "Name Entry" rather than FMV from the single-row mode
    mapping alone and did not open its exec. Out of scope for this task, listed so it is not lost.
+   Settled 2026-10-28, it is Name Entry (`MENU_SYSTEM.md` third pass).
 
 6. **Module 6's `sub_8A8E50` gate (`byte_1340859`) and `sub_8AB220` (`dword_1840878`).** The first
    gates state 0 and the second gates the L1 / R1 character switch. Both are plain byte and dword

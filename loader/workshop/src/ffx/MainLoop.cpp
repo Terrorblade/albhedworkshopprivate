@@ -369,6 +369,15 @@ namespace ffx
 			    steps, maxReasonableCatchUpSteps);
 			return false;
 		}
+		// Forced steps skip FFX_StepPacing_LoadTimingTrack, so in pacing mode 1 the
+		// voice timing track falls behind and PublishStepScale reads a stale index.
+		// reversing/VOICE_TIMING.md.
+		int mode = 0;
+		if (ReadGlobal<int>(Rva::PacingMode, &mode) && mode == 1)
+		{
+			Log("main loop: refusing a catch-up request of %d steps, a voice timing track is pacing", steps);
+			return false;
+		}
 		int* pending = At<int>(Rva::PendingSteps);
 		if (!pending)
 			return false;

@@ -91,7 +91,7 @@ namespace ffx
 		// The track's own state, all of it written by FFX_StepPacing and
 		// FFX_StepPacing_LoadTimingTrack and nothing else.
 		const DWORD TimingTrackNextTime = 0x00EFB8AC;  // float, the entry just read, milliseconds
-		const DWORD TimingTrackTolerance = 0x00EFB8B0; // float, milliseconds of slack
+		const DWORD TimingTrackTolerance = 0x00EFB8B0; // float ms, the current entry's recorded step length (IDB g_ffxTimingTrackStepDurationMs)
 		const DWORD TimingTrackDueTime = 0x00EFB8A4;   // float, when this step was due
 		const DWORD TimingTrackElapsed = 0x00EFB8A8;   // float, seconds since the track started
 		const DWORD TimingTrackStartMs = 0x00EFB818;   // __int64, FFX_Time_NowMicroseconds at track start
@@ -310,7 +310,7 @@ namespace ffx
 		const DWORD FmvPlayerManager = 0x008DED3C;       // void *, PhyFMVPlayerManager, see FmvManager::
 		const DWORD FmvGetManager = 0x002D73A0;          // void *__cdecl (void), prints if not built yet
 		const DWORD FmvIsPlaying = 0x00241CF0;           // int __cdecl (void), manager + 1744
-		const DWORD FmvIsDecoderBusy = 0x00241CE0;       // int __cdecl (void), the decode queue drain
+		const DWORD FmvIsDecoderBusy = 0x00241CE0;       // int __cdecl (void), FFX_Fmv_IsStartPending, reads 0 in the shipped game
 		const DWORD FmvScriptRunning = 0x00D2A008;       // int, the ATEL script's own view. REPLICATE THIS.
 		const DWORD FmvCreatePlayer = 0x002D9C80;        // __thiscall (mgr, int videoId, char hd, char flag)
 		const DWORD FmvDestroyPlayer = 0x002D71B0;       // __thiscall (mgr)

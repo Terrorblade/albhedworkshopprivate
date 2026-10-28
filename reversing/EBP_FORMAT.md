@@ -82,7 +82,7 @@ entry and label tables, ending at `+0x10`.
 
 | off | meaning |
 |---|---|
-| `+0x00` | type byte: **0 subroutine**, 1 character, 2 line trigger, 3 box trigger, 4 no motion state, 5 and 6 unidentified |
+| `+0x00` | type byte: **0 subroutine**, 1 character, 2 line trigger, 3 box trigger, 4 no motion state, 5 crossing line trigger, 6 enter and leave volume (the light forms of 2 and 3, see `ATEL_CONTEXT.md` section 12) |
 | `+0x08` | u16 count of script entry points |
 | `+0x0A` | u16 count of jump labels |
 | `+0x14` | variable descriptor table |
@@ -175,16 +175,16 @@ is useful for telling live opcodes from dead ones.
 | 37, 4A-4E | `runscript1` | 1 arg | 2,890 |
 | 38, 4F-53 | `runscript2` | 2 args | 24,586 |
 | 39, 3A, 3B | `runparty0/1/2` | target via `FFX_Atel_GetPartyMemberActor` | 3 / 0 / 0 |
-| 3C-3F | `endscript` variants | `maybe_FFX_Atel_EndScript 0x8691D0` | 88,134 / 26 / 0 / 6 |
+| 3C-3F | `endscript` variants | `FFX_Atel_EndScript 0x8691D0` | 88,134 / 26 / 0 / 6 |
 | 40 | `brk` | debugger breakpoint, 4 x 16-byte records at `ctx+0x64` | 20 |
 | 54 | `yield` | sets flag `0x1000` then ends the script | 7,774 |
 | 59-5C | `popi0..3` | pop into int regs `actor+0x48..0x54` | 10,144 total |
 | 5D-66 | `popf0..9` | pop into float regs `actor+0x58..0x7C` | 88 total |
 | 67-6A | `pushi0..3` | | 12,555 total |
 | 6B-74 | `pushf0..9` | | 65 total |
-| 75 | `pushsys` | push `dword_C52704[operand]` | 0 |
+| 75 | `pushsys` | push `g_ffxAtelRegisterDescriptors[operand]` | 0 |
 | 77, 78 | `waitactor`, `waitparty` | block on another actor's script | 13,191 / 0 |
-| 79, 7A | `op79`, `op7A` | `sub_870D30(3 ints)`, `sub_86FAB0(2 ints)` | 1,566 / 0 |
+| 79, 7A | `op79`, `op7A` | `FFX_Atel_Op_SetEventEntry(3 ints)`, `FFX_Atel_Op_BindTriggerLink(2 ints)` | 1,566 / 0 |
 | 1B, 41-44 | - | inside the `0..0x7A` range but **have no case**, so they fall to the error default | 0 |
 
 The `uses` column is worth reading as a guide to what an assembler would actually need. Roughly 20
@@ -201,7 +201,7 @@ and call targets. The ones pinned so far: `core:0` WaitFrames, `core:1` SetActor
 SetMoveTargetXYZ, `core:24` StartMove, `core:25` SetRotateCmd, `core:51` GetActorId, `core:93/94`
 PlayerControlOn/Off, `core:95` WaitForever, `core:100/106/107` message window set/show/close,
 `core:114` SetMoveFrames, `core:149` SetActorYaw, `core:152` SetMoveSpline, `core:247`
-ResolvePartyMemberActor, `sg:29` sgMenu, `ch:12` chEnGravity, `ch:16` chReadSystemMGRP, `ch:23`
+WaitPartyMemberTasks, `sg:29` sgMenu, `ch:12` chEnGravity, `ch:16` chReadSystemMGRP, `ch:23`
 chSetGravMode, `ch:31` chIsMotionActive, `ch:37` chSetMotionSlot, `ch:40` chSetRunThreshold, `ch:92`
 chSetNextHokan, `ch:93` chGetMotion, `ch:94` chGetMoveSpeed, `ch:101/102` chReadMotionGroupStart/Sync,
 `came:59` MsCameraSetScrDpt, `came:78/79/117/120` CameScreen*, `btl:19` SetUnitMoveSpeed, `mapfx:10`
@@ -259,7 +259,7 @@ entry_0_18:
   or finding the glyph order table in the FTCX block, would complete it. Answered 2026-10-13: the
   codec is the Latin glyph table in TEXT_RENDERING.md section 2.3 (0x8A..0x8D are `{ | } ~`), and
   the FTCX block holds widths only, no order table.
-- **Opcodes `0x79` and `0x7A`.** `0x79` is used 1,566 times, so `sub_870D30` and `sub_86FAB0` are worth
+- **Opcodes `0x79` and `0x7A`.** `0x79` is used 1,566 times, so `FFX_Atel_Op_SetEventEntry` and `FFX_Atel_Op_BindTriggerLink` are worth
   decompiling.
 - **Exact table sizes for libraries 7 and 11.** Usage bounds them below (235, 145) and the next `.data`
   object bounds them above (311, 383).
@@ -293,3 +293,35 @@ the context reset and the three context setups, is `ATEL_CONTEXT.md`. Correction
 - **Which `.ebp` a map loads** (the last known unknown above): asset kind 12, row `18 * eventId`, 402
   event ids, 348 rows named, 330 of them shipped. The boot scenes 393..399 have empty rows and take
   their paths from `off_C334B8` (`host0:/ffx/master/jppc/event/obj/sc/sceneN/sceneN.ebp`).
+
+## 2026-10-13: corrections from the interpreter port (PROGRESS 11.2)
+
+Traced for the recreation's interpreter. The full write-up is `ATEL_CONTEXT.md` section 11. Corrections
+to the opcode table above, all [V] in `FFX_Atel_RunScript 0x8641E0`:
+
+- **`08`, `09`, `0C` and `0D` are not copies of the signed four.** They compare **unsigned**, `0A`,
+  `0B`, `0E` and `0F` signed. With `x` pushed first and `y` on top, `08` and `0A` are `x > y`, `0C` and
+  `0E` are `x >= y`, `09` and `0B` are `!(x >= y)`, `0D` and `0F` are `!(x > y)`. On floats the
+  comparisons are ordered, so a NaN makes `09`, `0B`, `0D` and `0F` true. The compiler emits only the
+  signed four, which is why the difference never showed.
+- **`54` yield** is `EndScript(level 0)`: it frees the running request and every request above level 0
+  that was not created this frame, then schedules. It does not advance, and neither does any end opcode,
+  so an actor with nothing left re-executes its end every frame.
+- **`25` popr** pops into the channel's R. The pattern after a `runscriptN` reads as the caller parking
+  the start result in R. [I]
+- **`75` index 15** reads `g_ffxAtelRunScriptMutex`, the RunScript mutex handle, so it is a heap value at run time.
+  Indices 0..13 are class 5 descriptors of the 14 registers, 14 is -1. No script uses `75`.
+- **`79`** is `FFX_Atel_Op_SetEventEntry` (proposed, `0x870D30`): pop value, index and a variable
+  reference, fill a fresh table with the actor type's defaults, then `table[min(index, 7)] = value`.
+  **`7A`** (`0x86FAB0`) does something only for types 5 and 6 and pushes the result.
+- **`36..38`, `45..53`** pop entry, target and level, not "0, 1, 2 args". The digit is the request kind:
+  0 fire and forget, 1 wait until the target starts it, 2 wait until it ends. The five variants after
+  each base pick the start rule (always, if the entry is not running, if the level is free) and whether
+  the `+0x60` hook is asked.
+- **Syscall ids are 16 bits**, the operand: bits 12..15 the library, 0..11 the function. Libraries 2,
+  3, 10, 14 and 15 point at `g_ffxAtelSysFuncLibEmpty 0xC52B60`, whose eight entries start nothing and
+  poll 0, so a call into them **never finishes** (the script blocks forever). It is not a crash and not a
+  no-op.
+- `1B` and `41..44` fall to the default, which neither advances nor clears the continue flag, so the
+  actor spins to the runaway count of `0x10000` every frame.
+- `40` brk with no record at `ctx+0x64` stalls the actor for good.

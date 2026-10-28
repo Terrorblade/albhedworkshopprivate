@@ -667,29 +667,31 @@ def overlay_table(pe):
     return out
 
 
-# What each overlay slot is for. Derived from the host side of FFX.exe, so the
-# host offsets are facts and the role descriptions are inference.
+# What each overlay slot is for. The host side facts are from FFX.exe (IDA VAs),
+# see reversing/EFFECT_OVERLAY.md. A slot the host never calls says so.
 OVERLAY_SLOT_NOTES = {
-    0:  ("[C] code ptr, present in all 581", "role UNKNOWN"),
-    1:  ("[C] code ptr, present in all 581", "role UNKNOWN"),
-    2:  ("[C] code ptr, present in all 581", "role UNKNOWN"),
+    0:  ("[C] code ptr, present in all 581",
+         "[V] start(handle, 2, 0) cdecl, once, battle state 11 (0x788480) or global state 3 (0x788D60)"),
+    1:  ("[C] code ptr, present in all 581",
+         "[V] free(0, 0) cdecl, at the state 6 cleanup, 0x787AF0 and 0x788C00"),
+    2:  ("[C] code ptr, present in all 581", "[V] no host caller"),
     3:  ("[C] code ptr, present in all 581",
-         "[I] called as tbl->f3(0) by FFX.exe 0x787E00 when its arg is 0"),
+         "[V] step(0) cdecl, return ignored, FFX_Magic_CallOverlayStep(0) 0x787E00, once per sub-step"),
     4:  ("[C] code ptr, present in all 581",
-         "[I] called as tbl->f4(0) by FFX.exe 0x787E00 when its arg is 1"),
-    5:  ("[C] code ptr, present in all 581", "role UNKNOWN"),
-    6:  ("[C] code ptr, present in all 581", "role UNKNOWN"),
+         "[V] effects pass(0) cdecl, return ignored, FFX_Magic_CallOverlayStep(1), once per effects pass"),
+    5:  ("[C] code ptr, present in all 581", "[V] no host caller"),
+    6:  ("[C] code ptr, present in all 581", "[V] no host caller"),
     7:  ("[C] .data ptr in 529, NULL in 52",
-         "[C] points at the effect-data blob (see the ef2 command)"),
+         "[V] data, an ATEL script blob run in BtlEv group 2 by 0x788EF0 at battle state 3 (see ef2)"),
     8:  ("[C] code ptr in 465, NULL in 116",
-         "[I] called as tbl->f8(unit, 2, 0, 0) by FFX.exe 0x787AB0 for magic id 671"),
-    9:  ("[C] code ptr in 415, NULL in 166", "role UNKNOWN"),
-    10: ("[C] code ptr in 415, NULL in 166", "role UNKNOWN"),
-    11: ("[C] code ptr in 415, NULL in 166", "role UNKNOWN"),
-    12: ("[C] code ptr in 415, NULL in 166", "role UNKNOWN"),
-    13: ("[C] code ptr in 415, NULL in 166", "role UNKNOWN"),
-    14: ("[C] code ptr in 415, NULL in 166", "role UNKNOWN"),
-    15: ("[C] code ptr, present in all 581", "role UNKNOWN"),
+         "[V] (handle, 2, 0, 0) by 0x787AB0 only when word_112C94E is 671, only magic_0671 has a body"),
+    9:  ("[C] code ptr in 415, NULL in 166", "[V] no host caller"),
+    10: ("[C] code ptr in 415, NULL in 166", "[V] no host caller"),
+    11: ("[C] code ptr in 415, NULL in 166", "[V] no host caller"),
+    12: ("[C] code ptr in 415, NULL in 166", "[V] no host caller"),
+    13: ("[C] code ptr in 415, NULL in 166", "[V] no host caller"),
+    14: ("[C] code ptr in 415, NULL in 166", "[V] no host caller"),
+    15: ("[C] code ptr, present in all 581", "[V] no host caller"),
 }
 
 
@@ -859,7 +861,12 @@ def _join_fact(a, b):
 
 
 class HostCallScan(object):
-    """The sweep. Call run(), then read sites and stats."""
+    """The sweep. Call run(), then read sites and stats.
+
+    A site is a call through the host table, or since 2026-10-27 a 'jmp reg'
+    tail call through it (stats key tail_jump). Every DLL has a block of 17
+    byte forwarding thunks ending in 'jmp eax', and a call-only sweep missed
+    the 252 slots they reach."""
 
     def __init__(self, pe, nslots=HOST_TABLE_SLOTS):
         s = pe.section(".text")
@@ -979,6 +986,12 @@ class HostCallScan(object):
                 handled = True
             elif not two and op == 0xFF and reg == 2:
                 self._record_call(regs, t, i, d, sites)
+            elif not two and op == 0xFF and reg == 4 and mod == 3:
+                # jmp reg, a tail call. The yonishi ports' opcode thunks are
+                # 'mov eax,[tbl]; mov eax,[eax+disp]; pop ebp; jmp eax', and
+                # a sweep that only looks at call instructions never sees them.
+                if self._record_call(regs, t, i, d, sites):
+                    self.bump("tail_jump")
             if not handled:
                 w = insn_regs_written(d)
                 if w == ALL_REGS:
@@ -1026,6 +1039,7 @@ class HostCallScan(object):
         for s in slots:
             sites.setdefault(s, []).append(i)
         regs[0] = regs[1] = regs[2] = None     # eax, ecx, edx are volatile
+        return bool(slots)
 
     def _fact_for_global(self, g):
         if g is None:
@@ -1070,8 +1084,8 @@ def host_calls(pe):
 # that have a non-NULL slot 7.
 EF2_HEADER = [
     (0x00, "version_or_kind",   "[C] always 3"),
-    (0x04, "header_stride",     "[C] always 0x10"),
-    (0x08, "off_UNKNOWN_08",    "[C] blob-relative offset, 134 distinct values"),
+    (0x04, "off_script_block",  "[C] always 0x10. [V] FFX.exe 0x797550 hands blob+this to FFX_BtlEv_AddScriptBlock(2, 0, ..)"),
+    (0x08, "off_event_table",   "[C] blob-relative offset, 134 distinct values. [V] 0x797550 stores blob+this in dword_1135DF8, read by FFX_BtlEv_StartFirstMatch"),
     (0x0C, "off_UNKNOWN_0C",    "[C] blob-relative offset, 138 distinct values"),
     (0x10, "count_UNKNOWN_10",  "[?] small int or offset, 198 distinct values"),
     (0x14, "zero_14",           "[C] always 0"),
@@ -1143,12 +1157,12 @@ def ef2_magic_id(pe):
 
 
 # ---------------------------------------------------------------------------
-# texture descriptor packing, from FFX.exe FFX_Magic_BuildTexturePath 0x906420
+# texture descriptor packing, from FFX.exe FFX_Magic_DrawSpriteTex0 0x906420
 # ---------------------------------------------------------------------------
 
 def decode_texture_desc(packed):
     """
-    FFX_Magic_BuildTexturePath formats
+    FFX_Magic_DrawSpriteTex0 formats
         <root>/magic_%04d/tex/GCM/%d_%d_0_0_%d_%d.dds.phyre
     from a packed 64-bit descriptor. Field extraction is lifted straight from
     that function, so it is confirmed. root is "/FFX_Data/GameData/PS3Data/magic"
@@ -1259,8 +1273,9 @@ def cmd_ovl(paths):
             kind, note = OVERLAY_SLOT_NOTES.get(i, ("", ""))
             print("    [%2d] +0x%02X = %08X  %-7s %s | %s" % (
                 i, 4 * i, va or 0, sec or ("NULL" if va == 0 else "?"), kind, note))
-        print("  bytes past +0x3F are not part of the table: no slot beyond 15 is a")
-        print("  consistent pointer in any of the 581 FFX DLLs.")
+        print("  the host calls only slots 0, 1, 3, 4 and 8 and reads 7. In the 130 yonishi")
+        print("  port DLLs the table also heads a 32 dword header that FFX.exe reads through")
+        print("  unit+0x50 at +0x54, +0x60, +0x74, +0x78 and +0x7C, see reversing/EFFECT_OVERLAY.md.")
         print()
 
 

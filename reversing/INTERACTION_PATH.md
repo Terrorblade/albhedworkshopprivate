@@ -14,7 +14,7 @@ Five kinds are handled:
 | 1 | character actor, then `FFX_Atel_TestPlayerProximity` | 0x866980 | `g_ffxAtelCtx+536/540/544` only | YES, hard-wired to the bound player, plus a one-slot nearest-target cache at ctx+488 |
 | 2 | `FFX_Atel_StepLineTrigger` | 0x8684B0 | bound player actor pos, ctx+536 and +552 | YES, `actor->id == *(u16*)(g_ffxAtelCtx+10)` |
 | 3 | `FFX_Atel_StepBoxTrigger` | 0x866CC0 | bound player actor pos, ctx+536 and +552 | YES, same id gate |
-| 5 | `FFX_Atel_StepPathTrigger` (was sub_868020) | 0x868020 | per-actor target id, see below | NO id gate |
+| 5 | `FFX_Atel_StepCrossingTrigger` (was sub_868020) | 0x868020 | per-actor target id, see below | NO id gate |
 | 6 | `FFX_Atel_StepVolumeTrigger` (was sub_867C10) | 0x867C10 | per-actor target id at `pos+40`, falls back to ctx+552/+536 | NO id gate |
 
 Kind 4 exists as a kind value but is not stepped here, and its position sub-struct pointer
@@ -123,7 +123,7 @@ actor POINTER as the third argument:
     case 1: ... if (v3 != 0xFFFF) FFX_Atel_TestPlayerProximity(actor, dt, GetActor(v3));
     case 2:    if (v3 != 0xFFFF) FFX_Atel_StepLineTrigger     (actor, dt, GetActor(v3));
     case 3:    if (v3 != 0xFFFF) FFX_Atel_StepBoxTrigger      (actor, dt, GetActor(v3));
-    case 5:    FFX_Atel_StepPathTrigger  (actor, dt);          // no player arg at all
+    case 5:    FFX_Atel_StepCrossingTrigger  (actor, dt);          // no player arg at all
     case 6:    FFX_Atel_StepVolumeTrigger(actor);              // no player arg at all
     }
 
@@ -256,7 +256,7 @@ Names, each taken from an actual call site rather than guessed:
 | 1 | **Examine alternate** | `FFX_Atel_StepFrame` commit | same, but the other of the two examine buttons (pad bit 0x80 rather than 0x20) |
 | 2 | **Collision bump** | `FFX_Ch_ResolveCollisionsAll` 0x83D753 via `FFX_Atel_FireEventOnChrActor` 0x8764A0 | two CHRs physically collided. Only actor kind 1 has a channel for it |
 | 3 | **Proximity in range** | `FFX_Atel_TestPlayerProximity`, `FFX_Atel_StepLineTrigger`, `FFX_Atel_StepBoxTrigger` | the player is inside my radius this frame. Distance only, NO button |
-| 4 | **Touch / cross** | `FFX_Atel_StepLineTrigger`, `FFX_Atel_StepBoxTrigger`, `sub_8680A0` (the path trigger link step) | the swept player segment crossed me |
+| 4 | **Touch / cross** | `FFX_Atel_StepLineTrigger`, `FFX_Atel_StepBoxTrigger`, `FFX_Atel_TestCrossingForTarget 0x8680A0` (the type 5 crossing step) | the swept player segment crossed me |
 | 5 | **Enter** | line, box and volume triggers | the player went from outside to inside |
 | 6 | **Leave** | line, box and volume triggers | the player went from inside to outside |
 | 7 | unreachable through FireActorEvent | - | has a script entry, never has a channel |

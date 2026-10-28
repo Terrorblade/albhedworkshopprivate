@@ -136,7 +136,7 @@ Arriving aeon: [V]
 - `FFX_Btl_GrantAeonFullGauge` [FFX_Btl_GrantAeonFullGauge], Grand Summon only (section 6)
 - `+0x1E = 0`, `+0x43D = 4`
 - three loads queued with `FFX_Btl_QueueChrLoad` [FFX_Btl_QueueChrLoad] (section 2.5)
-- `sub_7AD470`
+- `FFX_Btl_QueueWeaponChrLoads`
 - `+0x716 = 1` and `FFX_Btl_TurnQueue_Insert(aeon, prio 0, real 1, variant 0, issuer summoner,
   claimed 0)`. Variant 0 forces the aeon's CTB counter `+0x65C` to 0.
 
@@ -144,8 +144,8 @@ Arriving aeon: [V]
 
 One function queues all three aeon animations as a fake action by the aeon. [V]
 
-- `FFX_Btl_GetAeonTransitionEffect` [FFX_Btl_GetAeonTransitionEffect] reads `0xC43828 + 16*(aeon-8)`
-  [g_ffxAeonTransitionEffects], four (u16 effect, u8 flag) pairs:
+- `FFX_Btl_GetAeonTransitionEffect` [FFX_Btl_GetAeonTransitionEffect] reads `0xC43828 + 16*(aeon-8)`, that is
+  `g_ffxAeonTransitionEffects 0xC438A8` + 16*(aeon-8) (the label moved on 2026-10-26, ATEL_BTL_LIBRARY.md), four (u16 effect, u8 flag) pairs:
 
 | aeon | +0 full entrance | +4 short entrance | +8 dismiss | +12 KO |
 |---|---|---|---|---|
@@ -195,8 +195,8 @@ returns early while it is non zero, and so do `FFX_Btl_StepSubPhase`, `sub_79217
 
 The entrance itself is a magic effect: `FFX_Btl_BeginMagicEffect 0x787F20` ->
 `MagicFile__setMagicId 0x9DA7A0` / `MagicFile__load`, file `magic_%04d.dll`. With
-`maybe_FFX_IsAsyncPrxLoad` the effect sits in state 16 until the DLL is in, so that is disk dependent
-too. `FFX_Btl_PickAbilityEffectId` [FFX_Btl_PickAbilityEffectId] picks row `+16` or `+18` (full or short) by the same
+`FFX_Magic_GetPrxLoadMode` the effect sits in state 16 until the DLL is in, and for load mode 2 ids
+also until every TexList texture is in (`MAGIC_ASSETS.md`), so that is disk dependent too. `FFX_Btl_PickAbilityEffectId` [FFX_Btl_PickAbilityEffectId] picks row `+16` or `+18` (full or short) by the same
 option bit for every ability, which is how the aeons' own attacks also get short versions (row `+25`
 in 8..17). [V]
 
@@ -538,7 +538,7 @@ battle start).
 | 0x7ADF90 | FFX_Btl_BeginSummon | pushes the arrangement, swaps the party out and the aeon in |
 | 0x7AE1A0 | FFX_Btl_QueueAeonTransition | queues entrance, dismiss or KO as a 0x3100 action |
 | 0x7AF060 | FFX_Btl_GetAeonTransitionEffect | reads the per-aeon effect table |
-| 0xC43828 | g_ffxAeonTransitionEffects | 10 x 16 bytes, four (u16 effect, u8 flag) |
+| 0xC438A8 | g_ffxAeonTransitionEffects | the entry for unit 8, 10 x 16 bytes, four (u16 effect, u8 flag) |
 | 0x7ADA40 | FFX_Btl_AeonLeadUnit | 16 and 17 -> 15 |
 | 0x7ADF10 | FFX_Btl_ReturnPartyAfterSummon | swaps the party back in |
 | 0x7ADA60 | FFX_Btl_PartyFlee | the 0x3018 flee animation loop |

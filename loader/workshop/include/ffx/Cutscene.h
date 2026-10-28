@@ -215,7 +215,7 @@ namespace ffx
 
 	// PhyFMVPlayerManager, the fields read out of FFX_Fmv_CreatePlayer, plus the
 	// skip and completion fields read out of FFX_Fmv_PollSkipButtons 0x6D9460,
-	// FFX_Fmv_StepPresentation 0x6D7680 and FFX_Fmv_PlaybackFinished 0x645DC0.
+	// FFX_Fmv_StepPresentation 0x6D7680 and FFX_Fmv_FirstFrameShownOrStopped 0x645DC0.
 	namespace FmvManager
 	{
 		const DWORD FilePath = 0x4F0;  // char[], the resolved video path
@@ -225,10 +225,11 @@ namespace ffx
 		const DWORD WidthF = 0x6F4;    // float (1780)
 		const DWORD HeightF = 0x6F8;   // float (1784)
 
-		// BYTE (1764). The decode side reached the end of the video.
-		// FFX_Fmv_PlaybackFinished returns this while IsPlaying is set, and 1 when
-		// it is clear, and that return is what the Movie:9 and Movie:10 script
-		// waits key off. So "the movie is over" is IsPlaying == 0 OR this byte.
+		// BYTE (1764). Stored 1 after every successful frame upload (0x6D7828 in
+		// FFX_Fmv_StepPresentation), so it means "a frame has been shown", not
+		// "the video ended". FFX_Fmv_FirstFrameShownOrStopped returns this while
+		// IsPlaying is set and 1 when it is clear, and the Movie:9 and Movie:10
+		// waits key off that, so they end on the first frame.
 		const DWORD PlaybackComplete = 0x6E4;
 
 		// BYTE (1788). The Phyre player's own pause flag, toggled by
@@ -577,7 +578,7 @@ namespace ffx
 		int playbackState;
 		bool playing;          // the manager's IsPlaying byte, 1744
 		bool hasPlayer;        // a player object exists and has not been released
-		bool decoderBusy;      // FFX_Fmv_IsDecoderBusy, the real decode queue read
+		bool decoderBusy;      // FFX_Fmv_IsStartPending, reads 0 in the shipped game
 		bool playbackComplete; // the manager's PlaybackComplete byte, 1764
 		bool scriptRunning;    // the ATEL script's own view
 		bool scriptBlocking;   // the Movie:10 wait is armed, g_ffxFmvScriptBlocking
@@ -621,23 +622,28 @@ namespace ffx
 	// two machines.
 	bool FmvScriptRunning();
 
-	// g_ffxFmvScriptBlocking, set by Movie:10 start ONLY WHEN THE PLAYER WAS
-	// ACTUALLY CREATED and cleared by the map-change teardown. False during a
-	// Movie:10 wait means this machine failed to open the video, which is the one
-	// FMV asymmetry nothing can repair.
+	// g_ffxFmvScriptBlocking, set by Movie:10 start only when FFX_Fmv_StartVideo
+	// returns nonzero, and cleared by the map-change teardown. On PC that return is
+	// 0 on success AND on a missing file, nonzero only when the sampler create
+	// fails, so in practice Movie:10 never sets this and shows no movie (corrected
+	// 2026-10-27, reversing/MOVIE_DECODE.md).
 	bool FmvScriptBlocking();
 
-	// FFX_Fmv_IsDecoderBusy. Any decode slot still active, or the manager's queue
-	// not drained. Three of the four script movie waits consult it.
+	// FFX_Fmv_IsStartPending 0x641CE0, the IDB's old FFX_Fmv_IsDecoderBusy. It does
+	// not look at the decoder. It is true only while the manager's command list
+	// holds a play command or mgr+0x704 is 0, and neither happens in the shipped
+	// game, so it reads 0. Kept because three of the four script movie waits call
+	// it. reversing/MOVIE_DECODE.md, 2026-10-27.
 	bool FmvDecoderBusy();
 
-	// The manager's PlaybackComplete byte, which the decode side sets when the video
-	// reaches its end.
+	// The manager's byte at +0x6E4, stored 1 after every successful frame upload, so
+	// it is set from the FIRST presented frame on, not at the end of the video.
 	bool FmvPlaybackComplete();
 
-	// The engine's own "this movie is over" test, FFX_Fmv_PlaybackFinished 0x645DC0,
-	// replicated as pure reads: the completion byte while a video is playing, and
-	// true when none is. This is the predicate the Movie:9 and Movie:10 waits use.
+	// FFX_Fmv_FirstFrameShownOrStopped 0x645DC0 (was FFX_Fmv_PlaybackFinished),
+	// replicated as pure reads: the +0x6E4 byte while a video is playing, and true
+	// when none is. The Movie:9 and Movie:10 waits use it, so they end on the first
+	// frame, not the last.
 	bool FmvPlaybackFinished();
 
 	// ---------------------------------------------------------------------------
@@ -679,8 +685,8 @@ namespace ffx
 	//                                 flag does NOT make the presentation step take
 	//                                 its stop branch.
 	//
-	// Movie:1 tests FFX_Fmv_IsPlaying and FFX_Fmv_IsDecoderBusy, and Movie:9 and
-	// Movie:10 test FFX_Fmv_PlaybackFinished, which is "IsPlaying ? PlaybackComplete
+	// Movie:1 tests FFX_Fmv_IsPlaying and FFX_Fmv_IsStartPending, and Movie:9 and
+	// Movie:10 test FFX_Fmv_FirstFrameShownOrStopped, which is "IsPlaying ? PlaybackComplete
 	// : 1". None of those read the flag. So the thing that actually ends a movie for
 	// three of the four script waits is CLEARING THE MANAGER'S IsPlaying BYTE, which
 	// also stops FFX_Fmv_StepFromMainStep from doing anything at all, since that is

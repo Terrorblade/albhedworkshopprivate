@@ -175,11 +175,12 @@ namespace pilgrimage
 		// Is there a movie behind this wait at all. NOT A DECISION, only something to
 		// log, and the difference matters, see the arming comment in the gate.
 		//
-		// A false here is the signature of FFX_Fmv_StartVideo having failed on this
-		// machine. Movie:10 start sets g_ffxFmvScriptRunning and
-		// g_ffxFmvScriptBlocking only when the video actually opened, and its poll
-		// completes on the first look when blocking is 0, so a machine with a missing
-		// or unreadable video file arrives here with every one of these clear.
+		// Movie:10 start sets g_ffxFmvScriptRunning and g_ffxFmvScriptBlocking only
+		// when FFX_Fmv_StartVideo returns nonzero, which on PC is the sampler create
+		// failing, not the video opening (corrected 2026-10-27,
+		// reversing/MOVIE_DECODE.md). So a Movie:10 wait arrives here with these clear
+		// on every machine, and its poll completes on the first look. A missing file
+		// is invisible to every caller.
 		bool MovieWasInvolved()
 		{
 			FmvState f;

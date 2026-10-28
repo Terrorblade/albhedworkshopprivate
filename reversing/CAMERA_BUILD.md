@@ -160,7 +160,7 @@ So REF live is `S+0x40`, REF committed `S+0x50`, CAM live `S+0x65C`, CAM committ
 | `S+3209` | per StepAll dirty byte |
 | `S+3210` | scale about pivot flag (`sub_7C4D40`), written at `0x7BEE9A` |
 | `S+3212` | last priority |
-| `S+0xCA8..0xCB4` | lighting ids, sent through `sub_82CE20` and `sub_82CB60` on activate |
+| `S+0xCA8..0xCB4` | depth of field: +0xCA8 dirty, +0xCAC mode (came:126), +0xCB0/+0xCB4 the two depths (came:127), sent through `FFX_Gfx_SetDofDepth 0x82CE20` and `FFX_Gfx_SetDofEnabled 0x82CB60` on activate. Earlier called lighting ids, which was wrong (VISUAL_CENSUS.md, ATEL_MISC_LIBRARIES.md) |
 
 ### 2.2 Screen, 448 bytes [V]
 
@@ -184,7 +184,7 @@ So REF live is `S+0x40`, REF committed `S+0x50`, CAM live `S+0x65C`, CAM committ
 | `+0xC1` | slot index |
 | `+0xC2`, `+0xC3` | WIN mode, DRW mode (1 take size, 2 copy rect, 3 centre) |
 | `+0xC4` | kind |
-| `+0xD0..0xD8` | lighting ids |
+| `+0xD0..0xD8` | depth of field mode and the two depths last sent |
 | `+0xDC` | eight 16 byte rect tweens, four WIN then four DRW |
 | `+0x15C` | shake phase, 2 floats |
 | `+0x164` | shake rate, 2 floats |
@@ -227,12 +227,12 @@ spring random divisor. The port's `ShakeRecord` in `Shake.h` mirrors it field fo
      - y = fl(((((winOffset.y - shake.y) - drw.y) + biasY) * 2) / 416)
      - x = fl((((winOffset.x + shake.x) - drw.x) + biasX) * 2 * 0.001953125)
      
-     then `FFX_Gfx_SetScreenOrigin(shake.x, shake.y)`, then the lighting ids through `sub_82CE20` and
-     `sub_82CB60`, then if `sub_9DA700()` the magic snapshot replaces both matrices
+     then `FFX_Gfx_SetScreenOrigin(shake.x, shake.y)`, then the depth of field through `FFX_Gfx_SetDofDepth` and
+     `FFX_Gfx_SetDofEnabled`, then if `sub_9DA700()` the magic snapshot replaces both matrices
      (`MagicFile__restoreCameraSnapshot`), then `FFX_Came_PushViewToRenderCtx`, then `sub_9DA780` puts
      the saved fov back when frozen.
 7. Not modelled by the port, all render side: the magic 540 near plane in scene 208, the magic 152 and
-   601 second camera, the 256 wide split screen, the lighting ids.
+   601 second camera, the 256 wide split screen, the depth of field.
 
 ---
 
@@ -440,7 +440,7 @@ files. The camera state itself is runtime state, not game data.
 | `0x7BB840` | `FFX_AtelCmd_CameScreenShake` | |
 | `0x9DA700` | `MagicFile__isCameraFrozen` | |
 | `0x9DA780` | `MagicFile__restoreSavedFov` | |
-| `0x82CE20` | `FFX_Ch_SetLightSetId` | tentative |
-| `0x82CB60` | `FFX_Ch_SetLightDirty` | tentative |
+| `0x82CE20` | `FFX_Gfx_SetDofDepth` | applied 2026-10-26 |
+| `0x82CB60` | `FFX_Gfx_SetDofEnabled` | applied 2026-10-26 |
 | `0x645F00` | `FFX_Gfx_SetMainCameraNear` | |
 | `0x638E70` | `FFX_Gfx_GetMainCameraNear` | tentative |

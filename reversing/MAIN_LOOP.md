@@ -192,6 +192,9 @@ In order:
    `0x820B01`**. See section 5.
 2. Phyre housekeeping: `sub_71E460(0)`, `sub_63DAC0()`, `sub_6427F0()`, `sub_645DF0(dt)`.
 3. `if (sub_6411E0() == 2)` the FMV path, which draws the movie and returns. No simulation.
+   (Corrected 2026-10-27: `FMV_SYNC.md` section 1 showed `sub_6411E0` is `FFX_Frame_GetSuspendState`
+   and has nothing to do with video. The simulation runs through a movie, and `sub_645DF0`
+   (`FFX_Fmv_StepFromMainStep`) consumes one movie frame per step, `MOVIE_DECODE.md` section 8.)
 4. `FFX_Pad__updateAll()`.
 5. `FFX_StepPacing(dt)`, unless `g_ffxMenuSysRunningAlt` is set, in which case only
    `FFX_Pad__commitAllPorts()` runs.
@@ -239,7 +242,7 @@ are all worth knowing.
 | --- | --- | --- | --- | --- |
 | `g_phyreFrameTickCount` | `0x12FB8C4` | once per `frameTick`, unconditionally, before `animate` | **zero**, the `inc` is the only xref in the binary | a free, tamper-proof **presented-frame** counter. Not a step counter. |
 | `app+0x34` | `*(DWORD *)(*(void **)0xCC9CD8 + 0x34)` | same place, same rate | the first-frame test, and the input-log replay handler | same information, reachable through the app pointer the Workshop already has |
-| `g_ffxMainStepCounter` | `0x23CBBF0` | once per `FFX_MainStep`, gameplay path only | many: `FFX_Ch_MoveChrMemory`, `FFX_Mot_RunEvents`, `DmaSync`, `SndKickFoot`, `sgMenuExec`, plus three `test byte ptr ..., 1` parity sites | **the game's own frame number.** Zeroed by `FFX_MainInit`. Covers field and battle. Stalls during FMV and the system menu. **Read it, never write it**, because the parity tests drive a double-buffer flip. |
+| `g_ffxMainStepCounter` | `0x23CBBF0` | once per `FFX_MainStep`, gameplay path only | many: `FFX_Ch_MoveChrMemory`, `FFX_Mot_RunEvents`, `DmaSync`, `SndKickFoot`, `sgMenuExec`, plus three `test byte ptr ..., 1` parity sites | **the game's own frame number.** Zeroed by `FFX_MainInit`. Covers field and battle. Stalls during the system menu (not during FMV, the simulation runs through a movie, `FMV_SYNC.md` section 1, corrected 2026-10-27). **Read it, never write it**, because the parity tests drive a double-buffer flip. |
 | `g_ffxGameClock60Hz` | `0x12FB7F0` | `+= 2` per simulation step, in `FFX_StepPacing` | `FFX_MainStep_PublishStepScale`, `sub_908F70` | the in-game clock in 1/60 s ticks. Gated on no menu, no pending menu open, save UI idle. |
 | `g_ffxGameClock60HzUnread` | `0x12FB7F4` | identical, beside the above | **zero** | one xref total, the `add`. Dead twin. |
 | `g_ffxEffectSubStepCounter` | `0x23328D4` | per sub-step | 11 | documented by an earlier pass. Stalls when `byte_12FB8FC`/`byte_12FB8FD` are set. |

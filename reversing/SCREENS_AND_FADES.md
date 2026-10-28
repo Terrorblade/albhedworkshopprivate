@@ -146,7 +146,10 @@ which is the frame the menu opens **[V]**. That pins down the destination its ID
 open.
 
 Two more `sub_692C40` calls sit at the end of `FFX_Frame_RenderScene`. The one at 0x66ADCA takes
-target +156 or +140 depending on a flag (its role was not traced). The one at 0x66AE6A runs when
+target +156 or +140 depending on a flag (its role was not traced). Resolved 2026-10-28 in
+MENU_DRAW_PATH.md 8: the flag is RenderScene's local `v343`, set to 1 on the branch taken when
+`g_ffxMenuSysRunning` is set, where the 3D scene is skipped and the 2D list is drawn into +156. So
+it copies +156 for a menu frame and +140 otherwise. The one at 0x66AE6A runs when
 `g_ffxFmvPauseOverlayRedrawState == 1`. It copies +140 into +156 at the target size and writes
 state 2 **[V]**. The IDB already notes that nothing in the shipped binary writes 1, so the movie
 pause branch is dead on PC **[V]** from the xref list (writers at 0x668E04 and 0x66AE6F both write

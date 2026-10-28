@@ -647,7 +647,8 @@ ATEL actors with `FFX_Atel_GetActor 0x0046A830`, read `actor+0x40`, and call
 `SetPartyOrderSlot(7, 0..2)` accept him with no index check. The engine's own script
 auto-fill loops `idx <= 7`, so it considers him eligible. What excludes him is four
 separate cosmetic exclusions: the shipped party menu skips index 7 in all three list
-passes, `FFX_Btl_LoadPlayerData 0x003848B0` skips index 7 for the default ability mask,
+passes, `FFX_Btl_LoadPlayerData 0x003848B0` (now `FFX_SaveData_GrantAllAbilities`, the Unlock all
+skills booster, `BOOSTERS.md` 5.2, not a default mask) skips index 7 when it grants every ability,
 `FFX_SaveData_LockEquippedGear` bounds `idx < 7` so his equipment never locks, and the
 ATEL party snapshot's membership mask covers only 0..6 so his membership does not survive
 a push and pop. **Verdict: putting Seymour in the party works.** He has no default
@@ -717,7 +718,7 @@ names are the ones used above.
 | `0x00387100` | func | `SaveDataReloadCharNames` | `int (void)` | fills all 18 rows from `ply_save` |
 | `0x0039A440` | func | `BtlResolveUnitChrId` | `int (BattleActor *)` | the only reader of the chrId table |
 | `0x0046A7E0` | func | `SaveDataGetRikkuAltOutfit` | `int (void)` | `saveData+0xD1`, swaps `c007` for `c041` |
-| `0x00394020` | func | `BattleGetActor` | `void *(u8)` | `< 31` ally, 31..92 monster |
+| `0x00394020` | func | `BattleGetActor` | `void *(u8)` | `< 31` ally, 31..92 weapon and armour side records (BATTLE_ACTOR.md) |
 | `0x003ADAE0` | func | `BtlSwapUnitIntoPartySlot` | `int (u8 out, u8 in, int mode, char)` | the in-battle swap and summon |
 | `0x003ADE10` | func | `BtlSwapPartyArrangement` | `void (void)` | push and pop the arrangement |
 | `0x00385FC0` | func | `BtlCommitActorsToSave` | `char (void)` | calls CommitPartyToField at battle end |
@@ -924,7 +925,7 @@ paths go down that branch every battle.
 | Monster capture | n/a | any battle, Capture weapon, killing blow | Not a minigame, one branch in `BtlOnUnitDefeated 0x0038C740`. Already in `Minigames.h` | not launchable |
 | **Thunder Plains lightning dodge** | 140 `kami0000` | stand on the Thunder Plains | `MapRequestChange(140, 0)`. **It starts itself**, the strike scheduler is actor 31 entry 1 and the dodge window actor 30 entry 1, both auto-started by the map | **direct** |
 | Dodge-200 reward variant | 256 `kami0400` plus a flag | 200 consecutive dodges | Set `ThunderPlainTreasureEnable 0x01685BA4` **before** warping to 256. It is a package swap at load time, so the order matters | direct, flag first |
-| **Butterfly catching, Macalania** | 241 `mcfr0100` | `mcfr0000` -> 241, talk to the spirit | `MapRequestChange(241, 0)`, body is actor 38 entry 9, timer actor 37 entry 6 (40 s) or 7 (30 s). Penalty battles are `(310<<16)\|{0..5}` | map warp + script fire |
+| **Butterfly catching, Macalania** | 241 `mcfr0100` | `mcfr0000` -> 241, talk to the spirit | `MapRequestChange(241, 0)`, timer actor 37 entry 6 (40 s) or 7 (30 s). Penalty battles are `(310<<16)\|{0..5}` | map warp + script fire |
 | **Cactuar hunt, Bikanel** | 129, 136, 137, 138, 130 `bika*` | airship to Bikanel | `MapRequestChange(129, 0)` and walk. No clock, no RNG, no single start script | map warp |
 | **Via Purifico** | 207 `bvyt0500`, 198 `bvyt0900` | story, the Bevelle trial | `MapRequestChange(207, 0)` | map warp |
 | **Jecht Shot practice** | 302 `swin0000`, 94 `swin0200` | story, on deck | `MapRequestChange(302, 0)` then actor 32 entry 8 | map warp + script fire |
@@ -1196,13 +1197,12 @@ playable with the swf absent.
 |---|---|---|---|---|
 | **countdown, seconds** | 3 | actor **37** base `+0x0` | s32 | init 39 for the 40 s course, 29 for the 30 s course |
 | countdown, tenths | 3 | actor **37** base `+0x4` | s32 | init 9, with a 10/60 cascade |
-| **gauge** | 3 | actor **38** base `+0x16` | u8 | starts at 128, blues `+= 3` at 14 sites, reds `-= 3` at 14 sites, a `>= 89` test gates the reward |
 
-**The "red butterfly penalty" and the "caught count" are the same variable.** There is no
-separate caught counter and no separate penalty counter, it is one gauge moved by plus or
-minus 3. **What 128 and 89 actually mean could not be settled.** `mcfr0100` declares no
-class-0 variables at all, so there is no save byte for "butterflies caught", and the
-reward goes straight into the equipment table.
+**Correction 2026-10-28 (`MINIGAMES_PROGRESSION.md` 4.6).** This table used to list a
+"gauge", actor 38 `+0x16`, var57, starting at 128 with a `>= 89` test. That variable is the
+fade level of the Celestial Mirror upgrade in actor 38 entry 9, not a butterfly count, so
+editing it does nothing to the hunt. The hunt's reward is the Saturn Sigil, treasure 277,
+given at `mcfr0100` actor 27 entry 2. Where the hunt keeps its catch count is not known yet.
 
 #### Jecht Shot practice, `sw/swin0000`
 
@@ -1423,9 +1423,8 @@ a fact.
   `0x00F26B30`.
 - **The real-time rate of the Blitzball match clock.** The unit is verified as display
   seconds, the rate is not, because the tick loop has branch-dependent waits.
-- **What the butterfly gauge's 128 start and 89 threshold mean**, and whether a separate
-  caught count exists anywhere. Neither was found, so the single gauge is what is
-  reported.
+- **Where the butterfly hunt keeps its catch count.** The "gauge" this list used to ask
+  about is a fade level in the mirror upgrade, `MINIGAMES_PROGRESSION.md` 4.6.
 - **Every unnamed field in the 2560-byte Blitzball block.** The dimensions are solid, the
   meanings are guesses. Specifically class-0 `0x1528` and `0x1529` are read 24 and 2
   times by the match controller and written by no `bltz` package, so they come from a

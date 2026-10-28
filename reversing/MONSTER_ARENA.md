@@ -239,22 +239,22 @@ have `sectionCount == 8`.
 ### The actors capture operates on
 
 `FFX_Btl_IsEnemySlot 0x79AEF0` is literally `return (unsigned)(index - 20) <= 7`, and it gates the
-entire capture and bestiary branch. `sub_793530` pins down the array layout:
+entire capture and bestiary branch. `FFX_Btl_AllocActorArrays` pins down the array layout:
 
 ```
 793530  push 1E270h          ; 123504 = 3984 * 31
 793535  call FFX_MemAlloc
-79353A  mov  g_ffxBattleAllyActors, eax
+79353A  mov  g_ffxBattleUnits, eax
 79353F  add  eax, 13740h     ; 79680 = 3984 * 20
 793549  mov  g_ffxBattleEnemyUnits, eax
 793544  push 0DCE0h          ; 56544 = 912 * 62
 79354E  call FFX_MemAlloc
-793555  mov  g_ffxBattleMonsterActors, eax
+793555  mov  g_ffxBattleSideRecords, eax
 ```
 
 So the eight combat enemies are **actor indices 20..27 in the 3984-byte array**, and
 `g_ffxBattleEnemyUnits 0x1134468` is exactly `&allyActors[20]`. That is why offsets like +0x6D6,
-+0xDD0 and +0xF80 are valid on an enemy. `g_ffxBattleMonsterActors 0x113446C` (indices 31..92, 912
++0xDD0 and +0xF80 are valid on an enemy. `g_ffxBattleSideRecords 0x113446C` (indices 31..92, 912
 bytes each) is a different, smaller array and is not where capture state lives. See section 12,
 because FFX_GAME_NOTES.md reads as if combat enemies live there.
 
@@ -272,14 +272,16 @@ because FFX_GAME_NOTES.md reads as if combat enemies live there.
 
 Accessors: `FFX_SaveData_GetCaptureCount 0x790AF0`, `FFX_SaveData_AddCaptureCount 0x790B90`,
 `FFX_SaveData_TryCapture 0x790B30`. The array itself has exactly **three** referencing
-instructions in the whole binary, all inside those first two functions. There is also a host-side
-thunk at `0x772790` (`jmp FFX_SaveData_GetCaptureCount`) which IDA had named
-`FFX_AtelSys_Movie_019_start`.
+instructions in the whole binary, all inside those first two functions. There is also a thunk at
+`0x772790` (`jmp FFX_SaveData_GetCaptureCount`) which IDA had named `FFX_AtelSys_Movie_019_start`.
+It is not a Movie syscall. It is entry 12 of `off_C40F30`, the sa_menu value getter table that sits
+after the 16 row Movie table, and the proposed name is `FFX_SaMenu_GetCaptureCount`
+(`ATEL_MOVIE_SAVE_LIBRARIES.md` section 5, corrected 2026-10-26).
 
-The complete caller set of `FFX_SaveData_GetCaptureCount`, which is what rules out a menu module:
+The complete caller set of `FFX_SaveData_GetCaptureCount`:
 
 ```
-00772794  FFX_AtelSys_Movie_019_start (the thunk)
+00772794  sub_772790 (the sa_menu thunk)
 00790B4B  FFX_SaveData_TryCapture
 00790BA6  FFX_SaveData_AddCaptureCount          (reads to clamp)
 0085895F  FFX_AtelSys_Core_428_GetCaptureCount
@@ -290,7 +292,8 @@ The complete caller set of `FFX_SaveData_GetCaptureCount`, which is what rules o
 ```
 
 and of `FFX_SaveData_AddCaptureCount`: `TryCapture`, plus syscalls 429, 430, 431 and 537. That is
-all of it. **No menu code, no shop code, no UI code anywhere.**
+all of it. **No shop code and no menu code writes a count.** The one menu reader is the sa_menu thunk,
+which an sa_menu text token or item condition can call through the getter table. It only reads.
 
 ### The two bestiary masks, question settled
 
@@ -695,7 +698,7 @@ IDB with the evidence in a function comment.
 | 0x381D40 | `FFX_Btl_LoadKernelTable` | fills the a_ability table pointer at 0xD2A944 |
 | 0x394020 | `FFX_Battle_GetActor` | index < 31 at 3984 stride, 31..92 at 912 |
 | 0x395AA0 | `FFX_Btl_GetEnemyUnit` | `g_ffxBattleEnemyUnits + 3984 * i`, i in 0..7 |
-| 0x393530 | `sub_793530` | the actor array allocator. Proves 3984 x 31, +0x13740, 912 x 62 |
+| 0x393530 | `FFX_Btl_AllocActorArrays` | the actor array allocator. Proves 3984 x 31, +0x13740, 912 x 62 |
 | 0x39C110 | `FFX_Btl_SetupUnitRoster` | marks the **encountered** bestiary bit per spawned enemy type |
 | 0x385A00 | `FFX_SaveData_BumpCharBattleCounter` | returns early for index >= 18. The only "who" on the capture path |
 | 0x39CFD0 | `sub_79CFD0` | the battle message call TryCapture makes, `(5, actorIdx, msgId, 27, 35)`. Not further identified |
@@ -738,7 +741,7 @@ IDB with the evidence in a function comment.
 | 0x4602A0 | `FFX_AtelOp_AskChoice315_start` | ask-a-choice, 48 arena uses. Body is 0x4607A0 |
 | 0x456520 | `FFX_AtelSys_Core_573_resi` | new game. Calls FFX_InitNewSaveData, so a script CAN reseed the RNG from the clock |
 | 0x3A8090 / 0x3A80A0 | `FFX_AtelSys_Btl_275_resi` / `276_resi` | write `g_ffxBtlScriptMode` 1 and 2. The only writers |
-| 0x372790 | thunk | `jmp FFX_SaveData_GetCaptureCount`. IDA has it as `FFX_AtelSys_Movie_019_start` |
+| 0x372790 | thunk | `jmp FFX_SaveData_GetCaptureCount`, `sub_772790`, proposed `FFX_SaMenu_GetCaptureCount`. Its old name `FFX_AtelSys_Movie_019_start` was false |
 
 ### Data
 
@@ -751,9 +754,9 @@ IDB with the evidence in a function comment.
 | 0xD30EDC | `g_ffxMonsterMask2` | saveData+0x444C, 512 bits, **defeated**, indexed by monster type id |
 | **0xD2C9E5** | **`g_ffxBtlScriptMode`** | was `unk_112C9E5`. Must be 0 for a capture to be flagged |
 | **0xD2C9EB** | **`g_ffxBtlMonstersKilledThisBattle`** | was `unk_112C9EB`. BYTE, incremented per monster death |
-| **0xD34468** | **`g_ffxBattleEnemyUnits`** | was `dword_1134468`. Exactly `g_ffxBattleAllyActors + 0x13740` = `&allyActors[20]` |
-| 0xD334D4 | `g_ffxBattleAllyActors` | 3984 x 31 = 0x1E270 bytes. Enemies are indices 20..27 here |
-| 0xD3446C | `g_ffxBattleMonsterActors` | 912 x 62 = 0xDCE0 bytes, indices 31..92. **Not** where the eight combat enemies live |
+| **0xD34468** | **`g_ffxBattleEnemyUnits`** | was `dword_1134468`. Exactly `g_ffxBattleUnits + 0x13740` = `&allyActors[20]` |
+| 0xD334D4 | `g_ffxBattleUnits` | 3984 x 31 = 0x1E270 bytes. Enemies are indices 20..27 here |
+| 0xD3446C | `g_ffxBattleSideRecords` | 912 x 62 = 0xDCE0 bytes, indices 31..92. **Not** where the eight combat enemies live |
 | 0xD2A944 | `dword_112A944` | the a_ability kernel table pointer, used at 0x39C8A8 |
 | 0xD3085C | `g_ffxWorldFlagBits3DCC` | saveData+0x3DCC, 1024 bits. The arena writes it 1359 times |
 | 0xD2CD1C | (no symbol) | saveData+0x28C, 4 bytes. ATEL globalA 0xA0. 32 of the 35 creation "already offered" bits |
@@ -846,14 +849,16 @@ ffx_ps2/ffx/master/new_uspc/battle/kernel/a_ability.bin      the Capture auto-ab
    **stream 2**, which is the ATEL script stream with two static sites, `0x85741D` (`core:166`) and
    `0x857682` (`core:169`). An addition rather than an error, but it is the stream most likely to
    be drawn from while a player is standing in a conversation.
-6. **FFX_GAME_NOTES.md's** line "`0x113446C` `g_ffxBattleMonsterActors` base pointer, slots 31..92 x
+6. **FFX_GAME_NOTES.md's** line "`0x113446C` `g_ffxBattleSideRecords` base pointer, slots 31..92 x
    912 bytes" reads as if combat enemies live there. They do not. The eight combat enemies are
    **actor indices 20..27 in the 3984-byte ally array**, which is what `FFX_Btl_IsEnemySlot` tests
-   and what `sub_793530` allocates. Offsets like +0x6D6 and +0xF80 would be out of bounds in a
-   912-byte record. What indices 31..92 are actually for, I did not establish.
+   and what `FFX_Btl_AllocActorArrays` allocates. Offsets like +0x6D6 and +0xF80 would be out of bounds in a
+   912-byte record. What indices 31..92 are actually for, I did not establish. (2026-10-13: they
+   are the weapon and armour model records, two per unit, see BATTLE_ACTOR.md.)
 7. Minor: the thunk at `0x772790` carries IDA's name `FFX_AtelSys_Movie_019_start`, which is
    misleading for a `jmp FFX_SaveData_GetCaptureCount`. I left the name alone in case it is a
-   genuine Movie-library slot and commented it instead.
+   genuine Movie-library slot and commented it instead. (2026-10-26: it is not. Movie has 16 rows and
+   this is sa_menu getter 12. The false name has been cleared from the IDB, see section 4.)
 
 ---
 
@@ -899,7 +904,7 @@ shared 8-slot message window system and that only one window can hold input focu
 enumerate which slot each arena screen asks for, so I cannot say whether two arena screens would
 collide on the same slot or merely on the focus.
 
-**7. `g_ffxBattleMonsterActors` (indices 31..92, 912 bytes).** I showed the capture path does not
+**7. `g_ffxBattleSideRecords` (indices 31..92, 912 bytes).** I showed the capture path does not
 use it. I do not know what it is for, and if it turns out to hold a second copy of anything
 capture-related, this is where that would bite.
 

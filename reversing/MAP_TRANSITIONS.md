@@ -198,7 +198,7 @@ The big block only runs when context 0 is active (`sub_86AFC0(0)`, ctx byte 0 bi
 | 8 | `FFX_AlBhed_StagePrimerGrantMask(0, 0)` | `dword_1325B90`, `dword_1325B94` |
 | 9 | `sub_86FC20(0,0,0)`, `sub_86CFF0` | `dword_1326B50 = dword_1326B54 = 0`, `g_ffxFieldBootMode 0x1326B48 = 0x10001` |
 | 10 | `sub_870280(-1,-1,-1,-1)` | `dword_1326CF0..CFC = -1` |
-| 11 | `sub_919D70(0)` | rcBg `sub_91D560(ctx+4, 0)` when `g_ffxRcBgCtx 0x193BF80` |
+| 11 | `sub_919D70(0)` | guide map off: `sub_91D560(ctx+4, 0)` clears bit 0 of `g_rcbgGuideFlags` when `g_ffxRcBgCtx 0x193BF80` (`RCBG.md`) |
 | 12 | `sub_8762F0` | 8 x 2 records at `unk_1328156` / `byte_1328172` cleared |
 | 13 | `sub_8715E0(0)`, `FFX_Atel_SetMesWinBufSel(0)` | ctx `+68 = 0`, `g_ffxAtelMesWinBufSel = 0` |
 | 14 | `sub_886A60(138)`, `sub_886800(138)` | two sound calls with id 138 [I] |
@@ -222,8 +222,8 @@ Then, unconditionally:
 | # | call | what it frees |
 |---|---|---|
 | 29 | `sub_8661A0` | ctx 0 byte 1 bit 0x80 cleared |
-| 30 | `tklib__f88D520(g_ffxAtelActorPool)` | **actor pool `0x23CBD78` freed and zeroed** |
-| 31 | `tklib__f88D520(g_ffxEvPackageBase)` | **event package `0x23CBD70` freed and zeroed** |
+| 30 | `FFX_Tk_Free(g_ffxAtelActorPool)` | **actor pool `0x23CBD78` freed and zeroed** |
+| 31 | `FFX_Tk_Free(g_ffxEvPackageBase)` | **event package `0x23CBD70` freed and zeroed** |
 | 32 | `sub_887B50(0)` | `dword_132FF1C = 0` |
 | 33 | `sub_874130` | reads save `+0xE0` as a mode. For values other than 1, 2, 3 and 5 it frees `dword_1327110/14/18` and zeroes **save `+0xE0`** |
 | 34 | `sub_909E60` -> `sub_909EA0` | **map teardown**: walkmesh off (`FFX_Map_ActivateWalkmesh(0)` twice), `sub_919A60`, rcBg main teardown, `g_ffxMapOutSection0 = 0`, `g_ffxMapOutSection10` released, the map out blob `dword_19138A4` freed, `sub_90CD90(&g_ffxMapWork)`, `dword_1934ED4/D8 = -1`, and when `dword_1934EC4 > 0`: `sub_640090` (gfx scene release) and `FFX_ChCache_FreeUnlockedEntries`, then `sub_6403B0` (gfx scene state reset, TextureAnimationManager cleared), `sub_6403C0`, `sub_645860`. Back in `sub_909E60`: `sub_90CEA0(&g_ffxMapWork)`, `dword_1934EDC/E0 = -1`, `FFX_Map_ActivateWalkmesh(0)` |
@@ -288,12 +288,12 @@ releases both render instances and the cloned ClassCharacter. [V]
 | 16 | `sub_886DD0(0)`, `_cfltcvt_init_92`, `sub_866210(atel)` | `byte_1330091 = 0`, `dword_132FFA0..` = -1 |
 | 17 | `sub_86DD30` or `sub_86DCA0(entryMapNo)` (res flag bit 0) | `FFX_SaveData_SetSceneAndSub(entryMapNo, 0)` (save `+0x04/+0x06/+0x08/+0x0A`, clears `+0x2A`), then `sub_9085D0` -> **`FFX_Map_LoadMapOutSync(19, 2m, 19, 2m+1, 0)`** 0x9093B0 and `g_ffxMagicDrawFlags 0x18DED08 |= 0x2000` |
 | 18 | | `g_ffxPendingZoneMode 0x132711C = 0`, `g_ffxPendingZoneNotify = g_ffxPendingZonePlain = -1` |
-| 19 | `sub_866490` if entryMapNo > 0 | ctx 0 byte 1 bit 0x80 set, rcBg `sub_91D930(ctx+4, 0)` |
+| 19 | `sub_866490` if entryMapNo > 0 | ctx 0 byte 1 bit 0x80 set, guide map layout preset 0, `sub_91D930(ctx+4, 0)` (`RCBG.md`) |
 | 20 | `maybe_FFX_Atel_RegisterSoundGroups`, `sub_885FF0(sub_86AD20(atel))`, `_cfltcvt_init_93` | `dword_132FF54`, `dword_132FF2C..44` |
 | 21 | `FFX_Atel_LoadResourceList(atel, 1)` | the package's resource list [I contents] |
 | 22 | `sub_887B60`, `sub_865AC0(atel)`, `sub_887B60`, `sub_860FD0`, `sub_863620` | `dword_1326B70`, `dword_1326B74` |
 | 23 | | `byte_1327134 = 127`, `byte_1327135 = 63` |
-| 24 | `sub_919D70(1)` | rcBg enable |
+| 24 | `sub_919D70(1)` | guide map enable (bit 0 of `g_rcbgGuideFlags`) |
 | 25 | `sub_88D1C0(0)` | blocking ROM pump, last statement |
 
 `FFX_Map_LoadMapOutSync 0x9093B0` reads the map out `.vpa` through slot 0 plus **a blocking slot
@@ -656,7 +656,7 @@ StepOnce on step S:
                   EventjumpInit (load hold fade, switches, resident CHR reads blocking,
                   CHR pool = 2 * n), arrival thread, save +0x0E, +0x10
       BGM, SE, scene words, map out (blocking) + gfx scene (async), zones, sound groups,
-      resources, rcBg on, pump
+      resources, guide map on, pump
     title: free CHR pool again, latch
     else checkpoint unless excluded or latched
     pending = 0, loaded = 1, counters 0, FMOD map commands, SyncData request
@@ -726,12 +726,12 @@ One row each. The IDB was not touched.
 | 0x645310 | `sub_645310` | `FFX_Vfx_ClearAll` | `sub_69F000`, prints "VIRTUOS: Clear all VFX" |
 | 0x69F000 | `sub_69F000` | `FFX_VfxMgr_ClearAll` | same string |
 | 0x642CC0 | `sub_642CC0` | `FFX_Gfx_ResetColorTweaks` | gfx +64648..+64712 to identity |
-| 0x8742B0 | `sub_8742B0` | `FFX_Ev_DestroyEventModels` | 128 records at `word_1327148`, destroys their dyn geo groups and the event TexList |
+| 0x8742B0 | `sub_8742B0` | `FFX_EvTex_ResetAllSprites` | 128 records at `word_1327148`, destroys their dyn geo groups and the event TexList |
 | 0x875430 | `sub_875430` | `FFX_Atel_DisposeActorChildChrs` | disposes `+2804/+2808` and child `+156` for type 1 actors |
 | 0x909E60 | `sub_909E60` | `FFX_Map_UnloadField` | `sub_909EA0`, map work, walkmesh off |
 | 0x909EA0 | `sub_909EA0` | `FFX_Map_TeardownMapOutAndScene` | walkmesh, rcBg, map out blob, gfx scene, CHR cache unlocked entries |
 | 0x6403B0 | `sub_6403B0` | `FFX_Gfx_ResetMapSceneState` | scene lists, TextureAnimationManager__clearMap |
-| 0x874130 | `sub_874130` | `FFX_Ev_ReleaseSaveE0Buffers` | frees `dword_1327110/14/18` and zeroes save +0xE0 by mode |
+| 0x874130 | `sub_874130` | `FFX_Premovie_ResetOnMapUnload` | frees `dword_1327110/14/18` and zeroes save +0xE0 by mode |
 | 0x86ED40 | `sub_86ED40` | `FFX_Atel_DeactivateContext` | clears ctx byte 0 bit 0x01 and +500, actor cache pointer |
 | 0x86AFC0 | `sub_86AFC0` | `FFX_Atel_IsContextActive` | ctx byte 0 bit 0x01 |
 | 0x86AFA0 | `sub_86AFA0` | `FFX_Atel_GetContextByIndex` | `&g_ffxAtelCtxArray[568 * a1]` |
@@ -741,8 +741,8 @@ One row each. The IDB was not touched.
 | 0x86DD30 | `sub_86DD30` | `FFX_Ev_LoadSceneBackground` | SetSceneAndSub then the map out load |
 | 0x86DCA0 | `sub_86DCA0` | `FFX_Ev_LoadSceneBackgroundAlt` | same body, the other res flag arm |
 | 0x9085D0 | `sub_9085D0` | `FFX_Map_LoadFieldMapOutSync` | `FFX_Map_LoadMapOutSync(19, 2m, 19, 2m+1, a2)` |
-| 0x88D1C0 | `sub_88D1C0` | `FFX_Ev_PumpReadsBlocking` | asset loader slot 2 |
-| 0x88E650 | `sub_88E650` | `FFX_Ev_AllocActorPool` | 2 KB rounded `FFX_MemAlloc` for the actor pool |
+| 0x88D1C0 | `sub_88D1C0` | `FFX_Asset_PumpReads` | asset loader slot 2 |
+| 0x88E650 | `sub_88E650` | `FFX_Tk_AllocSectorRounded` | 2 KB rounded `FFX_MemAlloc` for the actor pool |
 | 0x86F3C0 | `sub_86F3C0` | `FFX_SaveData_SetEncounterGroundAttr` | save byte +0x10 |
 | 0x86CFF0 | `sub_86CFF0` | `FFX_Field_ResetBootMode` | `dword_1326B48 = 0x10001` |
 | 0x1326B48 | `dword_1326B48` | `g_ffxFieldBootMode` | low byte selects the battle return boot (1, 2 MOVIE, 3/4), bit 0x200 allows a defeat without the title, bit 0x400, 0x4000 skip CAMERA |

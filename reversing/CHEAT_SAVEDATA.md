@@ -38,10 +38,21 @@ row(i)     = file + dataOff + (i - lo) * stride
 stringBase = file + dataOff + strOff
 ```
 
-Every shipped table has exactly **one** range with `lo = 0`, so in practice `row(i) = base + 20 + i *
-stride` and the string block starts at `base + 20 + strOff`. The range walk still matters because
-that is how the engine does it, and `GetRow` falls back to the first descriptor's `dataOff` for an
-out-of-range id rather than returning null.
+Every shipped table has exactly **one** range and `dataOff = 20`, so in practice `row(i) = base + 20 +
+(i - lo) * stride` and the string block starts at `base + 20 + strOff`. For almost every table `lo = 0`,
+but not all: `monster2.bin` runs 101..180 and `monster3.bin` 181..365, continuing `monster1.bin`'s
+0..100. `GetRow` falls back to the first descriptor's `dataOff` and string base for an id no range
+holds, negative ids included, rather than returning null.
+
+**Correction, 2026-10-27** (projectzanarkand PROGRESS 13.2). This section used to say every table has
+`lo = 0`. The monster pair above disproves it. The range count is a signed WORD, read by
+`movsx ebx, word ptr [edi]` at the head of `FFX_KernelTable_GetRow 0x7AB870` (VA), and the IDB comment
+calling it a DWORD is wrong too. `strOff` is `rows * stride` truncated to 16 bits: `item_get.bin` has
+366 rows of 280 bytes, a 102480 byte block, and stores 36944. Nothing reads that file, and it has no
+strings, so the overflow never shows. Two of the 52 files in the kernel folder are not kernel tables
+at all, `btl.bin` (4096 bytes) and `magic.bin` (2048), and `magic.$$$` is empty. Every loader rounds
+the byte count up to 16 (`FFX_Btl_ReadKernelBin` at 0x782EE0: `add eax,0Fh`, `and edi,0FFFFFFF0h`)
+and copies through a 0x25800 byte staging buffer. [V]
 
 A row names its display string with a **WORD offset into the string block**, not a pointer. So
 
@@ -95,8 +106,103 @@ screen (menu module 19) has been entered once, because `0x654810` is what alloca
 `0x654810` is self-contained - it allocates, reads both files and copies them in - so the plugin can
 call it itself to populate the two pointers without opening the menu. Not yet tested at runtime.
 
-`0x00D2A92C`, `0x00D2A938` and friends are `0xFFFFFFFF` in the static image. They are filled by
-`FFX_Btl_Init 0x381700`, which runs once at startup, so they are valid by the time any menu exists.
+`0x00D2A92C`, `0x00D2A938` and friends are filled by `FFX_Btl_Init 0x381700`, which runs once at
+startup, so they are valid by the time any menu exists. Before that they are **zero**, not
+`0xFFFFFFFF` as this line used to say (corrected 2026-10-27). They are past the end of the file backed
+part of `.data` (`ida_loader.get_fileregion_offset` gives -1), so the 0xFF IDA shows is an artefact,
+and `FFX_Btl_LoadKernelTable` itself tests each pointer against null before it allocates. [V]
+
+### All 52 files, and who reads each one
+
+Added 2026-10-27 (projectzanarkand PROGRESS 13.2, `src/engine/kernel/`). The kernel folder of
+`ffx_ps2/ffx/master/jppc/battle/kernel/` has 52 files. `new_<lang>pc` has 26 of them, the ones the
+first two readers take, plus `albhed.bin` in `new_krpc` and `new_chpc` only. Every `new_*` copy has
+the same layout as the `jppc` one. `inpc` is a near copy of `jppc` that nothing reads, and its
+`weapon.bin` has 139 rows against `jppc`'s 153. VAs below.
+
+Four ways in:
+
+- **ReadKernelBin**, `FFX_Btl_ReadKernelBin 0x782DF0`. A bare name, opened in `new_<lang>pc` for the
+  language. 23 files.
+- **LocalizedBin**, `FFX_LoadLocalizedBin 0x88CAC0` from `FFX_Btl_OpenMonsterArchives 0x7844C0`. The
+  same tree. 3 files.
+- **Asset**, the asset loader by kind and row. Every kind 13 and kind 47 row of `cdrom.fnd` names the
+  `jppc` copy, so these are read in Japanese whatever the language. 14 files.
+- **None.** 6 files have a `cdrom.fnd` row that no call selects, and 6 are named nowhere in the exe.
+  That rests on a scan of every push-immediate kind before an asset loader call plus a decompile of
+  each loader caller, so a computed kind could still hide a reader. [S]
+
+| file | rows | stride | reader | what it is |
+|---|---|---|---|---|
+| `a_ability` | 0..133 | 108 | ReadKernelBin, `FFX_Btl_LoadKernelTable` case 2 | auto-abilities, `0x8000` ids |
+| `amapdata` | 0..31 | 32 | none, kind 13 row 16 (row 15 is an empty `cdrom.fnd` row) | unknown |
+| `arms_rate` | 0..133 | 4 | kind 47 row 0, the equipment shop (menu module 12) | a dword per auto-ability, keyed by ability id & 0xFFF in `FFX_EquipShop_GetBuyPrice 0x8D9370`, summed into an equipment price (2026-10-28, this said unknown) |
+| `arms_shop` | 0..46 | 34 | kind 47 row 2, the equipment shop (menu module 12) | one stock list per shop id, the id being the low half of the sg:29 0x4004xxxx open (2026-10-28) |
+| `arms_txt` | 0..21 | 16 | ReadKernelBin, string group 5 | UI text |
+| `btl.bin` | 4096 bytes | raw | kind 13 row 0, `g_ffxEncTableBlob` | no kernel header |
+| `btl_txt` | 0..127 | 8 | ReadKernelBin, string group 0 | UI text, names only |
+| `btlend_txt` | 0..63 | 16 | ReadKernelBin, string group 4 | UI text |
+| `buki_get` | 0..85 | 16 | kind 13 row 26, `FFX_Treasure_LoadTables 0x799020` | weapon drop table |
+| `build_txt` | 0..21 | 16 | ReadKernelBin, string group 6 | UI text |
+| `c_ability` | 0..83 | 20 | none, not named | unknown |
+| `command` | 0..319 | 96 | ReadKernelBin, `FFX_Btl_LoadKernelTable` case 0 | commands and abilities, `0x3000` ids |
+| `config_txt` | 0..38 | 16 | ReadKernelBin, string groups 7 and 14 | UI text |
+| `ctb_base` | 0..254 | 2 | kind 13 row 11 | CTB base table |
+| `help_txt` | 0..23 | 16 | none, not named | text |
+| `important` | 0..63 | 20 | ReadKernelBin, `FFX_KeyItem_LoadTable 0x7908C0` | key items, `0xA000` ids |
+| `item` | 0..111 | 96 | ReadKernelBin, `FFX_Btl_LoadKernelTable` case 3 | items, `0x2000` ids |
+| `item_get` | 0..365 | 280 | none, not named | unknown. 366 rows, as many monster ids as `monster1..3`, again only a guess |
+| `item_rate` | 0..252 | 4 | kind 47 row 1, the item shop (menu module 13) | a dword price per item, keyed by item id & 0xFFF in `FFX_ItemShop_GetPrice 0x8DB3B0`, times `sub_86C480()` / 100 (2026-10-28) |
+| `item_shop` | 0..46 | 34 | kind 47 row 3, the item shop (menu module 13) | one stock list per shop id, the low half of the sg:29 0x4002xxxx open (2026-10-28) |
+| `item_txt` | 0..21 | 16 | ReadKernelBin, string group 8 | UI text |
+| `kaizou` | 0..124 | 8 | kind 47 row 5, `g_ffxEquipCustomizeTable` | customise recipes |
+| `magic.$$$` | 0 bytes | - | none, not named | empty |
+| `magic.bin` | 2048 bytes | raw | kind 13 row 28 | no kernel header |
+| `menu` | 0..0 | 28 | kind 13 row 3, `FFX_InitNewSaveData 0x786B00` copies 0x1C bytes | new game option flags |
+| `menu_panel` | 0..0 | 32 | kind 13 row 31, `FFX_InitNewSaveData` copies 0x20 bytes | new game template |
+| `menu_txt` | 0..93 | 16 | ReadKernelBin, string group 1 | UI text |
+| `menu_txt2` | 0..127 | 16 | none, not named | text |
+| `mmain_txt` | 0..55 | 16 | ReadKernelBin, string group 9 | UI text |
+| `monmagic` | 0..255 | 84 | none, not named | unknown, nothing reads it |
+| `monmagic1` | 0..299 | 92 | ReadKernelBin, `FFX_Btl_LoadKernelTable` case 4 | monster abilities, `0x4000` ids |
+| `monmagic2` | 0..246 | 92 | ReadKernelBin, `FFX_Btl_LoadKernelTable` case 5 | monster abilities, `0x6000` ids |
+| `monster1` | 0..100 | 128 | LocalizedBin | monster names and help |
+| `monster2` | 101..180 | 128 | LocalizedBin | the same, continued |
+| `monster3` | 181..365 | 128 | LocalizedBin | the same, continued |
+| `name_txt` | 0..81 | 16 | ReadKernelBin, string group 10 | UI text |
+| `panel` | 0..126 | 24 | ReadKernelBin, `FFX_SphereGrid_LoadPanelTables 0xA54810` | sphere grid node kinds |
+| `party` | 0..0 | 132 | kind 13 row 4, `FFX_InitNewSaveData` copies 0x84 bytes | new game party template |
+| `ply_rom` | 0..19 | 44 | ReadKernelBin, `FFX_Btl_LoadKernelTable` case 1, falls back to kind 13 row 8 | per character battle data |
+| `ply_save` | 0..19 | 148 | ReadKernelBin, `FFX_InitNewSaveData` and `FFX_SaveData__reloadCharNames 0x787100`. The `jppc` copy also through kind 13 row 1, `FFX_SaveData_GrantAllAbilities 0x7848B0` (rows 18 and 19) | character record templates |
+| `prepare` | 0..111 | 224 | kind 13 row 32, `FFX_Btl_StartMixPrepareLoad 0x7AFBD0` when Mix starts | Mix recipe grid |
+| `save_txt` | 0..66 | 16 | ReadKernelBin, string group 3 | UI text |
+| `shop_arms` | 0..427 | 22 | kind 47 row 4, the equipment shop (menu module 12) | the equipment templates a shop sells. `FFX_EquipShop_GetStockEntry 0x8D9170` returns row id & 0xFFF and the price code reads it as an equipment entry (+11 slot count, +14 abilities), 2026-10-28 |
+| `sphere` | 0..49 | 16 | ReadKernelBin, `FFX_SphereGrid_LoadPanelTables` | grid sphere item effects |
+| `st_number` | 0..302 | 4 | kind 13 row 29 | unknown |
+| `status_txt` | 0..26 | 16 | ReadKernelBin, string group 11 | UI text |
+| `sum_assure` | 0..199 | 12 | kind 13 row 14 | unknown |
+| `sum_grow` | 0..76 | 8 | kind 47 row 6 | unknown |
+| `summon_txt` | 0..33 | 16 | ReadKernelBin, string group 12 | UI text |
+| `takara` | 0..497 | 4 | kind 13 row 25, `FFX_Treasure_LoadTables` | treasure table |
+| `w_name` | 0..169 | 72 | ReadKernelBin, `FFX_Equip_LoadNameTable 0x7A2600` | equipment names, `0x5000` ids |
+| `weapon` | 0..152 | 22 | kind 13 row 5, `FFX_InitNewSaveData` takes up to 35 rows outside debug | equipment templates |
+
+The string groups. `g_ffxKernelStringGroups 0x11333F0` holds 17 records of 12 bytes (a busy byte,
+the u32 size at +4, the table at +8), filled by `FFX_KernelString_LoadGroup 0x78FEF0`. Groups 2, 13,
+15 and 16 have no name in it and are read from asset kind 39 row `<group>`: rows 15 and 16 are the
+`inpc` `mmain_txt` and `save_txt`. `FFX_Btl_Init` loads groups 7, 9 and 3, then 14, 15 and 16 only
+when `FFX_MesWin_TextLanguageIsNot1 0x784E60` says the text language is not 1 (it starts at 0), then
+`g_ffxKernelStringBattleGroups 0xC421B4` = {0, 1, 4, 5, 6, 8, 10, 11, 12}. Groups 2 and 13 are never
+loaded. `FFX_KernelString_Get 0x78FCF0` reads the name pair at `+4 * (variant & 1)` and
+`FFX_KernelString_GetDescription 0x78FBB0` the pair at `+8`, except group 0, whose 8 byte rows give
+the name again. `FFX_GetInternationalEnvId 0x7851D0` is a hardcoded 0, so the redirect of groups 3, 7
+and 9 to 16, 14 and 15 in those getters never happens. [V]
+
+The text row layout, which every table with names follows: four u32 slots, `+0` name, `+4` name
+variant, `+8` help, `+12` help variant. Only the low half of each slot is the offset.
+`FFX_Menu_GetAbilityName 0x8C1A20` reads `row + 4 * alt` and `FFX_Menu_GetAbilityHelp 0x8C19E0`
+`row + 8 + 4 * alt`, alt being `FFX_SaveData_GetMapNameAltFlag 0x7851F0`, bit 3 of
+`g_ffxSaveDataOptionFlags`. `FFX_Btl_GetAbilityNameString 0x8B8D70` always reads `+0`. [V]
 
 ## 1. THE ENUMERATION TABLE
 
@@ -115,12 +221,12 @@ Shorthand used below:
 
 | list | table | stride | count / count source | id from row index | display string |
 |---|---|---|---|---|---|
-| **Characters (roster)** | `CharNames` RVA `0x00D32DDC` = `SaveData+0x634C` | 20 | **18, hardcode it.** `FFX_SaveData_GetCharName 0x384FB0` accepts 0..30 and will read past the array, so the UI must bound 0..17 itself | index is the id | the 20-byte record is `[0..17]` charmap text, `[18]` the language it was typed in, `[19]` a player-renamed flag. Decode `[0..17]` |
+| **Characters (roster)** | `CharNames` RVA `0x00D32DDC` = `SaveData+0x634C` | 20 | **18, hardcode it.** `FFX_SaveData_GetCharName 0x384FB0` accepts 0..30 and will read past the array, so the UI must bound 0..17 itself | index is the id | the 20-byte record is `[0..17]` charmap text, `[18]` the language it was typed in, `[19]` 1 while the name is still the default (corrected 2026-10-28, this said player-renamed). Decode `[0..17]` |
 | **Items** | `KT(0x00D2A940)` (`item.bin`) | 96 | `rowCount` = 112 | `0x2000 + index` | name `STR(row, 0)`, description `STR(row, 8)`. `+4` and `+12` are the alternate-language variants, selected by `(*(int*)0x00D3079C >> 3) & 1` |
 | **Key items** | `KT(0x00D334C0)` (`important.bin`) | 20 | `rowCount` = 64, of which 0..51 are real and 34 is blank | `0xA000 + index` | name `STR(row, 0)`, description `STR(row, 8)`. Or call `FFX_KeyItem_GetNameString 0x390860 (id)`, which returns the pointer directly |
-| **Auto-abilities, full id space** | `KT(0x00D2A944)` (`a_ability.bin`) | 108 | `rowCount` = 134, of which 0..128 are real and 129..133 are "Extra 1".."Extra 5" placeholders | `0x8000 + index` | name `STR(row, 0)`, description `STR(row, 8)` |
+| **Auto-abilities, full id space** | `KT(0x00D2A944)` (`a_ability.bin`) | 108 | `rowCount` = 134, of which 0..128 are real except row 123 (`0x807B`), which is blank, and 129..133 are "Extra 1".."Extra 5" placeholders | `0x8000 + index` | name `STR(row, 0)`, description `STR(row, 8)` |
 | **Auto-abilities, the legal customisable set with its cost** | the 8-byte table at RVA `0x00D2A964`. Row 0 and the count both come from `FFX_Equip_GetCustomizeTable 0x390A10 (int *outCount)` | 8 | `outCount` = 125 | the row CARRIES the id | row `+0` WORD kind (**1 = weapon, 2 = armour**), `+2` WORD auto-ability id, `+4` WORD item id, `+6` BYTE quantity. Name the ability through the `a_ability` row for `id & 0xFFF` and the item through the `item` row |
-| **Abilities a character can know (commands)** | `KT(0x00D2A92C)` (`command.bin`) | 96 | `rowCount` = 320 | `0x3000 + index` | name `STR(row, 0)`, description `STR(row, 8)`. Or `FFX_Btl_GetCommandNameString 0x4C1A20 (id)` for the name and `0x4C19E0` for the description |
+| **Abilities a character can know (commands)** | `KT(0x00D2A92C)` (`command.bin`) | 96 | `rowCount` = 320 | `0x3000 + index` | name `STR(row, 0)`, description `STR(row, 8)`. Or `FFX_Menu_GetAbilityName 0x4C1A20 (id)` for the name and `FFX_Menu_GetAbilityHelp 0x4C19E0` for the description (the IDB names, this row used to call the first `FFX_Btl_GetCommandNameString`). Both honour the alt flag |
 | **Any ability record by id, whatever its class** | - | - | - | - | `FFX_Btl_GetAbilityNameString 0x4B8D70 (int id)` returns a `char*` for a `0x2xxx` item, a `0x3xxx` command, a `0x4xxx` or `0x6xxx` monster ability or an `0x8xxx` auto-ability. **This is the one name function to prefer** |
 | **Equipment display names** | `KT(0x00D363B4)` (`w_name.bin`) | 72 | `rowCount` = 170. Rows 0..73 are weapon names (`0x5000`..`0x5049`), rows 74..169 armour (`0x504A`..`0x50A9`) | `0x5000 + index` | **per character.** The name for character `c` in 0..6 is `STR(row, 4*c)`, the alternate variant `STR(row, 28 + 4*c)`, and `+56 + 2*c` is the model / icon id. Or call `FFX_Equip_GetNameString 0x3A0C50 (nameId, charIndex, variant, uint16_t *outIcon)`, which returns the `char*` |
 | **Equipment the player owns** | `EquipmentArray` RVA `0x00D30F2C` = `SaveData+0x449C` | 22 | **200 slots, hardcode it.** In use when `entry[2] != 0`. `FFX_SaveData_CountEquipEntries 0x3ABC60` gives the in-use and free counts | slot id is `0x5000 + index`, and the bare low byte works too | `FFX_SaveData_GetEquipNameString 0x3ABDF0 (slotId)` returns the `char*` straight from the entry's own name id and owner. For a kind label use `entry[5]`, 0 weapon and non-zero armour |
@@ -129,7 +235,7 @@ Shorthand used below:
 | **Sphere grid node slots the save holds** | `SphereGridNodes` RVA `0x00D2EC7C` = `SaveData+0x21EC` | 2 | **1024 slots.** That is the bound `FFX_SphereGrid_RecomputeDerived 0x654860` scans. The whole blob is 4896 bytes | the slot index is the id | low byte is the node kind, `0xFF` meaning cleared or no node. High byte is a bitmask of which of characters 0..6 have activated it. Name the kind through the `panel` row |
 | **Sphere grid node kinds** | `KT(0x016860E0)` (`panel.bin`) | 24 | `rowCount` = 127 | index is the id | name `STR(row, 0)`. `+16` WORD stat mask, `+18` WORD granted ability id (`0x3xxx`), `+20` BYTE amount. Section 6 has the mask bits |
 | **Grid sphere item effects** | `KT(0x016860E4)` (`sphere.bin`) | 16 | `rowCount` = 50, of which 0..29 are real | index is the id | effect text `STR(row, 0)`. This is the "Activates Strength, Defense, or HP node." help line, not a name |
-| **Monsters, for completeness** | `KT(0x00D2A930)` and `KT(0x00D2A934)` | 92 | `rowCount` = 300 and 247 | `0x4000 + index` and `0x6000 + index` | `STR(row, 0)` |
+| **Monster abilities, for completeness** | `KT(0x00D2A930)` and `KT(0x00D2A934)` (`monmagic1.bin`, `monmagic2.bin`) | 92 | `rowCount` = 300 and 247 | `0x4000 + index` and `0x6000 + index` | `STR(row, 0)`. This row used to say "Monsters". These are monster abilities, the monster names are `monster1..3.bin`, 128 byte rows, ids 0..365 across the three, read by `FFX_Btl_OpenMonsterArchives 0x3844C0` |
 
 Two caveats that will bite if ignored:
 
@@ -165,8 +271,14 @@ and 19 have empty names and are never copied into the block, because the copy lo
 Names live in the block, not in a table. `CharNames` RVA `0x00D32DDC` = `SaveData+0x634C`, 18
 records of 20 bytes, charmap encoded. `FFX_SaveData_ReloadCharNames 0x387100` refills them from
 `ply_save.bin` row `+0`, and `FFX_SaveData_ReencodeCharNames 0x387470` re-encodes them for the
-running language after a save load. Writing a name is an 18-byte charmap write plus `[19] = 1` to
-mark it player-renamed.
+running language after a save load. Writing a name is an 18-byte charmap write plus `[19] = 0`.
+
+Corrected 2026-10-28, this said `[19] = 1` to mark it player-renamed, and that is backwards. `[19]` is 1
+while the name is still the default: `FFX_InitNewSaveData` sets it to 1 for every record, the naming
+screen's `FFX_NameInput_CommitName 0x8C4E60` stores 1 only when the typed name equals the default,
+and `FFX_SaveData_ReencodeCharNames` replaces the name with the running language's default whenever
+`[19]` is non zero. So a written name with `[19] = 1` is thrown away on the next save load.
+`MENU_SYSTEM.md` third pass.
 
 The renameable defaults, for a "reset name" button, are `name_txt.bin` rows 13..23: Tidus, Valefor,
 Ifrit, Ixion, Shiva, Bahamut, Anima, Yojimbo, Cindy, Sandy, Mindy.
@@ -561,8 +673,11 @@ functions touch it and between them they account for all of it except a tail:
 | `+0x0F19` | 1 | zoom level 0..3, mapping to scale 1.0 / 0.5 / 0.25 / 0.125 |
 | `+0x0F1A` | 1030 | **no reader and no writer found.** Slack |
 
-**Node slot `[2i]` is the panel kind**, a row index into `panel.bin`, and `0xFF` means the node is
-empty, which is what a Clear Sphere leaves behind. `FFX_SaveData_GetSphereGridNodes`'s menu mirror
+**Node slot `[2i]` is the panel kind**, a row index into `panel.bin`, and `0xFF` means there is no
+node in that slot. (Corrected 2026-10-28, `MINIGAMES_PROGRESSION.md` 3.3: this used to say a Clear
+Sphere leaves `0xFF`. It does not. The Clear Sphere and the Key Sphere effects write kind 1, "Empty
+Node", and the Clear Sphere also clears all seven activation bits. `0xFF` is what `MenuToSave` writes
+for a menu slot holding -1.) `FFX_SaveData_GetSphereGridNodes`'s menu mirror
 turns `0xFF` into `0xFFFF`, so the two spellings of "nothing here" are `0xFF` in the save and
 `0xFFFF` in the menu.
 
@@ -631,7 +746,10 @@ is the AP level-up path in `FFX_SaveData_AddAp 0x384610`, and that one stops at 
 99 only arrives from a cheat.
 
 The single caller of SpendSphereLevels is `FFX_Menu_SphereGridActivateNode 0x656160`, which charges
-the character at `g_ffxMenuWork + 71100` the cost at `g_ffxMenuWork + 71196`.
+the character at `g_ffxMenuWork + 71100` the cost at `g_ffxMenuWork + 71196`. That cost is the
+**move** cost, charged when a move is confirmed, so S.Lv pay for movement and not for activation.
+The function is renamed `FFX_SphereGrid_ConfirmOrCancelMove` by `tools/apply_progression_names.py`
+(2026-10-28, `MINIGAMES_PROGRESSION.md` 3.3).
 
 ### 6.4 The node kind table
 
@@ -703,9 +821,13 @@ gridType = (*(int*)0x00D3079C >> 14) & 3;      // SaveData+0x3D0C, bits 14 and 1
 
 | gridType | layout asset | node kinds asset | what it is |
 |---|---|---|---|
-| 0 | class 37 index 9 | class 37 index 17 | Standard |
-| 1 | class 37 index 10 | class 37 index 18 | the second grid |
-| 2 | class 37 index 11 | class 37 index 19 | the third grid |
+| 0 | class 37 index 9 (`jppc/menu/abmap/dat01.dat`) | class 37 index 17 (`dat09.dat`) | the `menu.bin` template value, the pre-International grid |
+| 1 | class 37 index 10 (`dat02.dat`) | class 37 index 18 (`dat10.dat`) | Standard, `core:596(1)` from the New Game choice |
+| 2 | class 37 index 11 (`dat03.dat`) | class 37 index 19 (`dat11.dat`) | Expert, `core:596(2)` |
+
+Corrected 2026-10-28: this table labelled type 0 Standard and 1 and 2 "the second grid" and "the
+third grid". The title script `test20` pushes 1 for Standard and 2 for Expert
+(`INTERNATIONAL_CONTENT.md` 7).
 
 **The layout asset, read by `FFX_SphereGrid_LoadLayout 0x645570`:**
 
@@ -738,12 +860,12 @@ The starting state is in `.rdata` and it is per grid:
 
 | what | address | contents |
 |---|---|---|
-| start node per character, Standard | `0x00886C00` | 0, 341, 540, 637, 56, 224, 448 |
-| start node per character, grid 1 | `0x00886C10` | same seven |
-| start node per character, grid 2 | `0x00886C20` | 43, 9, 38, 13, 24, 19, 80 |
-| pre-activated nodes, Standard | `0x00886C5C` | 7 pointers to `0xFFFF`-terminated WORD lists. Tidus none, Yuna 335 336, Auron 541, Kimahri 636, Wakka 57, Lulu 220..223, Rikku 449 450 |
-| pre-activated nodes, grid 1 | `0x00886CA4` | same |
-| pre-activated nodes, grid 2 | `0x00886CEC` | Tidus none, Yuna 0 8, Auron 39, Kimahri 13, Wakka 31, Lulu 14..17, Rikku 40 41 |
+| start node per character, type 0 (template) | `0x00886C00` | 0, 341, 540, 637, 56, 224, 448 |
+| start node per character, type 1 Standard | `0x00886C10` | same seven |
+| start node per character, type 2 Expert | `0x00886C20` | 43, 9, 38, 13, 24, 19, 80 |
+| pre-activated nodes, type 0 | `0x00886C5C` | 7 pointers to `0xFFFF`-terminated WORD lists. Tidus none, Yuna 335 336, Auron 541, Kimahri 636, Wakka 57, Lulu 220..223, Rikku 449 450 |
+| pre-activated nodes, type 1 Standard | `0x00886CA4` | same |
+| pre-activated nodes, type 2 Expert | `0x00886CEC` | Tidus none, Yuna 0 8, Auron 39, Kimahri 13, Wakka 31, Lulu 14..17, Rikku 40 41 |
 
 `InitNodes` also loads 70 files from `/ffx_ps2/ffx/eiichi_abmap_data`, names at `0x00885EF0`. **69 of
 the 70 are art**, `omd` models, `an2` animations and two `OMD` grade textures. The only data file is
@@ -757,6 +879,10 @@ the runtime cdidx, `ffx_ps2/ffx/proj/prog/cdidx/cdrom.mdg`, 131072 bytes, and I 
 format. So **the grid layout can be read at runtime through the asset loader but not offline from
 the vbf.** For a plugin that is no obstacle, because the engine has already parsed it into the menu
 work area by the time the UI runs.
+
+Closed 2026-10-28: the index resolves offline through the path table, not the cdidx. Kind 37 is
+`_cdindex_menu2`, base 511 in `cdrom.fid`, so index 9 is `cdrom.fnd` entry 520,
+`host0:/ffx/master/jppc/menu/abmap/dat01.dat`, and so on (`INTERNATIONAL_CONTENT.md` 7).
 
 ### 6.6 The parsed copy, if the UI wants positions
 
@@ -927,7 +1053,7 @@ All are `short *` pointer globals suitable for `KernelTableGetRow`.
 | `0x00398840` | function | `SaveDataSetEquipStatBonusAbility` | `short __cdecl (unsigned charIndex, int abilityId)` | ORs a bit into the `+0x10` ability bitmap. Ignores anything not `0x3xxx` |
 | `0x00398820` | function | `SaveDataClearEquipStatBonus` | `int __cdecl (void)` | in WorldState.h |
 | `0x00D3079C` | data | `SaveDataOptionFlags` | `DWORD` | `SaveData+0x3D0C`. Bits 14..15 pick the grid, bit 3 picks the alternate name strings |
-| `0x00886C00` | rdata | `SphereGridStartNodes` | `WORD[7]` | start node per character, Standard grid. `+0x10` and `+0x20` are the other two grids |
+| `0x00886C00` | rdata | `SphereGridStartNodes` | `WORD[7]` | start node per character, grid type 0. `+0x10` is Standard and `+0x20` Expert |
 | `0x00886C5C` | rdata | `SphereGridStartActivated` | `WORD *[7]` | `0xFFFF`-terminated pre-activated node lists. `+0x48` and `+0x90` for the other grids |
 | `0x00885EF0` | rdata | `SphereGridAssetNames` | `char *[70]` | the `eiichi_abmap_data` file names. 69 art, one data file, `par/dna.pdt` |
 | `0x01F05834` | data | `MenuWork` | `void *` | in MenuSystem.h. The parsed grid lives at `+0x808` and `+0xA808`, see 6.6 |
@@ -1520,3 +1646,17 @@ above.
   0x79C5F0` for both equipped entries: `+0x08` -> actor `+0x5C1`, `+0x09` -> `+0x5C7`, `+0x0A` added
   into `+0x5D8`. What those actor fields mean is still open. A dropped piece gets them from the
   monster reward record `+46`, `+48`, `+47`. [V]
+
+**Correction, 2026-10-27** (SAVE_BLOCK_MAP.md 2.6). The rest of the "no reader" fields.
+
+- Character record `+0x60..+0x87` is `u16[20]`, one **overdrive mode counter** per mode, 0xFFFF
+  where the mode does not apply. `FFX_Btl_BumpOverdriveModeCounter 0x7B10C0` counts one down
+  (modes up to 0x10), and `FFX_Btl_GrantUnlockedOverdriveModes 0x7B1180` loops all 20 and grants a
+  mode whose counter has reached 0. The guess about learn thresholds above was right. [V]
+- Character record `+0x88` is the **learned overdrive mode mask**, a dword. GrantUnlockedOverdriveModes
+  ORs new modes into it (0x7B11F8), `FFX_Menu_GetCharOverdriveModeMask 0x8C1BF0` reads it. [V]
+- Character record `+0x8C..+0x93` is unused. No access through any record accessor and zero in
+  every real save checked. [V]
+- Character record `+0x00..+0x03` are carried from the template and never read. [V]
+- Equipment entry `+0x07` stays unused. It is copied with the entry and nothing reads or writes it
+  on its own. [V]

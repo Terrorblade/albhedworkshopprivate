@@ -288,7 +288,7 @@ namespace ffx
 		// Movie:1. The ONE wait with side effects on its done path, which are clearing
 		// the script's movie flag and a call to sub_63DF30, so the original is never
 		// called speculatively. This mirrors its own test, which is
-		//     if (FFX_Fmv_IsPlaying() || FFX_Fmv_IsDecoderBusy()) return 0;
+		//     if (FFX_Fmv_IsPlaying() || FFX_Fmv_IsStartPending()) return 0;
 		// and then calls the real handler only on the step the gate opens, so those
 		// side effects happen there and nowhere else.
 		int __cdecl FmvWait01Hook(int actor, int script)
@@ -811,16 +811,15 @@ namespace ffx
 
 	bool FmvDecoderBusy()
 	{
-		// Called rather than replicated. It walks the manager's decode slot array,
-		// whose count and base live at manager+4 and manager+0xC, and it finishes with
-		// a test of manager+0x704 whose sense is inverted in a way nobody has
-		// explained. Reproducing that from the disassembly would be guessing at two
-		// fields, and three of the four script movie waits consult this exact
-		// function, so asking the engine is also the only way to be sure the barrier
-		// agrees with it.
+		// Called rather than replicated, because three of the four script movie
+		// waits consult this exact function. It is FFX_Fmv_IsStartPending 0x641CE0:
+		// it scans the manager's command list at manager+4 and manager+0xC for a play
+		// command and finishes with manager+0x704 == 0. The list is only pushed from
+		// inside its own processor and +0x704 is only ever written with 1, so in the
+		// shipped game this reads 0 (reversing/MOVIE_DECODE.md, 2026-10-27).
 		//
 		// THE ONE REAL HAZARD, and it is why the manager is checked first:
-		// FFX_Fmv_IsDecoderBusy hands FFX_Fmv_GetManager's result straight to a
+		// FFX_Fmv_IsStartPending hands FFX_Fmv_GetManager's result straight to a
 		// __thiscall that dereferences it with no null check of its own, and
 		// FFX_Fmv_GetManager returns 0 with a TTY warning before the singleton exists.
 		// So calling this early would fault. No manager means no movie, which is not
@@ -848,7 +847,7 @@ namespace ffx
 
 	bool FmvPlaybackFinished()
 	{
-		// FFX_Fmv_PlaybackFinished 0x645DC0, replicated as the two reads it is:
+		// FFX_Fmv_FirstFrameShownOrStopped 0x645DC0, replicated as the two reads it is:
 		//     return mgr[IsPlaying] ? mgr[PlaybackComplete] : 1;
 		// Replicated rather than called because it is two byte reads and calling it
 		// would mean parking another address.

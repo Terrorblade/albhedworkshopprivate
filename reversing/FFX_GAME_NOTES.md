@@ -54,8 +54,8 @@ second controllable character.** Highlights:
 - `+0x180` `m_hideFlags` is a **hide** mask, 0 meaning visible. See the polarity note below.
 - `+0x19C` `m_parent`. Children are found by scanning the array for `m_parent == this`.
 - `+0x75C` `m_slots[32]`, the motion slot table: `[0]` idle, `[1]` walk, `[2]` run.
-- `+0x830` and `+0x838` are the two Phyre mesh-instance lists. `+0x834` is a cloned
-  `ClassCharacter`, not an instance.
+- `+0x830` and `+0x838` are the two Phyre mesh-instance lists. `+0x834` is a 560 byte
+  cloth vertex clone record (CHR_CLUSTER.md 8), neither an instance nor a `ClassCharacter`.
 - `+0x1C8` is the embedded root joint node, 352 bytes, which lands exactly on `m_joints` at `+0x328`.
 
 Three corrections to earlier passes, each re-verified against the binary:
@@ -216,9 +216,13 @@ come from `g_ffxGameSettings+96`. Bits are standard SCE: 0x1000 up, 0x4000 down,
 (32-byte stride, `FFX_Pad__getPortBuffer 0x888E10`); per-port state structs come from
 `FFX_Pad__getPortState 0x888EC0` (0x100 stride, buttons at +152/+154).
 
-PhyreEngine also ships input record/replay driven from the command line: `-script=`, `-input=`,
-`-timestep=`, with commands `Keypress`/`KeyDown`/`Buttonpress`/`InputSource`/`Frames`/`Expect`
-(`Phyre__InputScript__buttonFromName 0x62C730`). A second supported injection channel.
+PhyreEngine also ships input record/replay driven from the command line: `-log=` records,
+`-input=` replays, `-script=` runs a command script, `-timestep=` fixes the delta, with 16 commands
+(`Frames`, `Timestep`, `Keypress`, `Buttonpress`, `InputSource`, `Expect` and the rest). The pad
+helper at 0x62C730 is `Phyre__InputScript__setPadButtonByName`, renamed 2026-10-27 from
+`Phyre__InputScript__buttonFromName`, because it sets pad slot 0's button state rather than mapping
+a name. The recorder only sees keyboards. `COMMAND_LINE.md` has every flag, the command table and
+the log syntax. A second supported injection channel.
 
 ## Debug facilities, and exactly what gates them
 
@@ -291,7 +295,7 @@ bytes, then groups of 1368, 1464, 744 and 48 bytes for the lighter actor kinds
 
 **`actor+0` is a pointer to the actor's 52-byte definition record inside the loaded `.ebp` image, not
 the type byte.** The type is one dereference further. An earlier version of this section said the type
-was the byte at `actor+0`, which was wrong. Proof, from `FFX_Atel_GetActorMotionChannel 0x872650`:
+was the byte at `actor+0`, which was wrong. Proof, from `FFX_Atel_GetActorThreadChannel 0x872650`:
 
 ```
 mov  eax, [edx]        ; edx = actor, so eax = the def record
@@ -303,7 +307,7 @@ sub  al,  5
 base.
 
 Types: **0 subroutine container**, 1 character, 2 line trigger, 3 box trigger, 4 no motion state, 5
-and 6 unidentified. Type 0 was missing from the earlier list and it matters: all 5,560 `callactor`
+crossing line trigger, 6 enter and leave volume (identified 2026-10-26, `ATEL_CONTEXT.md` section 12). Type 0 was missing from the earlier list and it matters: all 5,560 `callactor`
 instructions in the archive target a type-0 actor, all 441 `ret` instructions sit inside one, and
 there are exactly 441 type-0 actors, one `ret` each.
 
@@ -374,7 +378,7 @@ and 24".
 | 7 | `0xC42628` | `..._Btl` | **296** | battle |
 | 8 | `0xC5DC90` | `..._MapFx` | 108 | map particles (`mpfp*`) |
 | 9 | `0xC5D8C0` | `..._Test` | 1 | `atel_test_print` |
-| 11 | `0xC40E30` | `..._Movie` | **146** | movie, save menu, HDD |
+| 11 | `0xC40E30` | `..._Movie` | **16** | movie. The sa_menu pointer tables follow it, not rows |
 | 12 | `0xC52DD8` | `..._Save` | 94 | save RAM, field particles |
 | 13 | `0xC85EB0` | `..._AbMap` | 1 | `abiritymap_debug` |
 
@@ -385,8 +389,10 @@ eleven ends are also corroborated by what immediately follows them, which is str
 table, or the next library's named table.
 
 Two sizes were wrong before. **Lib 7 (Btl) is 296, not 235** - rows 235 to 295 are all valid handler
-rows and row 296 at `0xC438A8` starts an unrelated id table. **Lib 11 (Movie) is 146, not 145.** That
-is 62 handler entries that earlier counts missed.
+rows and row 296 at `0xC438A8` starts an unrelated id table. **Lib 11 (Movie) is 16.** This note
+said 146 until 2026-10-26. The scan to the end does not work for Movie, because what follows it at
+0xC40F30 is `off_C40F30`, a flat table of sa_menu function pointers that also point at `.text` function
+starts, so the walk ran on to row 146. `ATEL_MOVIE_SAVE_LIBRARIES.md` 1.3 has the proof.
 
 For libraries 0, 1, 4, 5, 8 and 12 the size also agrees with a `.data` pointer scan and with the highest
 index any shipped script actually calls, to within one entry.
@@ -406,10 +412,14 @@ example `FFX_AtelSys_Ch_023_start`. That is deliberately a positional name, and 
 positional **is** the identity: a `(library, function)` pair is the script ABI, so a script calling
 syscall (5, 23) always lands on that handler. Each one carries a repeatable comment naming its library,
 function index and role. Rename them to real command names as those are recovered one at a time.
+(449 of those names, `FFX_AtelSys_Movie_016_start` to `FFX_AtelSys_Movie_145_resi`, were on sa_menu
+functions past the end of the Movie table and have been cleared again. `ATEL_MOVIE_SAVE_LIBRARIES.md`
+section 5 proposes real names for some of them.)
 
 The handler slots are almost perfectly one function per slot: of 2,068 distinct handlers, 2,066 are used
 by exactly one slot, one by two, and `nullsub_222 0x773B90` (a single `retn`, now
-`FFX_AtelSys_NullHandler`) is shared by 13 Movie-library slots as the do-nothing placeholder.
+`FFX_SaMenu_NoAction`, formerly `FFX_AtelSys_BareRet`) is shared by 13 slots as the do-nothing placeholder. Those slots are in the
+sa_menu action table `off_C416E0`, not in Movie, so the proposed name is `FFX_SaMenu_NoAction`.
 
 Note the prefix distinction. `FFX_AtelSys_*` are **syscall library handlers**, reached through a
 `(library, function)` pair. `FFX_AtelOp_*` are **opcode handlers**, the 123-case switch in
@@ -717,7 +727,7 @@ is worth reading as documentation of what the developers considered a safe opera
 **The table is 947 entries, `0xC64CE8` to `0xC65BB4`, not 741.** An earlier version of this section
 said 741, which is only where the first unbroken run of code pointers stops: indices 741-765 are 25
 pointers to host *data*, then code resumes. Proof that it runs further: index 812 is
-`FFX_Magic_BuildTexturePath 0x906420`, index 946 is still a `.text` pointer, the dword at `0xC65BB4`
+`FFX_Magic_DrawSpriteTex0 0x906420`, index 946 is still a `.text` pointer, the dword at `0xC65BB4`
 is zero and the next named thing is an unrelated `type_info`, and every shipped DLL's `InitMagicPRX`
 reads host offsets up to `0xEA0` (index 936) and calls up to index 942. Note the table has interior
 NULL slots, so a scan that stops at the first zero stops early.
@@ -765,7 +775,7 @@ construction they are all API surface.
 | `0x9DA370` | `MagicFile__getEffectOverlayTable` | guarded forwarder into the DLL |
 | `0x9DAE90` | `MagicFilePreload__preload` | warms a DLL ahead of need |
 | `0x9DACC0` | `MagicFilePreload__clearPreloadedPrx` | |
-| `0x9DAFE0` | `MagicFile__selectEffectBudget` | per-id effect budget class |
+| `0x9DAFE0` | `MagicFile__selectLoadMode` | was `MagicFile__selectEffectBudget`, it picks the PRX load mode in `g_ffxMagicPrxLoadMode` (1, 2 or 3 by id), which decides whether the effect start waits for its textures. See `MAGIC_ASSETS.md` |
 | `0x6793E0` | `FFX_LoadDllOrFatal` | `LoadLibrary` plus a localized fatal dialog from string resource 30771 |
 
 Only one magic DLL can be loaded at a time. `MagicFile__load` refuses a second one, and there is a
@@ -816,7 +826,9 @@ asset read reaches it through `PStreamReaderFile__vf03 0x576990` (and
 - `FFX_fiosUnifyFilename 0x679820` (77 callers) prepends `g_ffxDataRoot 0xCC9698` and rewrites
   `.cgfx.phyre` -> `.fx.phyre` and the `GCM` path component -> `D3D11`. Sized wrapper `0x679A10`.
 - `FFX_InitFileSystem 0x6795B0`: data root `"../../.."`, VBF root `"../../../"`, mounts
-  `data\FFX_Data.vbf`; on failure MessageBoxW + exit. Also picks the PS3 title id (PCSG00219 JP /
+  `data\FFX_Data.vbf`. On failure a MessageBoxW, then `FFX_App_SendCloseToMainWindow 0x42F4D0`
+  sends WM_CLOSE and the boot carries on with every slot null (corrected 2026-10-28, it does not
+  exit on the spot). Also picks the PS3 title id (PCSG00219 JP /
   PCSE00293 US / PCSB00395 EU / PCSH00042 Asia).
 - `FFX_VbfArchive__open 0x61DAC0`: magic dword `0x4B595253`, which is **`SRYK`** in file byte order
   (else `"BigFile head wrong!"`). MD5s (CALG_MD5) the header block and compares it against the
@@ -834,8 +846,9 @@ asset read reaches it through `PStreamReaderFile__vf03 0x576990` (and
   stream, not a pointer to the entry row**, and they search a red-black tree
   (`FFX_Md5Map__find 0x61D140`) rather than binary searching the on-disk sorted key array.
   There are **5 mount slots** at manager+16 and the loop takes the **first hit scanning 0..4**, so a
-  second archive mounted in a lower slot shadows `FFX_Data.vbf`. That is probably the cleanest asset
-  override route we have.
+  second archive mounted in a lower slot shadows `FFX_Data.vbf`. But `mountArchive` hands out the
+  first free slot, so a later mount lands in slot 1 and loses. Nothing but `FFX_InitFileSystem`
+  ever fills a slot, see "The mount slots" in `VBF_FORMAT.md`.
 - Reads: `FFX_VbfStream__read 0x61AA90` -> `FFX_VbfManager__readStream 0x61BFE0`.
 - PS2-era path builders (tklib.c) `0x88C860`, `0x88CAC0`, `0x88CCF0`, `0x88CE80` build
   `/ffx_ps2/ffx/master/new_{jp,us,de,sp,fr,it,kr,ch,cn}pc/...` from templates `%smenu/%s.dcp`,
@@ -868,8 +881,8 @@ asset read reaches it through `PStreamReaderFile__vf03 0x576990` (and
 | **`0x113205C`** (+0x55CC) | `g_ffxCharRecords` - **18 character records of 0x94 (148) bytes**. `FFX_SaveData__getCharRecord 0x785330`. +4 base max HP, +8 base max MP, +12..+19 base stats (Str, Def, Mag, MagDef, Agi, Luck, Eva, Acc), +0x1C current HP, +0x20 current MP, +45 weapon slot, +46 armour slot, +47..+54 effective stats, +59 the available sphere level count (NOT a status byte, an earlier note had this wrong), and party membership is bit 0 of +0x2C. Readers `FFX_SaveData__getCharBaseStats 0x785B60`, `__getCharCurrentStats 0x787230` |
 | `0x1132DDC` (+0x634C) | `g_ffxCharNames` - 18 x 20-byte names. `FFX_SaveData__reloadCharNames 0x787100` |
 | `0x1135E00` | `g_ffxEquipStatBonus` - 8 x 28-byte equipped-gear bonus cache. `FFX_SaveData__getEquipStatBonus 0x7987F0` |
-| `0x11334D4` | `g_ffxBattleAllyActors` base pointer; 31 slots x 3,984 (0xF90) bytes. Non-zero only in battle (`FFX_Battle_IsActive 0x795970`). In-battle stats at actor+1448..1455 / +1488 / +1492 |
-| `0x113446C` | `g_ffxBattleMonsterActors` base pointer; slots 31..92 x 912 bytes. Accessor `FFX_Battle_GetActor 0x794020` |
+| `0x11334D4` | `g_ffxBattleUnits` base pointer; 31 slots x 3,984 (0xF90) bytes. Non-zero only in battle (`FFX_Battle_IsActive 0x795970`). In-battle stats at actor+1448..1455 / +1488 / +1492 |
+| `0x113446C` | `g_ffxBattleSideRecords` base pointer; slots 31..92 x 912 bytes, the weapon and armour side records of units 0..30, not monsters (BATTLE_ACTOR.md). Accessor `FFX_Battle_GetActor 0x794020` |
 | `0x23C44E4` / `0x23C44E0` | `g_ffxChrArray` / `g_ffxChrCount` - the live CHR instances |
 | **`0xC423A0`** | **`g_ffxCharIndexToChrId`**, `DWORD[18]`. This is what finally pinned down which model id is which character, so no more guessing from spawn experiments. Character index to chr id: Tidus 1, Yuna 2, Auron 3, Kimahri 4, Wakka 5, Lulu 6, Rikku 7, Seymour 8, then ten aeons at `0x3001`..`0x300B`. So for the eight party members chr id = character index + 1. Rikku reads **41** instead of 7 when `g_ffxSaveData+0xD1` is set, which is her alternate outfit. Ids 101..108 are the same eight at high detail. Ids 45, 307, 901 and 908 have field motion sets but no entry in this table, so they are still unidentified. |
 | `0xCCB170` | `g_ffxInput` |

@@ -170,19 +170,27 @@ Three independent confirmations of the character order:
    `FFX_DebugPage_battleCharParams_formatLine`.
 2. `g_ffxCharNamesJp 0xC53728` (was `off_C53728`) - the same eight as Shift-JIS strings, read by the
    battle debug HUD at 0x88098C.
-3. The aeon tail. `FFX_Btl_LoadPlayerData` and `sub_79BB50` special-case indices **15, 16, 17** as a
+3. The aeon tail. `sub_79BB50` special-cases indices **15, 16, 17** as a
    group (the Magus Sisters) and index **14** on its own (Yojimbo), and `FFX_Btl_SetupUnitRoster`
-   special-cases actor 16. That is exactly the standard FFX aeon order Valefor, Ifrit, Ixion, Shiva,
-   Bahamut, Anima, Yojimbo, Cindy, Sandy, Mindy.
+   special-cases actor 16. (Corrected 2026-10-27: this also named `FFX_Btl_LoadPlayerData`, now
+   `FFX_SaveData_GrantAllAbilities`, and that one does not special-case them. It only picks ply_save
+   row 18 for 0..7 and row 19 for 8..17, `BOOSTERS.md` 5.2.) That is exactly the standard FFX aeon
+   order Valefor, Ifrit, Ixion, Shiva, Bahamut, Anima, Yojimbo, Cindy, Sandy, Mindy.
 
-Record index 7 (Seymour) is skipped by `FFX_Btl_LoadPlayerData`'s ability-mask loop and by
+Record index 7 (Seymour) is skipped by `FFX_SaveData_GrantAllAbilities`'s ability-mask loop and by
 `FFX_SaveData_LockEquippedGear 0x7AD5E0` (`a1 < 7`), so for equipment and ability purposes the
 playable set is 0..6.
 
 The player-facing names are a separate thing: `g_ffxCharNames 0x1132DDC`, 18 x 20 bytes, where
-bytes 0..17 are the name text, byte 18 is the language it was written in and byte 19 is a "player
-renamed this" flag. `FFX_SaveData__reloadCharNames 0x787100` refills them from the `ply_save`
+bytes 0..17 are the name text, byte 18 is the language it was written in and byte 19 is a "still the
+default name" flag. `FFX_SaveData__reloadCharNames 0x787100` refills them from the `ply_save`
 kernel table.
+
+Corrected 2026-10-28, byte 19 was described as a "player renamed this" flag and it is the opposite.
+`FFX_InitNewSaveData` sets it to 1 for every record (0x786D86), `FFX_NameInput_CommitName 0x8C4E60`
+stores 1 only when the typed name equals the default (0x8C4E85, from `FFX_NameInput_IsDefaultName
+0x8C5390`), and `FFX_SaveData_ReencodeCharNames` replaces the name with the running language's
+default whenever it is non zero. `MENU_SYSTEM.md` third pass.
 
 ## 3. Per-character stats
 
@@ -434,30 +442,25 @@ so it is a derived cache, not state. `FFX_SaveData_ClearEquipStatBonus 0x798820`
 ## 6. What is contiguous
 
 **Good news: almost all of it is one range.** Every piece of persistent game state named above
-lives inside `g_ffxSaveData`, `0x112CA90` .. `0x1133350`, 26,816 bytes. Laid out in order:
+lives inside `g_ffxSaveData`, `0x112CA90` .. `0x1133350`, 26,816 bytes. **The byte for byte map is
+`SAVE_BLOCK_MAP.md`** (every field, its readers and writers, its class, the unused runs with their
+proof, and the pointer and hazard audit), and `tools/saveblock_fields.py` is the same layout as data.
+The coarse regions, for orientation only:
 
 ```
-+0x0000                 header, map id +0xB8, playtime +0xBC, LoveParam +0x2C
-+0x0BEC  word           scenario / progress
-+0x3D0C  0x1C           party_data kernel block
-+0x3D28  0x20           kernel table 31
-+0x3D48  0x84           conf kernel block   <- gil at +0x3D48, start items at +0x3D8C and +0x3D9C
-+0x3D58  3              THE THREE ACTIVE PARTY MEMBERS
-+0x3D5B  17             aeon order
-+0x3D6C  32             shared ability bitmap (ability ids 0x3060 and up)
-+0x3ECC  512            item ids,    WORD[256], 112 used
-+0x40CC  256            item counts, BYTE[256], 112 used
-+0x41CC  32             item gained mask
-+0x41EC  32             item lost mask
-+0x420C  512            monster capture counts, BYTE[512], 0..10
-+0x440C  64             monster seen mask, 512 bits
-+0x444C  64             second monster mask, 512 bits
-+0x448C  16             key item flags, 128 bits
++0x0000  0x1EC          header: map record, fades, flags, LoveParam, checkpoint, playtime
++0x01EC  0x2000         ATEL script work (class 0 variables), scenario word at +0xBEC
++0x21EC  0x1320         sphere grid
++0x350C  0x800          guide map explored bitmaps
++0x3D0C  0x1C / 0x20 / 0x84   party_data, kernel table 31, conf (gil, party, aeon order)
++0x3DCC  0x100          world flags, then 128 unused bytes
++0x3ECC  ...            items, monster capture, seen and defeated masks, key items
 +0x449C  4400           equipment array, 200 x 22
 +0x55CC  2664           character records, 18 x 148
 +0x6034  792            per-character ability bitmap, 18 x 44
 +0x634C  360            character names, 18 x 20
-+0x64B4  ...            tail, unidentified, ends +0x68C0
++0x64B4  4              CRC dword, a copy of the file header +0x1A (SAVE_FILE.md). 0 after a PC load
++0x64B8  1032           unused, nothing reads or writes it (SAVE_BLOCK_MAP.md section 4)
 ```
 
 Where the blocks touch, the arithmetic closes exactly: 0x449C + 0x1130 = 0x55CC, 0x55CC + 0xA68 =
@@ -471,8 +474,11 @@ unbroken run of the data a desync detector cares about.
    report a divergence constantly.
 2. The map id at `+0xB8` is worth including, but a peer mid-transition will differ for a frame or
    two, so it belongs in its own bucket rather than mixed with slow-moving state.
-3. The two item change masks at `+0x41CC` and `+0x41EC` are UI state, not game state. They diverge
-   harmlessly whenever a menu is open on one machine and not the other, so bucket them separately.
+3. The two item change masks at `+0x41CC` and `+0x41EC` were thought to be UI state. Corrected
+   2026-10-27: they are set only, by `FFX_SaveData_AddItem` through `FFX_SaveData_MarkItemDelta`, and
+   nothing reads them, so they are play history and agree between peers that gain the same items.
+   They can stay in their own bucket, but not because they diverge. The real machine dependent
+   fields are listed in SAVE_BLOCK_MAP.md section 6.
 
 Outside the block and **deliberately not hashed**: `g_ffxBattlePartyOrder 0x112C895` and the rest of
 the battle work RAM, the battle actor arrays, and the derived `g_ffxEquipStatBonus 0x1135E00`. These
@@ -502,8 +508,9 @@ Playtime at +0xBC is the only hole, and it is deliberately skipped. That is 13 r
 FNV-1a over 26 KB is in the tens of microseconds on a 32-bit build, so running it every frame is
 affordable and running it once a second is obviously fine.
 
-What I did **not** establish: whether anything else inside the block ticks per frame. Playtime is
-the one I can prove from the code. Confirming the rest wants a runtime experiment: hash each bucket
+What I did **not** establish here: whether anything else inside the block ticks per frame. Playtime
+is the one I can prove from the code. SAVE_BLOCK_MAP.md section 6 now lists every field derived
+each step (+0x10, +0x13, +0x28, +0x29 and the guide map bitmaps among them). Confirming the rest wants a runtime experiment: hash each bucket
 for a few hundred idle frames and see which ones move. `ffx::HashGameState` returns the per-bucket
 hashes precisely so that experiment is a one-liner.
 

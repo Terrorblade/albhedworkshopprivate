@@ -194,10 +194,10 @@ gameplay never sees them, but the PC UI does.
 | --- | --- | --- | --- |
 | `0x00010000` | 28 | F1 | booster: cycle game speed 1x / 2x / 4x, `FFX_Booster_UpdateSpeedHotkey` |
 | `0x00020000` | 29 | F4 | booster: auto battle, `FFX_Booster_PollAutoBattleKey` |
-| `0x00040000` | 30 | unbound | nothing binds it by default, tested in `sub_680030` |
-| `0x00080000` | 31 | F5 | tested in `FFX_Frame_UpdateBoostersAndOverlays` |
-| `0x00100000` | 32 | unbound | tested in `FFX_Frame_UpdateBoostersAndOverlays` |
-| `0x00200000` | 33 | F2 | booster: invincible, `FFX_Booster_PollInvincibleKey` |
+| `0x00040000` | 30 | key 0 | Free Camera, tested in `FFX_Frame_StepSuspendOverlay 0x680030`. The action map binds key code 0, so it never fires (`BOOSTERS.md` 4) |
+| `0x00080000` | 31 | F5 | booster: Hide HUD, `*g_ffxGfxCtx + 0x10DCC`, tested in `FFX_Frame_UpdateBoostersAndOverlays` |
+| `0x00100000` | 32 | key 0 | Time Stop, `FFX_Frame_ToggleSuspendOverlay`, tested in `FFX_Frame_UpdateBoostersAndOverlays`. Key code 0, never fires (`BOOSTERS.md` 4) |
+| `0x00200000` | 33 | F2 | booster: Supercharge (named invincible in the IDB), `FFX_Booster_PollInvincibleKey` |
 | `0x00400000` | 34 | F3 | booster: no encounters, `FFX_Booster_PollEncounterRateKey` |
 | `0x00800000` | - | - | **no action sets this.** `isPressed(0x800000)` at `0x6F760F` is dead code |
 | `0x01000000` | 40 | Esc | the pause / Esc menu key |
@@ -226,6 +226,12 @@ out of a data file rather than from strings in the exe, so I could not read the 
 
 This does not block anything: a co-op mod forwards bits, it does not need to know which one is
 confirm. But do not take a guess from this document and put it in a comment.
+
+**Settled for the battle menu (2026-10-28, `BATTLE_MENU.md` 3.5).** Every battle menu page proc treats
+the newly pressed bit 0x20 as confirm (it classifies the row and calls `FFX_BtlMenu_PushPage`) and 0x40
+as cancel (it drops a pick or calls `FFX_BtlMenu_PopPage`) [V]. So in that menu the Circle bit confirms
+and the Cross bit cancels. Which physical key or button carries each bit is still the bindings question
+above.
 
 ---
 
@@ -416,10 +422,13 @@ Two smaller keyboard details:
   4 rows of `{srcKey, dstKey, latchByte}`, and calls `Phyre__PApplication__setKeyDown` on the
   destination while the source is down: 122 -> 119 Alt, 120 -> 117 Control, 121 -> 118 Shift,
   115 -> 77 Enter. The right-hand modifiers and the numpad Enter act as the main ones.
-- **The FMV / modal branch.** When a movie is playing and neither the Esc menu nor
+- **The suspend / modal branch.** When the frame suspend object `g_ffxFmvState` has Time Stop
+  (+0x338), the cutscene pause (+0x33C) or Free Camera (+0) set, and neither the Esc menu nor
   `maybe_g_ffxInputModalGate` is set, `poll` takes a short path that tests only 11 fixed keyboard
-  entries, all of them the PC extras, and then stores the mask and clears the hold timers. So during
-  an FMV the pad is ignored entirely and only the booster keys and Esc work. Separately, when
+  entries, all of them the PC extras, and then stores the mask and clears the hold timers. So while
+  the game is suspended the pad is ignored entirely and only the booster keys and Esc work.
+  Corrected 2026-10-27: this used to say "when a movie is playing". The test at 0x632B30 is on the
+  suspend object, not on a movie (`CUTSCENE.md` 7.2, `BOOSTERS.md` 4). Separately, when
   `maybe_g_ffxInputModalGate` is non-zero, `poll` masks out the 7 PC-extra bits
   `0x10000` through `0x400000` at the end.
 

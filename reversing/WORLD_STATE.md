@@ -50,8 +50,13 @@ of them is a script opcode.
 
 ### The file
 
-**Confirmed.** `<dataroot>/FFX_Data/GameData/PS3Data/saves/%02d.SAV`, plain `fopen` / `fread` /
-`fwrite`, **26,880 = 0x6900 bytes**, no compression and no encryption.
+**Corrected 2026-10-27, see `SAVE_FILE.md` for the whole file.** The PC game reads and writes
+`<Documents>\Square Enix\FINAL FANTASY X&X-2 HD Remaster\FINAL FANTASY X\ffx_NNN` (no extension,
+NNN 000..199, 000 the autosave) with `_wfopen` / `fread` / `fwrite`, **26,880 = 0x6900 bytes**, no
+compression and no encryption. The `<dataroot>/FFX_Data/GameData/PS3Data/saves/%02d.SAV` path this
+section used to give belongs to the console-era functions `FFX_SaveFile_ReadSlot` /
+`FFX_SaveFile_WriteSlot`, which only module 15/16 and a dev converter in `FFX_SaveUi_Step` reach, and
+that folder does not exist in the retail install.
 
 ```
 +0x0000  0x40 bytes   header
@@ -63,8 +68,8 @@ The 0x40 header, from `FFX_SaveFile_Serialize 0x8B3E60` (was `sub_8B3E60`):
 | off | size | field |
 |---|---|---|
 | 0x00 | dword | monotonic save counter, `g_ffxSaveCounter 0x186627C`, clamped at 0x80000000 |
-| 0x04 | byte | save kind, passed in by the caller |
-| 0x05..0x07 | 3 bytes | the three active party members, copied from block `+0x3D58`, 0xFF padded |
+| 0x04 | byte | save kind, passed in by the caller (1 on disk). `FFX_SaveFile_VerifyCrc` reuses it in memory as the "verified" flag |
+| 0x05..0x0B | 7 bytes | party slot icons, 0xFF padded. `+0x05..+0x07` are then overwritten from block `+0x3D58..+0x3D5A` (corrected 2026-10-27, was "3 bytes") |
 | 0x0C | byte | language the save was written in |
 | 0x10 | dword | playtime, copied from block `+0xBC` |
 | 0x14 | dword | gil |
@@ -72,8 +77,8 @@ The 0x40 header, from `FFX_SaveFile_Serialize 0x8B3E60` (was `sub_8B3E60`):
 | **0x1A** | **word** | **CRC-16** |
 | 0x1C | word | **version, hardcoded 256**. Nothing in the binary reads it back. |
 | 0x1E | byte | Rikku alternate outfit, block `+0xD1` |
-| 0x1F | byte | `sub_7851D0()`, which is a `return 0` stub |
-| 0x20.. | string | character name 0 (Tidus, as renamed by the player) |
+| 0x1F | byte | `FFX_GetInternationalEnvId 0x7851D0`, a `return 0` stub |
+| 0x20..0x3F | 32 bytes | character name 0 (Tidus, as renamed by the player), NUL terminated, zero filled |
 
 The slot list is cached in `g_ffxSaveSlotHeaders 0x159EC70`, 99 entries of the same 64 bytes,
 indexed by `FFX_SaveFile_GetSlotHeader 0x8B4E40`.
@@ -82,7 +87,9 @@ indexed by `FFX_SaveFile_GetSlotHeader 0x8B4E40`.
 
 **Confirmed.** `FFX_Crc16Ccitt 0x8B1450` (was `sub_8B1450`) is CRC-16/CCITT: a 256-entry table built
 on the stack from polynomial 0x1021, initial value 0xFFFF, result one's-complemented. Six call
-sites, all save integrity.
+sites, all save integrity. **Corrected 2026-10-27: it is not the standard CRC.** The table loop ends
+`cmp ecx, 0FFh / jb` at 0x8B1566, so entry 0xFF stays 0. A standard CRC-16/CCITT matches none of 12
+real saves, the quirked table matches all 12. `SAVE_FILE.md` section 3.
 
 The CRC is stored **twice**: at header `+0x1A` and at **block `+0x64B4`** (`g_ffxSaveBlockCrc`). The
 block's own slot is zeroed before the CRC is computed, so it covers itself as zeros.
@@ -102,10 +109,14 @@ different CRC lengths.**
 block. **Inferred:** the PS2/PS3 code used 0x64B8 because the block used to end there, the block grew
 to 0x68C0, and only the newer in-game save path was updated. The practical consequence is that the
 PC path re-stamps the CRC on write (`FFX_SaveFile_WriteSlot` zeroes the slot and recomputes before
-every `fwrite`), so whatever the in-game serializer put there is overwritten.
+every `fwrite`), so whatever the in-game serializer put there is overwritten. Clarified 2026-10-27:
+the PC writers are `FFX_SaveFile_BeginSave 0x6F07A0` (manual saves) and `FFX_SaveFile_WriteToDisk
+0x6F0510` (the autosave), and both call `FFX_SaveFile_StampCrc` first. So every file on disk carries
+the 0x64B8 CRC, and every real save checked agrees.
 
 `FFX_SaveFile_VerifyCrc` skips the entire check when `maybe_g_ffxSaveCrcSkip 0xCCB9A4` is non-zero.
-I did not trace who sets it.
+Its only writer is `FFX_DebugPage_basicInfo_updateInput_ORPHAN`, which nothing calls, so in retail it
+stays 0 and the check always runs (2026-10-27).
 
 ### The install
 
@@ -171,7 +182,7 @@ late-joiner flow in two statements.
 | 4 | `sub_8724F0 0x8724F0`, `sub_8724A0 0x8724A0` | apply the sound and display config bits held in `+0x3D0C` |
 | 5 | `sub_8AF4F0(1, "scene3" / "scene33" / "scene34")` | drops three menu scenes |
 | **6** | **`FFX_SphereGrid_RecomputeDerived 0xA54860`** (through the thunk `0x8A97E0`) | **the real re-derive, see section 3** |
-| 7 | `TOSwapInternationalEnvExec 0x8B0500` | only when the saved language differs from the running one |
+| 7 | `TOSwapInternationalEnvExec 0x8B0500` | started on every load and stepped once, so it only sets a busy flag and clears option bit 16. Corrected 2026-10-28, this said "only when the saved language differs" (`INTERNATIONAL_CONTENT.md` 4) |
 | 8 | `FFX_Module_Suspend(16)` | closes the Load screen |
 
 **And note what is not there.** No map warp. No `FFX_SaveData_RebuildItemLists`. No
@@ -180,8 +191,12 @@ request (section 6), the equipment owner bytes are inside the block already, the
 rebuilt lazily, and the battle roster is rebuilt at battle start.
 
 The PC path reaches `FFX_SaveFile_CommitLoad` from `FFX_SaveUi_Step 0x81FF80` state 4, gated on
-`sub_822480()` which is a `return 2` stub, so it always fires. **The PC load path never checks the
-CRC.** Only the PS3-era module 15/16 screens and `FFX_SaveFile_VerifyCrc` do.
+`sub_822480()` which is a `return 2` stub, so it always fires. ~~The PC load path never checks the
+CRC.~~ **Corrected 2026-10-27: it does.** Load state 15 of `FFX_SaveFile_StepSlotStateMachine 0x6F0950`
+calls `FFX_SaveFile_VerifyCrc` at 0x6EFBE6 and on a failure zeroes the whole staging image and shows
+message 0x208. `FFX_SaveUi_Step` state 2 then commits only when `FFX_SaveUi_IsStagingVerified 0x6480A0`
+(staging header +4 == 1) holds, else it cancels through `sub_8B3DB0`. State 4 is reached only after a
+verified image. `SAVE_FILE.md` section 6.
 
 ---
 
@@ -212,11 +227,13 @@ checks, any one of which would be suggestive and which together are conclusive.
 this is the only hit and it is a false positive.
 
 **One field that is not plain data in the useful sense:** `+0x64B4`, the CRC. It is written only
-into the file copy, never into the live block, so a live block holds whatever CRC it was loaded with
-and a new-game block holds zero. It is dead at runtime but it is inside the 26,816 bytes, so a
-byte-for-byte comparison between two peers will see it. If a peer started from a save file and the
-other received a transplant, they agree. If one started a new game and the other loaded, they will
-differ by two bytes forever. Put it in its own hash bucket or skip it.
+into the file copy, never into the live block. Corrected 2026-10-27: `FFX_SaveFile_VerifyCrc` zeroes
+the staging image's copy at 0x647DAE before computing and never puts it back, so a block installed by
+the PC Load Game holds **zero** there, the same as a new-game block. Only a raw install of file bytes
+(`FFX_AtelSys_Save_087_resi`, `FFX_Debug_ApplyViewerSave`, or a mod that memcpys a file's block)
+carries a nonzero CRC into the live block. It is dead at runtime but it is inside the 26,816 bytes,
+so a byte-for-byte comparison between two peers will see it if one of them took a raw install. Put it
+in its own hash bucket or skip it, and zero it when transplanting a file image.
 
 ---
 
@@ -297,7 +314,7 @@ refills it. **Inferred, flagged as a known unknown.**
 | +0x0C | byte | **live entry-point index** | `FFX_SaveData_GetEntryPoint 0x88D670` |
 | +0x0D | byte | previous entry point | `FFX_SaveData_GetPrevEntryPoint 0x88D610` |
 | +0x0E | word | map-name id for the save-slot description | `FFX_SaveData_GetMapNameId 0x86C410` |
-| +0x11 | byte | fade-in frames | `FFX_SaveData_SetFadeInFrames 0x8700C0` |
+| +0x11 | byte | warp fade kind, 0 fade mode 3, 1 mode 5 (ATEL_CORE_LIBRARY.md core:188) | `FFX_SaveData_SetWarpFadeKind 0x8700C0` |
 | +0x12 | byte | fade-out frames | `FFX_SaveData_SetFadeOutFrames 0x8700D0` |
 | +0x13 | byte | field flags, bit 1 = encounters allowed | `FFX_Atel_GetFieldStepAllowsEncounter 0x86A9D0` |
 | +0x2A | byte | **"this block came from a save file"**, see below | `FFX_SaveData_MarkLoadedFromFile 0x88EA50` |
@@ -635,10 +652,14 @@ unidentified" bucket resolves completely:
 ```
 
 Every boundary closes exactly: `0x1EC + 0x2000 = 0x21EC`, `0x21EC + 0x1320 = 0x350C`,
-`0x350C + 0x800 = 0x3D0C`. **Confirmed.**
+`0x350C + 0x800 = 0x3D0C`. **Confirmed.** Corrected 2026-10-27: the 0x1320 grid blob is not 2,448 node words. It
+is 1,280 node words, then 1,280 link bytes, the current node per character, grid id and zoom, with
+1,040 unused bytes (CHEAT_SAVEDATA.md 6.1, SAVE_BLOCK_MAP.md 2.3). The four 512-byte records are
+explored-cell bitmaps (SAVE_BLOCK_MAP.md 2.4).
 
-Two small notes. The sphere grid type is **bits 14 and 15 of the dword at `+0x3D0C`** (0 Standard,
-1 and 2 the other two layouts), read by `FFX_SphereGrid_InitNodes` to pick which of three asset sets
+Two small notes. The sphere grid type is **bits 14 and 15 of the dword at `+0x3D0C`** (0 the template
+value and the pre-International grid, 1 Standard, 2 Expert, corrected 2026-10-28 from "0 Standard",
+`INTERNATIONAL_CONTENT.md` 7), read by `FFX_SphereGrid_InitNodes` to pick which of three asset sets
 to load. And the one config bit the in-game menu owns, `+0x5EC` bit 0, is class-0 offset 0x400,
 which falls in a gap no shipped script declares. So the menu is borrowing an unused slot in the
 script work area. **Confirmed.**
@@ -910,18 +931,34 @@ does.
    not find refills it. A runtime experiment settles it in a minute: read `g_ffxEquipStatBonus
    0x1135E00` before a battle, after a battle, and after opening the Sphere Grid.
 2. **The meaning of individual class-0 offsets.** I can say the world state is 8,192 bytes at
-   `+0x1EC`, that 3,978 of those bytes are declared, and which ones are hottest. I cannot say which
+   `+0x1EC`, that 3,978 of those bytes are declared (3,997 once monster, battle and menu scripts are
+   included, SAVE_BLOCK_MAP.md 2.2), and which ones are hottest. I cannot say which
    byte is "opened the chest in Besaid Temple". Recovering that means correlating a specific script's
    disassembly with its map, which `tools/ebp.py` can already do per file. The hottest offsets table
    above is the right place to start.
 3. **`+0xA8`, `+0xAA`, `+0xB4`, `+0xB6`, `+0xD8`, `+0xDC`, `+0xE0`, `+0xE4`, `+0xE8`, `+0xEA`.** All
    have getters and setters, all are written around scene init, none has an identified purpose.
    `+0xB4`/`+0xB6` are written exactly once per map by ATEL Core syscall 366 in 323 of 397 packages,
-   so they are per-map identity of some kind.
-4. **Who sets `maybe_g_ffxSaveCrcSkip 0xCCB9A4`**, which turns off the PC save CRC check entirely.
+   so they are per-map identity of some kind. Partly settled 2026-10-27 (`SAVE_FILE.md` section 5):
+   `maybe_FFX_Scene_Init` writes `+0xA8 = FFX_Atel_GetCurrentBgm() | (sub_8863D0(bgm) << 8)` and
+   `+0xAA = sub_641400() + 1` at every checkpoint, `FFX_SaveUi_BeginSave` blanks them to 0xFFFF and 0
+   in every manual save, and the load hands `+0xA8` to `dword_C526D0`, which core:392 reads. So
+   `+0xA8` is the checkpoint music. What `+0xAA` names is still open.
+   Settled 2026-10-27 (SAVE_BLOCK_MAP.md 2.1): `+0xAA` is `word_C322A8 + 1`, which `sub_643AA0`
+   sets from `FFX_Premovie_Load` and `sub_670760`, most likely the background movie id plus a flag
+   [I]. `+0xB4`/`+0xB6` are the world map marker X and Y the save screen draws (`sub_873AE0`/AF0 feed
+   `sub_8E2B60`, debug labels IMapX and IMapY). `+0xD8`, `+0xDC`, `+0xE0` are the premovie number,
+   mode and state. `+0xE4` and `+0xE8` are field boot flags cleared on every map unload. `+0xEA` is
+   a script word (core:525, read by `FFX_SaMenu_GetSaveWordEA`).
+4. ~~**Who sets `maybe_g_ffxSaveCrcSkip 0xCCB9A4`**, which turns off the PC save CRC check entirely.~~
+   Settled 2026-10-27: only the orphaned debug page `FFX_DebugPage_basicInfo_updateInput_ORPHAN`, so
+   nothing in retail.
 5. **What the four 512-byte records at `+0x350C` hold.** `sub_91CE50` hands them out for scene ids
    582, 584, 590 and 591 and nothing else. The function lives in the 0x91xxxx range, which I did not
-   attribute to a module.
+   attribute to a module. Settled 2026-10-27 (SAVE_BLOCK_MAP.md 2.4): each record is a 64 x 64 bitmap of
+   explored guide map cells. `sub_91F420` sets bits around the local player every step the guide
+   map draws, and only a new game clears them. That makes them a co-op hazard, each peer explores
+   its own cells.
 6. **Whether the 640-bit `g_ffxEventFlagBits` at `+0x4C` is used by anything other than those three
    script sites.** The C-side has no callers I found beyond the three syscalls. It may be vestigial
    PS2 code, or it may be written by a magic DLL.
@@ -932,7 +969,9 @@ does.
    `+0xBC` is the one I can prove from the code. A per-bucket hash over a few hundred idle frames,
    which `ffx::HashGameState` already supports, would answer it for every bucket at once. If
    something in the script work area does tick, the desync detector needs to know before it is
-   trusted.
+   trusted. Partly settled 2026-10-27: only scripts write the declared bytes and no undeclared byte is
+   touched, so whatever ticks there is script state that runs the same on every peer. The fields
+   that are derived each step or depend on the local machine are listed in SAVE_BLOCK_MAP.md 6.
 
 ---
 
@@ -1010,7 +1049,7 @@ The database was saved. Nothing with an existing meaningful name was renamed, an
 | 0x86C410 | `FFX_SaveData_GetMapNameId` | word +0x0E or +0xD4 |
 | 0x870140 | `FFX_SaveData_SetMapNameOverride` | word +0xD4, byte +0xD6 |
 | 0x8638B0 | `FFX_SaveData_ClearMapNameOverride` | byte +0xD6 |
-| 0x8700C0 | `FFX_SaveData_SetFadeInFrames` | byte +0x11 |
+| 0x8700C0 | `FFX_SaveData_SetWarpFadeKind` | byte +0x11 |
 | 0x8700D0 | `FFX_SaveData_SetFadeOutFrames` | byte +0x12 |
 | 0x86C470 | `FFX_SaveData_GetScenarioWord` | word +0xBEC |
 

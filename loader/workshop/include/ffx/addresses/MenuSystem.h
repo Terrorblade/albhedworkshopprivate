@@ -291,7 +291,7 @@ namespace ffx
 		const DWORD MenuPages = 0x01686108; // void *, 12 x 832 byte page records
 
 		// Sphere grid behaviour that a gate or a detector attaches to.
-		const DWORD MenuSphereGridActivateNode = 0x00656160; // charges a node, see below
+		const DWORD MenuSphereGridActivateNode = 0x00656160; // the move confirm or cancel, charges S.Lv on confirm, not an activation (MINIGAMES_PROGRESSION.md)
 		const DWORD MenuSphereGridSwitchChar = 0x00658EC0;   // L1 and R1 change character
 		const DWORD MenuSphereGridReadPad = 0x00657520;      // its own FRAME-COUNTED repeat
 

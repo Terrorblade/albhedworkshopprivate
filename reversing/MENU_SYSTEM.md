@@ -101,17 +101,17 @@ static descriptor for each id. Descriptor layout confirmed:
 | 7 | 0xC5A720 | 0x8CC330 | submenu, **Aeons** (row 5) |
 | 9 | 0xC5A7FC | 0x8D5540 | submenu, **Customize** (row 7). Writes equipment entries in place |
 | 10 | 0xC5A5E4 | 0x8CB0E0 | submenu, **Config** (row 8) |
-| 11 | 0xC5A08C | 0x8BEF50 | save / load menu. Its suspend hook is `j_sa_menu_stop`, and the `sa_menu_*` strings belong to it. Game mode 0x400000 |
-| 12 | 0xC5A820 | 0x8D6E40 | game mode 0x40000 |
-| 13 | 0xC5A844 | 0x8D9600 | game mode 0x20000 |
-| 14 | 0xC5A0B0 | 0x8C3340 | game mode 0x80000. Read as FMV / movie, but the row mapping suggests **Name Entry**. Not settled, its exec was never opened |
-| 15 | 0xC59FF0 | 0x8B15D0 | game mode 0x200000, also a submenu |
-| 16 | 0xC5A014 | 0x8B15D0 | game mode 0x100000, same exec as 15 |
-| 17 | 0xC59524 | 0x8BA660 | game mode 0x10000 |
+| 11 | 0xC5A08C | 0x8BEF50 | **sa_menu, the data driven menu module**, game mode 0x400000. Its suspend hook is `j_sa_menu_stop`, and the `sa_menu_*` strings belong to it. Corrected 2026-10-28, this said "save / load menu": scripts open it as 0x40400003 in 13 non-test events, 12 of them right before they open module 22 with its result, and the Monster Arena opens it as 0x40400000 plus two variables. The PC save goes to `FFX_SaveUi` instead. Which screen each sa_menu mode draws is still inferred, see the third pass |
+| 12 | 0xC5A820 | 0x8D6E40 | **Equipment shop**, game mode 0x40000, settled 2026-10-28. Loads kind 47 rows 0, 2, 4 (`arms_rate`, `arms_shop`, `shop_arms`), sells through `FFX_SaveData_RemoveEquipEntry` + `SpendGil(-price)`, help line mmain id 13 "Equipment". Opened by sg:29 0x4004xxxx, the low half is the shop id 0..46 |
+| 13 | 0xC5A844 | 0x8D9600 | **Item shop**, game mode 0x20000, settled 2026-10-28. Loads kind 47 rows 1, 3 (`item_rate`, `item_shop`), buys only while `FFX_SaveData_GetItemCount < 99`, help line mmain id 12 "Items". Opened by sg:29 0x4002xxxx, the low half is the shop id 0..46 |
+| 14 | 0xC5A0B0 | 0x8C3340 | **Name Entry**, game mode 0x80000, settled 2026-10-28 (it was read as FMV). The exec waits for the name entry object built by `FFX_NameInput_Open 0x8C4250`, whose step runs `FFX_NameInput_CommitName 0x8C4E60` into the character's name record. Help line mmain id 14 "Name Entry". Opened by sg:29 0x4008xxxx from the Zanarkand opening (Tidus) and each aeon's temple, the low half is the character 0..17, and 0x40080020 from the airship is the password variant |
+| 15 | 0xC59FF0 | 0x8B15D0 | **PS2 save screen**, game mode 0x200000, settled 2026-10-28. Init sets `g_ffxSaveLoadMenuIsSave` = 1, help save_txt 4 "Select save area.", serialises the block in state 37. Unreachable in practice on PC, see the third pass |
+| 16 | 0xC5A014 | 0x8B15D0 | **PS2 load screen**, game mode 0x100000, same exec as 15, settled 2026-10-28. Init sets `g_ffxSaveLoadMenuIsSave` = 0, help save_txt 31 "Select file to load." |
+| 17 | 0xC59524 | 0x8BA660 | **Battle results (spoils) screen**, game mode 0x10000, settled 2026-10-28. `FFX_Btl_ReturnToField` asks for 0x40010002, the treasure syscalls core:347 and 423 for 0x10001, and 29 events for 0x4001xx00 after scripted fights. The prepare hook `FFX_BtlResult_Init` stages AP, gil, items and equipment, text from btlend_txt |
 | **19** | **0xC5B2F4** | **0x8E26D0** | **THE SPHERE GRID.** The first pass called this "the main menu" and that was wrong, see the proof section below. Module 1 is the main menu top level |
 | 20 | 0xC5B318 | 0x8E2870 | submenu, **PS2 HDD install** (row 20). DEAD, result 20 cannot be produced |
 | 21 | 0xC5A768 | 0x8D0460 | submenu, **Overdrive mode** (row 15) |
-| 22 | 0xC5A8D8 | 0x8DB4E0 | TK dev menu test harness, game mode 0x800000 |
+| 22 | 0xC5A8D8 | 0x8DB4E0 | **Scripted menu demo player**, game mode 0x800000. Corrected 2026-10-28, this said "TK dev menu test harness": 31 sg:29 sites in 18 events (16 of them not test maps) open 0x408000xx. It swaps in a canned save, turns the virtual pad on, runs a menu script and one of modules 7, 19, 9, 21. That these are the menu tutorials is inferred |
 | 23 | 0xC5B33C | 0x8E2960 | **World map viewer**, not a main menu row. From module 3's Map item |
 
 `g_ffxModuleGameMode` at **0x18408F8** holds the current mode bit.
@@ -401,6 +401,11 @@ roll on the map load path**, reached because the Config screen and the Save/Load
 trigger an environment reload. It is not menu logic, and it is already a field-side lockstep
 concern rather than a new one.
 
+Corrected 2026-10-28: the path is dead from every caller. `sub_782090`
+(`FFX_Btl_ReloadForIntlEnvStep`) returns 0 at 0x7820AA when `FFX_GetInternationalEnvId()` equals
+`dword_112CA34`, the id `FFX_Btl_Init` stored, and both are 0. A load does start the swap, but
+the battle reload inside it never runs (`INTERNATIONAL_CONTENT.md` 4).
+
 **The clock: yes, in two places, and one of them matters.**
 
 1. **`FFX_MenuSys_SamplePad` calls `FFX_Input__getTimeSeconds 0x630C60`, which is
@@ -520,10 +525,10 @@ does, and not a proof of completeness:
 |----|----------|----------------|--------------|
 | 0x786EF0 | `FFX_SaveData_SpendSphereLevels` | record+0x3B -> record+0x3C | **Sphere Grid only, one caller** |
 | 0x7AB970 | `FFX_SaveData__setCharEquip` | record+0x2D or +0x2E | **Equip screen (module 4)**, plus the two shop equip-on-buy helpers |
-| 0x7AB9F0 | `FFX_SaveData_SwapEquipEntries` | two equipment entries | Customise (module 3) and five equipment-sort helpers |
+| 0x7AB9F0 | `FFX_SaveData_SwapEquipEntries` | two equipment entries | Items (module 3, the list rearrange) and five equipment-sort helpers. Corrected 2026-10-28, this row still said Customise |
 | 0x7AB910 | `FFX_SaveData_AddEquipEntry` | a new equipment entry | shop buy |
-| 0x7ABCA0 | `FFX_SaveData_RemoveEquipEntry` | frees an entry | shop sell (module 12 only) |
-| 0x790550 | `FFX_SaveData_AddItem` | the item arrays and both change masks | Items (7), Customise (3), both shops, one 0xA5 helper |
+| 0x7ABCA0 | `FFX_SaveData_RemoveEquipEntry` | frees an entry | shop sell (module 12, the equipment shop, only) |
+| 0x790550 | `FFX_SaveData_AddItem` | the item arrays and both change masks | Aeons (7), Items (3), both shops, one 0xA5 helper. Corrected 2026-10-28, this row still had the old swapped labels "Items (7), Customise (3)" |
 | 0x7859A0 | `FFX_SaveData_SpendGil` | conf+0 | both shops |
 | 0x8AAE90 | `FFX_Menu_SetCharCurrentHp` | record+0x1C, +0x3D | items and abilities |
 | 0x8AAEF0 | `FFX_Menu_SetCharCurrentMp` | record+0x20 | Abilities (module 2), Equip HP/MP clamp |
@@ -573,6 +578,15 @@ pointer at `g_ffxMenuWork + 71080`, which is why the first pass's call-graph wor
 it. It also clears bit `(1 << charIndex)` in the 20-byte node records at `g_ffxMenuWork + 43028`,
 which is the menu's working copy of who has activated which node.
 
+**Correction 2026-10-28 (`MINIGAMES_PROGRESSION.md` 3.2 and 3.3).** Two things above are off.
+The records at `g_ffxMenuWork + 43028` are the 20-byte **link** records, the per-character trail
+that `FFX_SphereGrid_MenuToSave 0xA5BB70` copies to save `+0x2BEC`. The node records are 40 bytes at
+`g_ffxMenuWork + 2056`, with the activation mask at `+33`. And `0xA56160` does not activate a node.
+With `a3 == 0` it confirms a move and charges the move cost at `+71196`, with `a3 == 1` it cancels
+the move and puts the character back on the node saved at `+71216`. Activation is
+`FFX_SphereGrid_ActivateNodeForChar 0xA48910`. `tools/apply_progression_names.py` renames
+`0xA56160` to `FFX_SphereGrid_ConfirmOrCancelMove`.
+
 ## WHICH MODULE IS WHICH SCREEN (question 3)
 
 `FFX_Menu_StartSubmoduleByResult 0x8E24C0` is the main menu's submenu launcher. It reads
@@ -608,14 +622,16 @@ Identified, with what proved each:
 | 9 | **Customize** | main menu row 7. Its commit block is `FFX_Menu_CustomizeStep 0x8D5830` at 0x8D5BD8: `getEquipEntry`, `FFX_Equip_AddAbilityToEntry`, `FFX_Equip_RefreshEntryNameId`, `FFX_SaveData_AddItem`, then `TK:SND:KAIZOU`. Kaizou is remodel. Also `SELCOUNTER:%d`. Gated on scenario >= 1096, where Rikku joins. |
 | 20 | **PS2 HDD install, dead code** | main menu row 20. Strings `ffxpassf`, `pfs0:ffx%d`, `PP.SLUS-20312.0.FF10`. Its only start site is `FFX_Menu_StartSubmoduleByResult` case 20, and result 20 cannot be produced because the row mask maxes at 0x83FF. |
 | 23 | **World map viewer** | not a main menu row. Reached from module 3 for the "Map" item. Loads ROM group 18 entry 23 and uploads 512x416 PSMT8 = 212,992 bytes, which is the exact size of `menu/worldmap.fmt` and the only file that size in `menu/`. |
-| 10 | **Config** | a row table at `g_ffxMenuConfigRows 0x186A44C`: row+4 value count, row+8 current value, row+12 selectable, row+20 apply callback. Cursor row `g_ffxMenuConfigCursorRow 0x186A444`, count `0x186A448`. Up/Down move rows skipping rows whose +12 is not 1, Left/Right change the value, Cross confirms, and on confirm it compares the map id and runs `TOSwapInternationalEnvExec` when it changed. |
-| 11 | **save frontend** | `sa_menu_*` strings, suspend hook is `j_sa_menu_stop`, game mode 0x400000 |
-| 12 | **a shop** | `FFX_SaveData_SpendGil` + `FFX_SaveData_RemoveEquipEntry` (sell), game mode 0x40000 |
-| 13 | **a second shop** | `FFX_SaveData_SpendGil` via `sub_8D9BD0` / `sub_8D9E20`, game mode 0x20000 |
-| 15, 16 | **save and load** | `/FFX_Data/GameData/PS3Data/saves/`, `.SAV`, `icon.sys`, `010906%02d.ico`. Same exec `sub_8B15D0` for both. |
+| 10 | **Config** | a row table at `g_ffxMenuConfigRows 0x186A44C`: row+4 value count, row+8 current value, row+12 selectable, row+20 apply callback. Cursor row `g_ffxMenuConfigCursorRow 0x186A444`, count `0x186A448`. Up/Down move rows skipping rows whose +12 is not 1, Left/Right change the value, Cross confirms, and on confirm it compares the international env id saved at open and would run `TOSwapInternationalEnvExec` when it changed. That is dead, the id is a constant 0 (corrected 2026-10-28, this said "the map id"). |
+| 11 | **sa_menu** (corrected 2026-10-28, this said save frontend) | `sa_menu_*` strings, suspend hook is `j_sa_menu_stop`, game mode 0x400000. Its arg 3 result picks a module 22 demo, see the third pass |
+| 12 | **equipment shop** (settled 2026-10-28) | `FFX_SaveData_SpendGil` + `FFX_SaveData_RemoveEquipEntry` (sell), kind 47 rows 0, 2, 4, help mmain 13 "Equipment", game mode 0x40000 |
+| 13 | **item shop** (settled 2026-10-28) | `FFX_SaveData_SpendGil` via `sub_8D9BD0` / `sub_8D9E20`, kind 47 rows 1, 3, the 99 item cap, help mmain 12 "Items", game mode 0x20000 |
+| 14 | **name entry** (settled 2026-10-28) | `FFX_NameInput_CommitName` writes the typed name, layout rows `rect_nmfwnd` / `pos_name` / `pos_kana*`, name_txt prompts, help mmain 14 "Name Entry", game mode 0x80000 |
+| 15, 16 | **PS2 save and load** | `/FFX_Data/GameData/PS3Data/saves/`, `.SAV`, `icon.sys`, `010906%02d.ico`. Same exec `sub_8B15D0` for both. 15 saves and 16 loads, by `g_ffxSaveLoadMenuIsSave` (2026-10-28) |
+| 17 | **battle results** (settled 2026-10-28) | `FFX_BtlResult_*`, opened 0x40010002 by `FFX_Btl_ReturnToField`, game mode 0x10000 |
 | 19 | **Sphere Grid** | see above |
 | 21 | **Overdrive mode** | main menu row 15, now proved by the row id. String `TK:SND:OVERDRIVE`, and its only save-block write is `FFX_Menu_SetCharRecordByte38`, record+0x38 per character. |
-| 22 | TK dev harness | `TK:Open Menu:%d`, game mode 0x800000 |
+| 22 | **scripted menu demo player** (corrected 2026-10-28, this said TK dev harness) | `TK:Open Menu:%d` is only its log line. Shipped scripts open it, game mode 0x800000 |
 
 **Nothing is unidentified any more.** The key that opened the last four is that a submenu's result
 code is the kernel string id of its own main menu row, string group 9 =
@@ -637,7 +653,7 @@ per-module determinism, RNG, clock, input and save-block audit of the last four.
 | the commit list | needs `FFX_SaveData_RecomputeAllCharDerived 0x786900`. Modules 1, 4 and 9 all call it on close, so the character record and ability mask buckets move on **every menu close** even with no player change. Worth knowing before reading a checksum difference as a desync. |
 | "reached exactly one RNG function by exactly one path" | the conclusion survives, the method does not. There is a second path into `FFX_Rand_Stream` through module 9's MODEL boot task, invisible to a direct-call walk because the callback is a function pointer. It is dead twice over: `push 0` at 0x7FEC53 against `cmp [ebp+arg_8],0` at 0x7B7210, and a `FFX_Btl_GetPhase() != 0` wrapping the branch. |
 | subtree sizes 58 / 21 / 11 | not reproducible as written, because the edge relation was not stated. A direct-call closure gives 370 / 1,432 / 244 / 189 when function pointers are followed and 38 / 31 / 14 / 32 when they are not. |
-| module 14 is FMV | probably **Name Entry**. Flagged from the row mapping alone, not asserted. |
+| module 14 is FMV | it is **Name Entry**. Flagged from the row mapping alone here, proved 2026-10-28 from the exec, the commit and the scripts, see the third pass. |
 
 One more, found while checking the Config screen for this correction: **module 10's
 `TOSwapInternationalEnvExec` path is dead code.** State 4 compares `dword_186A43C` against
@@ -773,3 +789,206 @@ The useful calls: `MenuSystemRunning`, `MenuScreenName`, `ModuleStepping`, `Modu
 One trap the typed layer handles and a hand-rolled reader would not: `g_ffxModuleTable`'s `.data`
 initialiser is **0xFFFFFFFF**, not 0. Entries are filled at runtime by `FFX_Module_Register`, so
 every table read has to reject 0 **and** -1 before dereferencing. `ModuleDescriptor` does.
+
+---
+
+# THIRD PASS 2026-10-28: modules 12 to 17 by screen, and rows 11 and 22
+
+Read through idalib on a scratch copy of the IDB, nothing saved. Script census with `tools/ebp.py dis`
+over all 397 events. Text decoded from `new_uspc/battle/kernel/*_txt.bin` with the kernel table layout
+on `FFX_KernelTable_GetRow`, a row's name at `dataOffset + stringOffset + row[0]`, ids masked to 12
+bits by `FFX_KernelString_Get`. Names proposed in `tools/apply_menu_module_names.py`, rehearsed with
+`--apply --comments` on the copy: 63 renamed, 0 skipped, 0 failed. [V] is read in the binary or the
+data, [I] is inferred.
+
+## How a module gets opened, the part every row below uses
+
+A menu mode is one dword. `FFX_MenuSys_RunFrame 0x8AB030` stores `mode & 0x3FFFFFFF` in
+`g_ffxModuleGameMode`, `FFX_MenuSys_StepFrame 0x8A9CA0` calls
+`FFX_Module_SwitchGameMode(mode & 0xFFFF0000, mode & 0xFFFF)`, and that maps the high half to a module
+and passes the low half as the start argument [V]:
+
+| game mode | module | start | argument |
+|-----------|--------|-------|----------|
+| 0x10000 | 17 | `Start(17, 0)` at 0x8AA8F2 | ignored by Start. The prepare hook gets the whole `g_ffxModuleGameMode` from `FFX_Module_Register` |
+| 0x20000 | 13 | `Start(13, arg)` at 0x8AA8BB | shop id |
+| 0x40000 | 12 | `Start(12, arg)` at 0x8AA908 | shop id |
+| 0x80000 | 14 | `Start(14, arg)` at 0x8AA9C2 | who to name |
+| 0x100000 | 16 | `Start(16, 0)` at 0x8AA9F9 | none |
+| 0x200000 | 15 | `Start(15, 0)` at 0x8AAA8F | none |
+| 0x400000 | 11 | `Start(11, arg)` | sa_menu mode |
+| 0x800000 | 22 | `Start(22, arg)` at 0x8AAA6E | demo index |
+
+12, 13, 14, 15 and 16 then call `FFX_Menu_BuildMainMenuRows(0, mode)`, whose single row modes put one
+mmain_txt id in the header: 12 -> 13 "Equipment", 13 -> 12 "Items", 14 -> 14 "Name Entry" (55
+"Password" when the argument is 0x20 or more), 15 -> 10 "Save", 16 -> 11 "Load". [V]
+
+Scripts open these through sg:29, `sgMenuInit 0xA78210`, which pops one int and passes it to
+`FFX_MenuSys_RequestOpen 0x821750` at 0xA78256 [V]. The census of all 1,007 sg:29 sites, by the value
+pushed in front of each:
+
+| mode | sites | events | module |
+|------|-------|--------|--------|
+| 0x4001xx00 | 38 | 30 | 17 |
+| 0x4002xxxx | 141 | 34 | 13 |
+| 0x4004xxxx | 112 | 30 | 12 |
+| 0x4008xxxx | 18 | 13 | 14 |
+| 0x40200000 | 634 | 104 | none, `RequestOpen` hands it to `FFX_SaveUi` |
+| 0x40400000 or 3 | 20 | 18 | 11 |
+| 0x408000xx | 31 | 18 | 22 |
+
+Only test20, test25 and testbattle ask for 0x40100000. `RequestOpen` turns 0x40100000 and 0x40200000
+into `FFX_SaveUi` whenever `FFX_SaveUi_IsIdle()` is non zero.
+
+The only `FFX_Module_Start` sites for ids 12 to 17 are the ones in `FFX_Module_SwitchGameMode`, plus
+`Start(15, 0)` at 0x8E24F6 in `FFX_Menu_StartSubmoduleByResult` case 10, which is dead because the
+main menu row mask never has bit 10. Each descriptor has exactly one data reference, its
+`FFX_Module_Register` push in the same function. [V]
+
+## Module 14 = Name Entry [V]
+
+1. Game mode 0x80000 registers `off_C5A0B0` as module 14 (push 0Eh at 0x8AA93D) and starts it at
+   0x8AA9C2 with the low half as its argument, unless the language is 11 and the scene is not 382,
+   in which case it calls `FFX_SaveData_ResetCharNamesToCurrentLanguage` instead. Language 11 is
+   never set on PC (`STEAM_ACHIEVEMENTS.md` 5.9).
+2. The init `FFX_Menu_InitModule14NameEntry 0x8C3390` (desc +0xC) tail jumps at 0x8C33CA to
+   `FFX_NameInput_Open 0x8C4250(0, who)`. For who 11 it first copies Shiva's default name (name_txt
+   id 17 through `word_C5A14C`) into her record.
+3. `FFX_NameInput_Open` builds a menu object with `FFX_NameInput_Step 0x8C3580` at +12 (the store is
+   at 0x8C42F0) and `FFX_NameInput_Draw 0x8C3D00` at +16, and sets `g_ffxNameInputChar 0x186A258` =
+   who (who > 17 becomes -1). The prompt comes from name_txt (group 10): 11 "Please enter name.", 78
+   the new aeon line for who >= 8 in game mode 0x80000, or 12 "Please enter password." for -1. It
+   seeds the buffer `g_ffxNameInputBuffer 0x186A280` with the current name, and
+   `FFX_NameInput_LoadLayout 0x8C5050` reads the layout rows `rect_nmfwnd`, `rect_nmnplt`,
+   `num_name1`, `num_name2`, `pos_name`, `pos_kanaa`, `pos_kanama`, `pos_kanaga` and `rect_nmline`.
+4. `FFX_NameInput_Step` is a 15 wide glyph grid and a command column (three page commands, then
+   name_txt 3 Confirm, 4 Delete, 5 Default). Start finishes, state 7 asks name_txt 8 "Proceed?" with
+   9 Yes and 10 No, state 5 calls `FFX_NameInput_CommitName 0x8C4E60` at 0x8C3B9E, and state 10 sets
+   the done flag at object +0x30, unless the character was a Magus sister and more are left, in
+   which case `FFX_NameInput_SwitchToChar 0x8C33F0` names the next one.
+5. `FFX_NameInput_CommitName` copies the buffer into `FFX_SaveData_GetCharName(who)`, or into save
+   +0xEC for -1, and unlocks the three naming trophies.
+6. Module 14's exec `0x8C3340` (a `loc_`, not a function) only tests the object's +0x30 and then
+   calls `FFX_Module_Suspend(14)`.
+7. The scripts. `0x4008000N` with N 8 to 17 from bsvr0001, klyt1100, djyt0800, mcyt0600, bvyt1200,
+   bjyt1200, nagi0600 and lmyt0100 (three sites, 15 to 17), one per aeon, N 0 from znkd1000 (two
+   sites), and 0x40080020 from hiku2100 and its psv copy. Character ids 8 to 17 are Valefor to Mindy,
+   checked against the default name table at `word_C5A0D8` (name_txt 14..23, 13 is Tidus). That the
+   events are the temples and the airship is [I] from the map names, the ids are [V]. sgMenuInit
+   itself refuses 0x4008000F to 0x40080011 when `sub_860A90()` is 0.
+
+The same object has a second host. The Items screen, state 17 of `FFX_Menu_ExecModule3Items`, calls
+`FFX_NameInput_Open(0, char)` at 0x8C5A3D for an item whose row +34 has bit 0x10 (`test byte ptr
+[ebx+22h], 10h` at 0x8C8A8D), and only item 101 "Rename Card" has that bit in item.bin. So renaming
+from the menu runs inside module 3, not module 14.
+
+## Module 12 = the equipment shop, module 13 = the item shop [V]
+
+| | module 12 `FFX_Menu_ExecModule12EquipShop 0x8D6E40` | module 13 `FFX_Menu_ExecModule13ItemShop 0x8D9600` |
+|---|---|---|
+| data, states 0..6 | kind 47 rows 0 `arms_rate`, 2 `arms_shop`, 4 `shop_arms` | kind 47 rows 1 `item_rate`, 3 `item_shop` |
+| shop id | init 0x8D7590 stores the arg in `g_ffxEquipShopId` | init 0x8D9AD0 stores it in `g_ffxItemShopId` |
+| stock | `arms_shop` row = shop id, entries into the `shop_arms` 22 byte equipment templates | `item_shop` row = shop id |
+| buy | `FFX_EquipShop_CanAfford`: price <= gil. The price is the `arms_rate` value of each auto-ability summed | `FFX_ItemShop_CanBuy 0x8DAB30`: `GetItemCount < 99` (`cmp eax, 63h` at 0x8DAB49) and the `item_rate` price <= gil |
+| refusals | mmain 25 / 26, then 49..51 and 40 "Equip?" after a buy | mmain 25 "You can't carry any more." / 26 "You don't have enough gil." |
+| sell | state 32: `FFX_SaveData_RemoveEquipEntry` + `SpendGil(-price)`, mmain 52..54 when the piece is equipped or cannot be sold | through `sub_8D9BD0` / `sub_8D9E20` |
+| close | `FFX_Module_Suspend(12)` in state 36 | `FFX_Module_Suspend(13)` in state 32 |
+
+Both shop ids run 0..46 in the scripts, and `arms_shop.bin` and `item_shop.bin` both have exactly 47
+rows. Events open both shops back to back with the same id (nagi0000 0x4004001D then 0x4002001D),
+which reads like a "weapons or items" shopkeeper choice [I].
+
+## Modules 15 and 16 = the PS2 save and load screens [V]
+
+`FFX_SaveLoadMenu_StepModule 0x8B15D0` is the exec of both. Module 15's init 0x8B3510 sets
+`g_ffxSaveLoadMenuIsSave 0x186628A` = 1 (`mov byte_186628A, 1` at 0x8B3556), module 16's init 0x8B3580
+sets 0 at 0x8B35C6. State 36 sets the help line save_txt 4 "Select save area." when it is 1 and 31
+"Select file to load." when it is 0, state 37 serialises the block with `FFX_SaveFile_Serialize` only
+when it is 1, and state 113 suspends 15 and restarts module 1, or suspends 16.
+
+Reachability on PC [V]: every start site is listed above. Game modes 0x200000 and 0x100000 only come
+from 0x40200000 and 0x40100000, and `FFX_MenuSys_RequestOpen` turns those into `FFX_SaveUi` (the Iggy
+save screen) whenever `FFX_SaveUi_IsIdle()` returns non zero. Only a request made while the PC save
+UI is busy falls through to `g_ffxMenuRequestedMode` and could reach these modules. That answers
+`SAVE_FILE.md` 10.
+
+## Module 17 = the battle results screen [V]
+
+The descriptor `off_C59524` is `FFX_BtlResult_StepStateMachine`, `FFX_BtlResult_DrawAndClose` and, at
++8, `FFX_BtlResult_Init 0x8BDB70`. That last one is the PREPARE slot, not init (desc +0xC is 0), so it
+runs from `FFX_Module_Register` with `g_ffxModuleGameMode`, and its `sub_8BDEB0` reads the low byte:
+
+- 2: state 0, the battle results. `FFX_Btl_ReturnToField` pushes 0x40010002 at 0x8613C6.
+- 1: state 29. core:347 (0x85AF9F) and core:423 (0x857F24) push 0x10001, no 0x40000000 bit. What
+  state 29 shows is not traced, it sits next to the equipment full flow (`BATTLE_START_AND_END.md`
+  4.5) [I].
+- anything else: `dword_1326B4C = mode & 0xFFFFFF00` and state 1. The 38 script sites
+  (0x40010100, 0x40011100 ...) land here. Their maps are boss fight maps by name [I].
+
+The text is btlend_txt (group 4), for example id 19 "No AP earned." in the prepare hook. The commits
+are in `BATTLE_START_AND_END.md` 4.5.
+
+## Row 22 was wrong: it is a scripted menu demo player, and shipped scripts use it [V mechanism, I purpose]
+
+`FFX_Menu_ExecModule22ScriptedDemo 0x8DB4E0` (was `FFX_MenuTest_ExecTK`) reads row
+`g_ffxMenuDemoIndex 0x1871528` (the init 0x8DB7A0 stores the start argument there) of
+`g_ffxMenuDemoTable 0xC5A868`, 7 rows of {module, script argument, rom kind, rom entry}:
+
+| index | module | kind / entry |
+|-------|--------|--------------|
+| 0 | 7 Aeons | 42 / 4 |
+| 1 | 19 Sphere Grid | 42 / 5 |
+| 2 | 19 Sphere Grid | 42 / 6 |
+| 3 | 9 Customize | 42 / 7 |
+| 4 | 7 Aeons | 42 / 8 |
+| 5 | 7 Aeons | 42 / 9 |
+| 6 | 21 Overdrive | 42 / 10 |
+
+State 0 turns the ATEL virtual pad on, state 3 saves the real block and loads the row's canned save,
+state 4 installs it (`memcpy` from +64, 0x68C0 bytes), state 5 starts a thread in ATEL context 6
+(`FFX_MenuSys_StartAtelMenuThread 0x8BE370`) and `FFX_Module_Start(module, 0)`, state 6 waits for the
+module's bit to clear, and state 10 turns the pad off and copies the real save back. `TK:Open Menu:%d`
+is only its log line.
+
+Scripts open it in 18 events: index 1 twice in cdsp0000, 3 in guad0000, 4 in genk0000 and lmyt0100,
+5 in nagi0000 and lmyt0100, and `0x40800000 | core:506()` in 12 field maps plus dbg_nagi0000 and
+test22. core:506 returns `g_ffxSaveLoadMenuResult`, the result the sa_menu hands back when it closes,
+and in all 13 of those outside test22 the module 22 open directly follows a `core:525` then sg:29 0x40400003. So the
+chain is a list in sa_menu mode 3, then the demo the player picked. That the demos are the menu
+tutorials (the Sphere Grid one on the Al Bhed ship, cdsp0000) is [I], the mechanism is [V].
+
+This also changes the co-op picture a little: module 22 replaces the whole save block for the length
+of a demo and restores it afterwards, and it turns the virtual pad on, so the menu ignores the real
+pad on that machine while a demo runs.
+
+## Row 11 was wrong to say save: it is the sa_menu, and what it shows depends on the mode [I]
+
+The data driven sa_menu module (`ATEL_MOVIE_SAVE_LIBRARIES.md` 5.1) is opened as 0x40400003 by 13
+non-test events, always after `core:525` sets save word +0xEA, and in all of them but zooo0000 right
+before the module 22 open above, as 0x40400000 or two script variables by nagi0700 (the Monster Arena), and as 0x40400004 by
+test20. The PC save is 0x40200000 to `FFX_SaveUi`, so nothing here is a save screen. Which menu file
+each sa_menu mode loads is still open, and the title screen comment on `FFX_MenuSys_RequestOpen`
+says its Config option uses 0x40400004 while `ATEL_MOVIE_SAVE_LIBRARIES.md` 5.1 says mode 4 is the HDD
+install menu. One of the two is wrong and I did not settle which.
+
+## A correction outside the menu: name record +19 means "still the default", not "renamed" [V]
+
+`FFX_NameInput_CommitName` stores `FFX_NameInput_IsDefaultName(who)` at record +19 (`mov [esi+13h],
+al` at 0x8C4E85). That function returns 1 only when the typed buffer equals the character's default
+name_txt name. `FFX_InitNewSaveData` writes 1 to every record's +19 (`mov byte ptr [ecx], 1` at
+0x786D86) next to copying the default names, and `FFX_SaveData_ReencodeCharNames` overwrites a name
+with the running language's default (`byte_23110A0`) whenever +19 is non zero. So +19 = 1 is "the
+name is the default, re-localise it" and 0 is "the player typed something else". `GAME_STATE.md`,
+`CHEAT_SAVEDATA.md` and the IDB comments on `FFX_SaveData_GetCharName` and
+`FFX_SaveData_ReencodeCharNames` had it the other way round, and `CHEAT_SAVEDATA.md` told a name
+writer to set it to 1, which makes the next save load reset the name.
+
+## Still open
+
+- What sa_menu mode 3 lists, and the mode 4 conflict above.
+- What module 17's state 29 shows for the treasure handout.
+- Why Shiva (character 11) alone gets her default name rewritten, by module 14's init and by
+  `FFX_NameInput_CommitDefaultShivaName 0x8C5370` from the reload and re-encode paths.
+- The kit still carries the old labels: `MenuModuleId` in `loader\workshop\include\ffx\MenuSystem.h`
+  and `kModuleNames` in `MenuSystem.cpp` call 12 and 13 "shop", 14 "movie", 17 "sound", 22 "dev test
+  harness", and have 3 and 7 the wrong way round. Not changed here, builds are paused.

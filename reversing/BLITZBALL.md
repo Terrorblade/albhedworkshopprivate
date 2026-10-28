@@ -119,11 +119,15 @@ library bases out of `g_ffxAtelSysFuncLibs 0xF28558` at sixteen bytes per entry,
 over-scanning 1,024 entries per library so the collected set is a superset of the real tables. That
 is 2,242 distinct handler functions.
 
-The intersection is exactly **one** function: `FFX_AtelSys_Movie_136_start 0x36F850`, which gets
-there through the FMV path. A Movie:136 syscall encodes as the three bytes `B5 88 B0` (syscallf) or
-`D8 88 B0` (syscall), and neither sequence occurs anywhere in `bltz0000`'s 4,647,336 bytes of
-bytecode or `bltz0002`'s 4,642,912 bytes. Blitzball does issue other Movie-library calls (functions
-0, 1, 10 and 11, which look like the open, play, stop and poll set) but never 136.
+The intersection came out as exactly one function, 0x36F850, and it is not a syscall handler.
+Movie has 16 rows, and the over-scan ran on into the sa_menu pointer table that follows it, so
+0x36F850 is `FFX_SaMenu_Draw`, sa_menu code that no script can call (corrected 2026-10-26,
+`ATEL_MOVIE_SAVE_LIBRARIES.md` 1.3 and 5). The walk also missed something. movie:0, movie:9 and movie:10
+do reach `GetTickCount`, through the start of the video decode thread (`ATEL_MOVIE_SAVE_LIBRARIES.md`
+1.6). Blitzball issues Movie functions 0, 1, 10 and 11 (start, wait for the stop, start and wait for
+the first frame, wait for the end or a skip), so it does touch that path. It is the decoder's own
+pacing, nothing a Movie row returns is computed from it, and the waits finishing on a per machine
+step is `FMV_SYNC.md`'s problem, not the match simulation's.
 
 One more time source that could have bitten and does not. `g_ffxAtelScriptSpeedScale 0xF26BD8` is a
 script speed multiplier, but its only two touchers are now named
@@ -492,7 +496,7 @@ All RVAs. Add 0x400000 for the IDA VA. These are the ones I would promote.
 | 0x842628 | 7 Btl | battle |
 | 0x85DC90 | 8 MapFx | map effects, second heaviest Blitzball user |
 | 0x85D8C0 | 9 Test | |
-| 0x840E30 | 11 Movie | FMV, the only clock-tainted handler lives here |
+| 0x840E30 | 11 Movie | FMV, 16 rows. movie:0, 9 and 10 reach `GetTickCount` through the decode thread start |
 | 0x852DD8 | 12 Save | |
 | 0x885EB0 | 13 | name not recovered |
 
@@ -600,7 +604,7 @@ noise.
 | 0x230C60 | function | `FFX_Input__getTimeSeconds`, **correct address**, nine input-layer callers |
 | 0x230C40 | function | `FFX_Input__clearThreadedSampleQueues`, the adjacent function the old notes meant |
 | 0x2FD80 | function | `Phyre_Time_NowSeconds` |
-| 0x36F850 | function | `FFX_AtelSys_Movie_136_start`, the only clock-reaching ATEL syscall handler, unused by Blitzball |
+| 0x36F850 | function | `FFX_SaMenu_Draw`, sa_menu code past the Movie table, not a Movie syscall. It reaches a clock through the FMV path and no script can call it |
 | 0x491B80 | function | `FFX_BtlOd_LuluFuryStickMinigame`, Lulu's Fury, two clock reads, **not Blitzball** |
 | 0xF3C930 | u32 | `g_ffxThreadedPadMode`, a Lulu Fury thing, **not Blitzball** |
 
@@ -669,7 +673,7 @@ ruled it out.
 
 **5. That the byte scan found every syscall site.** The three-byte pattern scan is a necessary
 condition for a syscall with a two-byte operand, and I validated it against `ebp.py`'s real
-disassembler for several specific pairs. But "zero occurrences of Movie:136" assumes Blitzball cannot
+disassembler for several specific pairs. But "zero occurrences of a pair" assumes Blitzball cannot
 reach a syscall by a computed operand. The VM's dispatch takes the operand from the instruction
 stream, not from a register, so I believe this is airtight. If ATEL has an indirect syscall form I
 did not find, the clock claim weakens.

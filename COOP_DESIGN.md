@@ -506,8 +506,18 @@ design:
 - **The open question, and it is a real one: the DLLs are handed the catch-up flag.** Table slot 936
   is `g_ffxIsCatchUpStep 0xEFB7D0` and slot 764 is `g_ffxMainStepCounter 0x1FCBBF0`, and **all 581
   DLLs copy both into globals of their own at init.** So a magic DLL could skip work on a catch-up
-  step exactly the way the engine's own render path does. I found none that branches on either, and a
-  byte scan over 581 stripped binaries cannot show that none does.
+  step exactly the way the engine's own render path does. Corrected 2026-10-27
+  (`reversing/EFFECT_OVERLAY.md`): 4 DLLs read the catch-up flag (0515, 0611, 0667, 0668) and 20 read
+  the absolute step counter. 0515's read only gates draw bookkeeping, the other three are unread, and
+  the step counter reads matter for a late join or a transplant.
+- **The effect engine itself writes simulation state** (`reversing/YONISHI_ENGINE.md`). The effect
+  state byte the battle waits on moves on Oef2 op 192 (4 to 5) and op 127 or op 1 (5 to 6), and hits
+  land on op 34, which draws `FFX_Rand_Stream`. Op 72 sets a character's position through
+  `FFX_Ch_SetPos` from the integrated effect object position (0x819171 into sub_81B2B0, which calls
+  `FFX_Ch_SetPos` at 0x81B2EA off battle), and ops 18 to 23 can feed `g_ffxEffectRandState` draws into
+  that position. So the "cosmetic" effect RNG must stay in lockstep as well. Whether any shipped script
+  uses op 72 that way is unchecked. The effects pass gates (`g_ffxEffectsPassEnabled`, the movie screen
+  mode and the script effects-pass-off flag) are lockstep state for the same reason.
 
 What is settled: all three `FFX_Magic_CallOverlayStep` call sites are inside `FFX_MainStep` and driven
 by `FFX_Player__getSubStepCount()`, not by presented frames. The two `g_ffxIsCatchUpStepRender` tests
@@ -659,6 +669,206 @@ The real problems:
   and Anima effect DLLs draw the battle LCG by different amounts for the full and short entrance,
   so peers must agree on option bit 0x800 and on each aeon's first summon bit, and the release
   needs the same host ordered wait as H1.
+  The Core script library census (`reversing/ATEL_CORE_LIBRARY.md` section 5) added five more.
+  `FFX_Treasure_GiveReward 0x799420` rewrites a chest row from item 0x2065 to 0x2060 when the
+  language is 11, so core:347, 423 and 439 hand out a different item by language, and peers must
+  agree on the language or the host must pick it. core:595 returns a per machine master version
+  test to 38 script packages. core:0 WaitFrames counts FMV decoder frames during certain movies,
+  and turns a 10 into a 40 for magic 656 (both checked in IDA). core:213 PrepareVoice and core:258
+  LoadBgm hold while `g_ffxPendingSteps > 1`, so a peer that is catching up finishes them on a later
+  step. And core:169 Rand16 on stream 2 is 98 percent battle field scripts, so stream 2 has to be in
+  the battle hash and not only the field one.
+  The Ch library (`reversing/ATEL_CH_LIBRARY.md` section 5) draws no RNG stream, but ch:118 and
+  ch:126 (16,838 calls) turn on a head sway that `FFX_Ch_UpdateBlink` drives with CRT rand() inside
+  the render job `FFX_Ch_UpdateRenderJob 0x833530` on Phyre worker threads, and ch:124 aims a head at
+  the LOCAL camera eye. Both are presentation until ch:38, 54 or 55 copy a bone or joint world
+  position into a script variable (11, 12 and 5 calls), at which point they are simulation. A port
+  has to keep those readbacks off the swayed pose or replicate the sway. ch:104 waits on every
+  pending ROM read from any subsystem, and ch:123 leaves an uninitialised stack word in
+  m_lookAtTarget[3], so a CHR hash must skip that word.
+  The Came library (`reversing/ATEL_CAME_LIBRARY.md` section 5) matters most for a per player camera.
+  came:128 returns `FFX_Rand_Stream(14 + (which & 1))`, and battle scripts and monster AI use the draw
+  to pick a camera variant, which changes which waits run, so streams 14 and 15 must agree. Camera
+  shake draws stream 9, the same stream `FFX_Btl_ApplyPendingEffects` draws, and screen shake steps
+  once per ActivateScreen call, so a peer with an extra screen enabled shifts battle's stream 9. The
+  camera waits (came:26, 56) include the damper moved flag, and scripts start a move from the current
+  camera (came:3, came:2, move, came:26), so a damped move out of a per player follow camera ends the
+  wait on a different step per peer. Any per player camera needs the scripted camera, its shake and its
+  waits run identically on every peer, and only the presented view may differ.
+  The Btl library (`reversing/ATEL_BTL_LIBRARY.md` section 5) has the one battle hazard that breaks the
+  "battle replicates the action" rule. The polls of btl:67 and btl:169 (1,131 calls) end on
+  `sub_8B8530 0x8B8530`, which is message text phase 3 AND the LOCAL held confirm bit 0x200000 in
+  `g_ffxMenuPadHeldTrig`. A battle script resumes on the step the local player presses confirm, and
+  the action relay does not carry that press, so the press has to be relayed as a host ordered command.
+  btl:222 returns 0 while the booster battle fast forward is on, else save option bit 9, and every
+  voiced battle line branches on it (830 calls), so the booster speed is simulation visible in battle.
+  `FFX_Btl_PayKillRewards` tests language 11 at 0x799213 and 0x799317, so any scripted kill (btl:14, 24,
+  158, 171) also needs the language to agree. Two single slot globals are never reset, not even at
+  battle begin: `word_1136410` (btl:250, it turns btl:243 and 251 from a stream 18 draw into a compare)
+  and `dword_11363BC` (btl:100, it remaps selector 5 for btl:272 and 273). Both belong in the world
+  hash and in a join. Battle scripts draw streams 4, 5, 7, 17 and 18 directly.
+  The small libraries (`reversing/ATEL_MISC_LIBRARIES.md`) add one interpretation frame hazard. sg:63 and
+  sg:64 (397 calls) latch the camera yaw into `g_ffxPlayerCamYaw 0x130079C` through
+  `FFX_Player__setHeadingOffsetDeg 0x82D950`, and `FFX_Player__stepControl` turns the stick into a
+  heading with it. With a per player camera the same relayed stick gives a different heading on each
+  peer unless the yaw used for a body's heading is the owner's and travels with the input. sys:28
+  stores an absolute address in the ATEL context debug array, so a state hash must skip ctx+0xA4 to
+  ctx+0x1E3, which nothing reads. The Sys rows hand CRT sin, cos, atan and sqrt results to scripts, so
+  the recreation must match those bit for bit.
+  The Movie library (`reversing/ATEL_MOVIE_SAVE_LIBRARIES.md`) has a hole in the FMV barrier. movie:3
+  GetMovieFrame (219 calls in 23 packages, mostly `while movie:3 < N wait` loops) returns frames
+  consumed from the decode queue times the frame period, and a step only consumes a frame when one
+  is queued, so those loops end on a per machine step. The FMV_SYNC barrier hooks only the polls of
+  movie:1, 9, 10 and 11, so it does not cover them. movie:9 and 10 wait for the FIRST frame shown,
+  not the end, after a 30 frame prebuffer. movie:0 with flag 0x2000 (30 of 165 calls) stops the movie
+  ending on its own, and those packages lean on the movie:3 loops. In Save, save:47 (29 calls in 11
+  maps) compares a threshold against the camera height every frame and writes the result into save
+  +40, so a per player camera makes it differ. No retail Save row touches a memory card or a file.
+  The event layer (`reversing/EVENT_LAYER.md`) is step safe once it runs. A map change loads the next
+  package from `FFX_Atel_StepOnce` with blocking reads, which costs wall clock but never a step. Two
+  things to carry. The title's first load runs on a JobWorker thread from `FFX_MainInit`, so the
+  recreation has to run it on the step thread before step 0. And `g_ffxEvBuiltinMsgTable` is written
+  only when a localized .bin exists, so on a map without one it keeps pointing into the previous,
+  freed package. The message tables and font follow `FFX_GetLanguage`, so peers agree on the language
+  or text is presentation only.
+  Voice lines (`reversing/VOICE_TIMING.md`) are the biggest field timing hazard left. In pacing mode 0,
+  which is almost every line, core:216 and core:217 hold the script until the FMOD thread clears the
+  voice busy flag, and it does that on a wall clock once the line's length in ms has passed. So the
+  step a line ends on depends on the machine, the voice language (a different bank, a different
+  length), a missing file and pauses. btl:103, 104 and 169 read the same flag in battle. The fix is the
+  recreation's: at the core:214 result store doneStep = startStep + L, with L from the SyncVoice row or a
+  per language length table, and have the session agree on one voice language. core:215 is the Circle
+  press voice skip, local and port 0, so it has to be a host ordered command. For the mod today, the
+  kit's `RequestCatchUpSteps` refuses in pacing mode 1, because a forced pending step count skips
+  the timing track load.
+  The rest of the sound layer (`reversing/SOUND_CLASSES.md` section 14) has four more answers that
+  FMOD's clock decides and the script reads. core:443 IsBgmPlaying loops on WaitFrames(1) until the
+  music's playing flag drops (djyt0100, djyt0200, mihn0100, mihn0200), and a peer on the PS2
+  soundtrack has different track lengths. The battle MUSIC boot task waits on command 20, the one
+  cross-thread sync command, in front of every battle. core:403 and core:416 ask whether a sound is
+  playing, and a start made during fast forward or a pause overlay is dropped, so they read 0 on a
+  boosted peer. `FFX_Bgm_Load` spins the step thread while a voice line is busy, which adds no step but
+  can trip a hang watchdog. The booster speeds up no audio at all, so a voice line holds the same
+  wall time and more steps on a boosted peer. Drive the booster from the host. The recreation turns
+  each of these into a step countdown or a host ordered event, and keeps volume, pan, mute and pause
+  presentation only. The banks themselves (`reversing/SOUND_FORMATS.md`) differ by language and
+  soundtrack: 16 shared SE ids have different lengths across US and JP and 168 exist in one language
+  only, voice resolves 65 US and 53 JP ids to nothing, and the PS2 and arranged music lengths differ by
+  minutes (track 16 is 102,661 ms against 201,906). So the session agrees on voice language and
+  soundtrack, or every FMOD-clock answer above becomes a step countdown first.
+  Magic effects (`reversing/EFFECT_OVERLAY.md`) are simulation, not presentation. The DLL's slot 3
+  and slot 4 run on the step and move the effect state byte that `FFX_Btl_FinishActions` waits on,
+  so the DLL decides the step its action's damage lands. 137 DLLs draw from the shared battle RNG
+  inside effect code, slot 7 is an ATEL script, and slot 3 waits on a texture upload queue that drains
+  0x100000 bytes per effects pass. The biggest hazard is the start step, which follows the async DLL
+  load on a wall clock (`reversing/ASYNC_LOAD_REQUESTS.md` H3/H4). Lockstep must gate the effect start
+  on both peers having the DLL, and slot 4 must never be skipped on catch-up.
+  The textures make that gate wider (`reversing/MAGIC_ASSETS.md`). In load modes 2 and 3, which is
+  every id except 348, 350, 622..628, 631 and 635, the effect does not start until every TexList row
+  has loaded on the worker, so the start step also follows disk speed. The gate has to cover the DLL
+  and the textures, with the host publishing the step the effect starts on. Textures are found by
+  their PS2 TEX0 at draw time and a miss just skips the prim, so a peer missing a texture desyncs
+  nothing, but a TexList row missing from both directories would hang a mode 2 cast on one machine.
+  Movies (`reversing/MOVIE_DECODE.md`) are step-paced once the first frame is up: one frame consumed
+  per step, the queue waits rather than drops, and the decoder has no clock of its own. With the
+  movie:9 barrier both peers unpause on the same step, so movie:3, the movie camera and the movie:11
+  end test agree. What still differs per machine is a local pause (focus loss, the Esc menu, the
+  cutscene pause overlay), the render-thread upload for videos 46, 72, 32 and looping movies (the
+  frame index the step reads lags by the queued render jobs, and those movies drive
+  `ApplyMovieCamera`), the local skip, and a missing file, which no caller can see. movie:10 shows no
+  movie on PC at all, the same on both peers. The FMV_SYNC reasoning that a failed open shows up
+  only on one machine was built on the inverted reading of `FFX_Fmv_StartVideo` and is corrected.
+  Saves (`reversing/SAVE_FILE.md`): the autosave writes `ffx_000` in place from
+  `FFX_Atel_PullActorPosFromChr` at 0x869F59 on every checkpoint, so on a joiner it silently
+  overwrites their own autosave with the host's world. The mod has to suppress
+  `FFX_SaveFile_RunAutosave 0x647E10` on clients. A save scan stalls the step (200 CreateFileW probes
+  plus header reads) on each peer's own disk. Saving only touches the staging copy, so the live block
+  and the Tail hash region are unchanged by it. A file's block differs from the live one at +0x2A, at
+  +0xA8 and +0xAA in a manual save, and at +0x64B4 (the CRC, 0 in live memory after a load), so a
+  transplant picks one source for every peer and zeroes +0x64B4 when the source is a file. Loading a
+  save from another language resets every character name to the running language on the next step.
+  The block itself is now fully mapped (`reversing/SAVE_BLOCK_MAP.md`, the field table in
+  `tools/saveblock_fields.py`) and holds no pointers, so it can be hashed and shipped as plain bytes.
+  Some of it still differs between peers by design. The guide map bitmaps at +0x350C..+0x3D0C are set
+  every step from the local player's position, so with two bodies they diverge on the first step
+  someone walks somewhere else. +0x28/+0x29 follow the local camera height, +0xBC is wall clock
+  playtime, +0x3D0C holds option bits and name byte 18 the rename language. The desync hash has to
+  leave these out or the host has to publish them, and the explored bitmaps want a decision: the
+  host's, or the union of every peer's. `reversing/RCBG.md` adds a second reason they differ: the
+  only writer, `FFX_GuideMap_MarkExplored`, is called from the guide map draw while the minimap's
+  alpha is non zero, and that alpha fades on option flag 0x40. Two peers with different minimap
+  settings mark different bits from the same position, so the option has to come from the host or
+  the bitmaps have to stay out of the hash.
+  rcBg itself is step side. `FFX_RcBg_Step` runs every sub-step with no catch-up gate, and the
+  section 0 scene camera overrides the camera matrix the stick direction is read against, so both
+  peers must run it identically, which lockstep already gives. Its one `rand` is a scene shake with
+  a random range, CRT `rand` on the step thread.
+  Map particles (`reversing/MAP_PARTICLES.md`) step on the step thread every sub-step, catch-up
+  included, but how many random draws they make follows the camera: group 0 records pause when
+  frustum culled, and rain drops respawn when they leave a cube around the camera. With two bodies
+  each peer's camera follows its own player, so the effect RNG state diverges. Worse, `pppRandFV` and
+  `pppRandIV` reseed CRT `srand` from that state on the step thread, and THREADS R5 says the
+  simulation reads that CRT stream. Whether R5's reader reaches hashed state is still open. If it
+  does, either the particle step must run against a camera both peers agree on, or the reseed has to
+  be isolated from the stream the simulation reads.
+  Achievements (`reversing/STEAM_ACHIEVEMENTS.md`) unlock on each machine's own Steam account from
+  that machine's simulation, so a joiner earns the boss kills, steal counts and scenario milestones of
+  the host's world. That is probably what players want, but it is a choice to make on purpose. Rows
+  16, 18 and 21 fire from the message draw pass, which catch-up steps skip, so a peer that caught up
+  can miss one the other got. None of this touches simulation state: an unlock writes only the
+  achievement client's own table, never the save block.
+  International content (`reversing/INTERNATIONAL_CONTENT.md`): the env switch is a constant, so
+  peers cannot differ there. What they can differ in is the launch. A peer started through the
+  launcher's side story button has `_ECalm` as argv[1] and boots event 393 instead of 23, so the
+  session refuses an `_ECalm` peer. core:595 gives a JP or Asia master different wait counts from a
+  western one, so a session needs one master version. The sphere grid choice is a core:315 answer
+  inside the title script and has to be the host's relayed input. Option bit 16 of +0x3D0C flips on
+  load and on return to title but nothing reads it, so the block hash leaves it out.
+  Menu module 22 (`reversing/MENU_SYSTEM.md` third pass) is a scripted menu demo player that loads a
+  canned save from asset kind 42 over the live save block, drives a menu with the virtual pad, then
+  restores the real save. 31 script sites in 18 events open it. While a demo runs the block hash
+  sees a different world, so the session has to treat a demo as a window where it neither hashes nor
+  transplants, and both peers must enter and leave it on the same step.
+  The overdrive minigames (`reversing/MENU_SCRIPT.md`): Auron's, Lulu's and Tidus's state machines
+  wait on battle_script.bin HUD scenes. Those advance inside `FFX_MainStep`, but only on a step that
+  is not a catch-up step (`FFX_MesWin_DrawAllWindows` is skipped at 0x821533,
+  `reversing/MENU_DRAW_PATH.md` 12). Which steps are catch-up depends on each machine's wall clock
+  and booster, so a peer that falls behind reaches the minigame's next state on a different step
+  even with identical input. Since battle
+  replicates the action rather than the input, the safe shape is that the owning peer plays the
+  minigame and ships its result as part of the action, and the other peer never runs the timing.
+  The battle menu itself (`reversing/BATTLE_MENU.md`) is mostly local, but it writes the simulation
+  in a few places that the action record does not carry. The target page fires battle event 25
+  every time the target changes and turns the actor to face it, cancel fires event 132, Select
+  toggles save option bit 0x400, `g_ffxItemInUse` is read by the item count, and the open mask feeds
+  the Turbo gate in `FFX_Time_ScaleDtForBooster`. With one peer browsing the menu, the other
+  machine sees none of that, so each needs a decision: replicate it, or make it local and keep it
+  out of the hash. The page procs also sit behind 0.45 s and 0.30 s wall clock lockouts, which is
+  harmless only because the menu result travels as a committed command.
+  rcFlex (`reversing/RCFLEX.md`) needs nothing. It is a mass and spring sim used once, the cable in
+  the `slik02` battle. It runs on the step thread off its own per-call clock, and its one `rand` sits
+  behind wind, which that instance has off, so both peers produce the same cable from the same steps.
+  The same pass found the MapFx group flag 0x10 documented backwards. Setting it suspends a placed
+  effect group, so the indoor latch and `mapfx:13` start and stop effects the way the code says, not
+  the way the old notes did. It is step side state either way, driven from save +41 and scripts.
+  The Al Bhed primer import (`reversing/MINIGAMES_PROGRESSION.md`) reads primer masks out of other
+  save files on that machine's disk (`core:453`, `core:565` and the `FFX_MainStep` scan block at
+  0x820C2D) and stages them in globals outside the save block, so the block hash cannot see the
+  difference until `FFX_AlBhed_CommitStagedPrimerGrants` writes it. In a session it has to run on the
+  host only with the grant relayed, or be disabled. The primer mask itself is simulation visible
+  (`core:270` branches on it), so a joiner's stray import is a real desync.
+  The sphere grid works on a copy of the board in menu work and commits it with MenuToSave 0xA5BB70
+  at every activation, at frame 20 of a node kind change and at quit, so `SpendSphereLevels` is not
+  the only commit point the menu note below lists. A hash taken mid grid sees half finished state,
+  and a kind change spends the sphere 20 frames before the node changes, so hash at commits. The
+  stat cache `EquipStatBonus 0x1135E00` sits outside the block and must be rebuilt after a
+  transplant, which CommitLoad already does through RecomputeDerived.
+  A spawned body's model is a joiner's pick, and 29 of the ids the engine lists corrupt its heap when
+  loaded (`reversing/CHRDATA.md` section 9.1): c051 and 28 skl skeletons sit on the 24 byte mesh
+  stride, and `FFX_Ch_RelocateModelSection` still adds the load address to +24 and +28 of every
+  entry, megabytes outside the file. Nothing shipped loads them, so only a picker can. Both
+  `SwapPlayerModel` and `CloneSpawner` refuse them through `ffx::ModelCorruptsHeap`, and any new path
+  that loads a model by id from the network has to do the same.
 
 **Blitzball is NOT on this list any more, and the old entry was wrong in every part.** It claimed
 nine wall-clock sites through `FFX_Input__getTimeSeconds 0x630C40`. That address is
@@ -1305,6 +1515,24 @@ key, the change goes out as a request, the host orders it, and both apply it on 
 host picked. Between the press and the answer the local globals are held back to the agreed
 values, because for the encounter rate specifically those few steps in flight are enough to
 draw from a stream the other machine does not.
+
+What `reversing/BOOSTERS.md` (2026-10-27) adds to this:
+
+- **The Esc menu's Change Parameters page is not synced at all, and it is permanent.** Get all
+  items, Unlock all skills and MAX gil each write the save block the moment they are confirmed, on
+  the machine that pressed them only. Unlock all skills (`FFX_SaveData_GrantAllAbilities 0x7848B0`)
+  also reads ply_save.bin from disk and rebuilds the command lists when used mid battle, and the
+  page is allowed in battle. These have to become host-ordered commands like the toggles, or be
+  refused on clients.
+- **The engine turns Auto Battle off by itself**, inside the battle step and per frame. BoosterSync
+  reads that as a local change and holds the agreed value until the host answers. Both peers do the
+  same, so they stay in step, but Auto Battle stays on where the engine wanted it off, and toast
+  893 can repeat. This is read from BoosterSync.cpp, not seen running.
+- **btl:222 latches per frame, not per step** (`FFX_GameTick`), so even with an agreed speed index
+  it can differ around a battle start.
+- Hide HUD is local and fine to leave per player. Time Stop and Free Camera are bound to key 0 and
+  cannot fire, but a mod that binds Time Stop gets a local pause that stalls every peer through the
+  lockstep gate.
 
 ## Landing a joiner beside the host, and why it is not a position sync
 

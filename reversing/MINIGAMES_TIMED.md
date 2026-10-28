@@ -45,9 +45,9 @@ Five things matter more than the rest.
    step index or every minigame clock in the game runs at a different rate on each machine. This is
    the single shared quantity the whole area depends on. `CUTSCENE.md` says "one step per simulation
    step", which is the wrong granularity.
-3. **I censused every blocking script op in the game.** 2,020 handler slots across the 11 live
-   syscall tables, of which 211 have a non-null `poll`, which is the definition of a timer or a
-   wait. Exactly one of those 211 can reach a wall clock, `core:600`, and it reaches it through
+3. **I censused every blocking script op in the game.** 1,557 handler slots across the 11 live
+   syscall tables, of which 95 have a non-null `poll`, which is the definition of a timer or a
+   wait. Exactly one of those 95 can reach a wall clock, `core:600`, and it reaches it through
    dlmalloc's one-shot heap cookie, and no shipped package uses it. Details in section 1.4.
 4. **Live minigame timers are NOT in the save block.** They are ATEL class 6 (the loaded `.ebp`
    image) or class 3 (the actor pool). A desync hash that covers only the 26,816 bytes at
@@ -150,7 +150,10 @@ by hand in that one overlay.
 
 `byte_133C913` is the media layer's busy-or-absent flag. It is initialised to 0xFF in `.data` and
 written by the disc and stream code (`libmscd`, `sceCdRead`, `sub_76D200`, `sub_76E1C0`,
-`movie_str`), by `movie:143` and `movie:145`, by `hdd_install_check`, by the cutscene text engine
+`movie_str`), by two sa_menu functions (`FFX_SaMenu_DetectHddInstallMode 0x3792E0` and
+`FFX_SaMenu_SetMovieStreamFromHdd 0x373C60`, which an earlier pass took for `movie:143` and `movie:145`.
+They are menu code past the end of the Movie table that no script can reach,
+`ATEL_MOVIE_SAVE_LIBRARIES.md` section 5), by `hdd_install_check`, by the cutscene text engine
 `tklib__f88D710`, and by `FFX_SaveFile_CommitLoad`. So `core:465` means "wait N sub-steps unless the
 media layer says do not bother".
 
@@ -173,10 +176,15 @@ I walked all 11 live syscall tables straight out of `.rdata`, using the record c
 | 7 | btl | 0x842628 | 235 | 25 |
 | 8 | mapfx | 0x85DC90 | 108 | 3 |
 | 9 | test | 0x85D8C0 | 1 | 0 |
-| 11 | movie | 0x840E30 | 145 | 123 |
+| 11 | movie | 0x840E30 | 16 | 7 |
 | 12 | save | 0x852DD8 | 94 | 1 |
 | 13 | abmap | 0x885EB0 | 1 | 0 |
-| | **total** | | **1,584 records, 2,020 handler slots** | **211** |
+| | **total** | | **1,455 records, 1,557 handler slots** | **95** |
+
+Corrected 2026-10-26: the first walk took 145 records for Movie. Movie has 16
+(`ATEL_MOVIE_SAVE_LIBRARIES.md` 1.3), and records 16 and up were the sa_menu pointer table that follows
+it, which contributed 129 records, 463 handler slots and 116 blocking polls that no script can reach.
+The totals here and below have those taken out.
 
 The library names are `tools/ebp.py`'s `LIB_NAMES`, which I checked against the handler names
 already in the IDB and against the two leaked symbols in those tables (`sgMenuExec` at `sg:29` poll
@@ -190,24 +198,29 @@ Then I built the complete reverse-reachability closure from every wall-clock see
 17 seeds in all. BFS up the call graph:
 
 - **631 of 49,128 functions in `FFX.exe` can reach a wall clock at all.** 1.3 percent.
-- **25 of the 2,020 ATEL handler slots are in that set.**
-- **Exactly 1 of the 211 blocking ops is**, `core:600`, and it is spurious: the path runs
+- **24 of the 1,557 ATEL handler slots are in that set.**
+- **Exactly 1 of the 95 blocking ops is**, `core:600`, and it is spurious: the path runs
   `core:600 -> sub_8B0340 -> sub_782050 -> sub_782090 -> FFX_Btl_SetupFieldPointers ->
   maybe_FFX_Atel_ReleaseAllActorChrs -> FFX_Ch_Dispose -> FFX_Chr_FreeClonedClassCharacter ->
   sub_6EBEE0 -> sub_6EB3E0 -> sub_6EA050 -> GetTickCount`, which is dlmalloc `init_mparams`
   computing its heap magic cookie once at startup. And `core:600` is used by zero of the 397 shipped
   packages.
 
-Of the other 24 dirty slots, 20 are the same allocator artefact, reached through the actor model
+Of the other 23 dirty slots, 20 are the same allocator artefact, reached through the actor model
 load and dispose paths or through the save-file ops (`core:1`, `core:2`, `core:5`, `core:6`,
 `core:7`, `core:308`, `core:413`, `core:515`, `sg:30`..`sg:33`, `ch:61`, `ch:62`, `btl:164`,
-`movie:9`, `save:3`, `save:25`, `save:36`, `save:49`). The four that are real:
+`movie:9`, `save:3`, `save:25`, `save:36`, `save:49`). The ones that are real:
 
 - `core:573` resi, which reaches `FFX_Rand_SeedValueFromSystemClock 0x398950`. Only `test20` and
   `testbattle` call it, 3 times between them. See point 5 of the summary.
-- The `movie:0`, `movie:10` and `movie:136` start handlers, which reach the video decode thread's
+- The `movie:0` and `movie:10` start handlers, which reach the video decode thread's
   `GetTickCount` through `FFX_Fmv_SetFullscreenMode 0x2427C0`. That is FMV, and it is
-  `FMV_SYNC.md`'s problem, not a minigame timer. See 9.4 for which of my packages touch it.
+  `FMV_SYNC.md`'s problem, not a minigame timer. See 9.4 for which of my packages touch it. The
+  `movie:9` getter, counted with the artefacts above, is real as well. It reaches the same clock
+  through `FFX_Fmv_SetFullscreenMode(0)` (`ATEL_MOVIE_SAVE_LIBRARIES.md` 1.6).
+
+The first walk also listed a `movie:136` start handler here. That is `FFX_SaMenu_Draw 0x36F850`,
+sa_menu code past the end of the Movie table, not a Movie syscall, and no script can reach it.
 
 **No field minigame in FFX reads a wall clock, and that is a census rather than a sample.**
 
@@ -302,7 +315,7 @@ mask.
 | Chocobo race | `nagi0000` var104/105/106 = tenths/seconds/minutes, u8 | 6 | `.ebp` image at atel offsets 0xB0/0xB1/0xB2 |
 | Chocobo race | var147 finish flag, u8 | 6 | atel 0xDF |
 | Butterflies | `mcfr0100` var50/var51, s32 | 3 | actor pool at 0x0/0x4 |
-| Butterflies | var57 gauge, u8 | 3 | actor pool at 0x16 |
+| Butterflies | var57, u8, NOT a gauge. It is the fade level of the Celestial Mirror upgrade, see 5.2 | 3 | actor pool at 0x16 |
 | Jecht Shot | `swin0000` var48 loop budget, s32 | 6 | atel 0x1C |
 | Jecht Shot | var29 score, u8 | 6 | atel 0x2 |
 | Lightning | `kami0000` var23 dodge window, u8 | 6 | atel 0x7 |
@@ -552,6 +565,13 @@ Actor 38 entry 9 is 44,436 bytes of bytecode, by far the largest entry in the pa
 at or above 89, but I did not trace enough of the 44 KB body to prove it. It does not change the
 co-op verdict: it is a plain integer moved by script with no clock anywhere near it.
 
+**Correction 2026-10-28 (`MINIGAMES_PROGRESSION.md` 4.5 and 4.6): this entry is not the butterfly
+game.** Actor 38 entry 9 is the Celestial Mirror upgrade at the Macalania spring. The `var57 >= 89`
+test is a loop: `sg:9(0, 0, 0, var57); var57 -= 1; WaitFrames(1)` while `var57 >= 89`, a 40-frame
+fade before the `core:315` menu. The 28 `+= 3` and `-= 3` sites are a fade out and a fade back in,
+one pair in each of the 14 per-character blocks (7 live, 7 dead copies). var57 is a fade level and
+counts nothing. Where the hunt keeps its catch count is still open.
+
 ### 5.3 `core:246`, the heaviest op in the package
 
 434 calls, the most of any package in the game. It waits for an actor's task queue to drain, not for
@@ -572,6 +592,15 @@ expressed as a long branch chain in script.
 
 So the butterfly result lands in `GAME_STATE.md`'s **equipment slot table**, not in ScriptWork. That
 is a region the mod almost certainly already syncs for other reasons.
+
+**Correction 2026-10-28 (`MINIGAMES_PROGRESSION.md` 4.3 to 4.5): the paragraphs above are wrong
+about the reward.** The 266 `core:533` calls are the Celestial weapon upgrades, crest (row 1) and
+sigil (row 2) for each character, written into that character's celestial weapon. Most of the 266
+are dead copies from a macro expansion. The butterfly reward is the Saturn Sigil, key item `0xA02B`,
+treasure 277, given at `mcfr0100` actor 27 entry 2 and `mcfr0200` actor 17 entry 2. The equipment
+mechanism described above is right, it just belongs to the upgrade, not to the hunt. The package
+also does use class-0 bytes from the shared prelude: var2 (`+0xC39`), var3 (`+0xC6C`) and var4
+(`+0xC6D`) are the found, crest and sigil bits.
 
 ### 5.5 Verdict
 
@@ -842,12 +871,21 @@ function the battle menu page lockout calls, so the kit's existing `AppElapsedHo
 The IDB note on that function used to say it was the Blitzball setup with nine wall-clock reads
 through `FFX_Input__getTimeSeconds 0x630C40`. All three claims are wrong and all three had already
 propagated into `MAIN_LOOP.md` and `COOP_DESIGN.md`. The correction is in the IDB function comment
-with the local evidence (the `blulu` / `blulu2` / `bgoodl` sound cues, the quadrant codes 4..7 from
+with the local evidence (the `blulu` / `blulu2` / `bgoodl` strings, the quadrant codes 4..7 from
 `FFX_Pad__readAnalogByte(0,0,0/1)` with 0x60 and 0xA0 thresholds, the ring at `byte_133D721`, the
 run-of-five match against `0x07060504` and `0x04050607`, the 16-cap at `byte_133D71F`). I am
 confident about the two clock sites and the two rotation constants, because I read them in the
 disassembly. **I am calling the "it is Lulu's Fury specifically" attribution probable rather than
 proven**, because the only naming evidence is the sound-cue strings.
+
+Correction, 2026-10-28: those strings are not sound cues. They are HUD scene names in
+`battle_script.bin` (`MENU_SCRIPT.md`), started and polled through `FFX_MenuScene_Start` and
+`FFX_MenuScene_IsDone` with slot 2. `blulu` is a 47 track animation in the battle HUD script, which
+makes the Lulu attribution a little stronger, not weaker.
+
+Note 2026-10-28: those scenes advance in `FFX_BtlMenu_DrawRoot`, which runs once per non-catch-up
+step and not at all on a catch-up step (MENU_DRAW_PATH.md 12). So a phase that waits on one lasts
+a number of steps that depends on the catch-up pattern.
 
 `FFX_BtlMenu_Step`'s own widget array at `0xF3C950` (stride 240, 8 slots) carries a `startTime` at
 `+0xDC` and an `elapsed` at `+0xE0` that are wall-clock seconds, so the battle menu is a different
@@ -918,7 +956,7 @@ RVA = IDA VA minus 0x400000. Types: `fn` function, `glob` global, `tbl` table, `
 | 0x842628 | tbl | ATEL lib 7 `came` | 235 |
 | 0x85DC90 | tbl | ATEL lib 8 `mapfx` | 108 |
 | 0x85D8C0 | tbl | ATEL lib 9 | 1 |
-| 0x840E30 | tbl | ATEL lib 11 `movie` | 145 |
+| 0x840E30 | tbl | ATEL lib 11 `movie` | 16 |
 | 0x852DD8 | tbl | ATEL lib 12 `sys` | 94 |
 | 0x885EB0 | tbl | ATEL lib 13 | 1 |
 
@@ -1009,7 +1047,7 @@ RVA = IDA VA minus 0x400000. Types: `fn` function, `glob` global, `tbl` table, `
 
 | RVA | Type | Name | Note |
 |---|---|---|---|
-| 0x45D170 | fn | `FFX_AtelSys_Core_533_resi` | `core:533`, grant equipment with fixed abilities. 266 calls in `mcfr0100` actor 38 entry 9 |
+| 0x45D170 | fn | `FFX_AtelSys_Core_533_resi` | `core:533`, write a fixed ability row into a celestial weapon. 266 calls in `mcfr0100` actor 38 entry 9, which is the Celestial Mirror upgrade, not the butterfly hunt (corrected 2026-10-28, `MINIGAMES_PROGRESSION.md`) |
 | 0x4C3170 | fn | `FFX_Equip_SetAbilitySlotsFromTable` | writes four u16 at equip record `+0x0E`..`+0x15` |
 | 0x386900 | fn | `FFX_SaveData_RecomputeAllCharDerived` | called after each grant |
 | 0x886D00 | tbl | the eighteen 8-byte ability-row tables | IDA `off_C86D00` .. `off_C86E10`, RVA 0x886D00 .. 0x886E10, 0x10 apart |
@@ -1100,10 +1138,12 @@ Ranked, most likely wrong first.
    entry 9 far enough to prove that reading, and the message text says "catch seven of the blue
    butterflies", which does not obviously reduce to any of those numbers. If someone needs the
    butterfly win condition exactly, start at `mcfr0100` actor 38 entry 9 offset `0x7D7E` and follow
-   every `var57` site. **The co-op verdict does not depend on this.**
+   every `var57` site. **The co-op verdict does not depend on this.** Settled 2026-10-28 and it was
+   wrong: var57 is a fade level in the Celestial Mirror upgrade, and entry 9 is not the hunt at all.
+   `MINIGAMES_PROGRESSION.md` 4.6.
 2. **The Lulu's Fury attribution in 9.5.** The clock reads and the rotation constants are read out of
-   the disassembly and I stand behind them. The "it is Lulu specifically" claim rests on the sound
-   cue strings `blulu`, `blulu2`, `bgoodl`, which is good circumstantial evidence and not proof. If
+   the disassembly and I stand behind them. The "it is Lulu specifically" claim rests on the HUD
+   scene names `blulu`, `blulu2`, `bgoodl` (not sound cues, see 9.5), which is good circumstantial evidence and not proof. If
    it turns out to be a different character's overdrive, the wall-clock finding is unaffected.
 3. **Whether the Cactuar hunt's "back is turned" check reads the single-slot player position
    cache.** `INTERACTION_PATH.md` section 3.2 and `RANDOM_ENCOUNTER.md` section 3 are both about a

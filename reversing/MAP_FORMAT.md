@@ -281,7 +281,9 @@ geometry.
 - **23 one-way adjacency links across 15 maps.** Mutual adjacency holds everywhere else. These are
   probably authoring noise, all in large meshes, but could be deliberate one-way doors.
 - **7 maps have sections but no walkmesh** (`nagi05_b`, `omeg00_a`, `omeg01_a`, `sfia00_a`, `genk07`,
-  `test11`, `titl01`). Several of those names look like test or title screens.
+  `test11`, `titl01`). Several of those names look like test or title screens. Corrected 2026-10-27:
+  the first four are battle maps that `btl.bin` battles really use (rows 43, 52, 53, 57). They run
+  with no walkmesh at all, see `BTLMAP_FORMAT.md` 5.
 
 ## Correction 2026-10-13
 
@@ -304,9 +306,28 @@ against all 491 shipped containers with `tools/mapfile.py census`.
 - **"FFX_Map_LoadMapAsync ... the normal path".** It has one caller, `FFX_Btl_StepSubPhase`, and
   loads asset group 26, the battle maps. Field maps load from asset group 19 through `sub_908630`
   (the "MAPREG" task `sub_861650`), `sub_908600` (back from battle) and `sub_9085D0` (sync).
+  (2026-10-27: `sub_908600` is not the way back. It runs at battle start for a battle staged on a
+  field map, see the correction below.)
 - **Sections 11 and 12 as "background render data".** Both go through `rcbgMain`, but section 11 is
   the guide map (minimap) model, a stream of `YNGM` chunks, and section 12 is the particle textures
   for section 10, a stream of `YNFT` chunks. Only section 0 is the pre-rendered background.
 
 `tools/mapfile.py`'s `MAP1_SECTION_ROLES` still prints the old section 1 magic and the old section 10
 description in the `sections` output. It is left unchanged because another port reads that output.
+
+## Correction 2026-10-27
+
+Found while writing `BTLMAP_FORMAT.md` (Project Zanarkand 1.11.13). Checked against all 469 shipped
+walkmesh sections and in the binary.
+
+- **The vertex count "or is 8 short".** When `0x20 + 8 * vertexCount` is 8 short of the triangle
+  offset, the 8 bytes between are the ASCII string `DEWPRISM`, in 178 of the 469 walkmeshes. No code
+  reads them. It is an exporter stamp, not a ninth vertex and not alignment.
+- **Where the group records sit.** In all 469 the group records start right after the last
+  triangle (`+0x1C` points there) and end the section exactly. Nothing follows them.
+- **`sub_908600` "back from battle".** Its one caller is `FFX_Btl_StepSubPhase` case 8, at battle
+  start, when the btl.bin map id has no 0x400 bit, so the battle background is a field map from
+  group 19. The return to the field goes through the MAPREG task (`sub_908630`).
+- **The no-walkmesh maps are not all test screens.** `nagi05_b`, `omeg00_a`, `omeg01_a` and
+  `sfia00_a` are live battle maps. `FFX_Map_UnloadMapOut` clears the active walkmesh before every
+  load, so a battle on one of them has no ground and every unit's ground height is 0.

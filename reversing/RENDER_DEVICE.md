@@ -17,7 +17,7 @@ instance, not a pointer. The fields this note uses:
 | +0x78 | the `DXGI_SWAP_CHAIN_DESC` the chain was created from, kept and updated on resize |
 | +0xB4 | the `D3D_FEATURE_LEVEL` the device came up at |
 | +0x131C | the vsync byte, see section 4 |
-| +0x1320 | pointer to the window record (`hwnd` at +0, msaa count at +4, a byte at +9) |
+| +0x1320 | pointer to the window record `g_phyreWindowRecord 0xCCA310` (`hwnd` at +0, the constant 1 at +4, the fullscreen byte `app+0x298` at +8, the vsync byte `app+0x288` at +9). Corrected 2026-10-27, +4 was called the msaa count, see `COMMAND_LINE.md` section 6 |
 | +0x1334, +0x1338 | current back buffer width and height |
 | +0x133C | `IDXGIFactory*`, from `GetParent` on the swap chain |
 
@@ -27,8 +27,12 @@ instance, not a pointer. The fields this note uses:
 the clear colour and depth defaults by the look of them), takes `GetClientRect` of the window and
 calls `FFX_Phyre_CreateDeviceAndSwapChain 0x595800`, the only caller of
 `D3D11CreateDeviceAndSwapChain` in the binary. Arguments: width and height from the client rect,
-the msaa count from the window record, the constant 1 for the windowed flag, the byte at +9 of
-the record, and the hwnd.
+the window record's +4 as the sample count, the constant 1 for the windowed flag, the byte at +9 of
+the record, and the hwnd. Corrected 2026-10-27: record +4 is not the msaa setting, it is the
+constant 1 that `Phyre__PApplication__createWindowAndInit` writes at 0x629ADF and 0x629B17, so the
+swap chain is always single sampled. The msaa setting (`app+0x284`, from `settings+56` or `-msaa=`)
+is read by the render target builder `sub_693D70` instead. The byte at +9 is `app+0x288` and
+becomes the initial vsync byte, see section 4.
 
 The function first probes with `D3D11CreateDevice(nullptr, HARDWARE, ..., SDK 7)` with no
 requested levels and returns 9 (failure) when the device creation fails or the level is below
@@ -42,7 +46,7 @@ forced off. It then fills the swap chain desc at +0x78 in place:
 | BufferDesc.RefreshRate | 60 / 1 |
 | BufferDesc.Format | 28, `DXGI_FORMAT_R8G8B8A8_UNORM` |
 | ScanlineOrdering, Scaling | 0, 0 |
-| SampleDesc.Count | the msaa setting, 0 becomes 1 and 16 and above become 16 |
+| SampleDesc.Count | the sample count argument, 0 becomes 1 and 16 and above become 16. The caller always passes 1 |
 | SampleDesc.Quality | 0 |
 | BufferUsage | 32, `DXGI_USAGE_RENDER_TARGET_OUTPUT` |
 | BufferCount | 1 |
@@ -88,13 +92,21 @@ only runs when a resize, msaa, gamma, resolution or vsync dirty byte is set (cor
 
 ## 4. The vsync chain, now complete
 
-MAIN_LOOP.md section 7 left this half proven. The whole chain is: the settings menu or the
-`-vsync=` argument writes `g_ffxGameSettings[40]`, which sets the dirty flag `app+0x18`,
-`Phyre__PApplication__frameTick 0x627940` calls `Phyre_RenderD3D11_SetVsync 0x58E170 (setting != 0)`
-(or 0 while `app+0x1C` is set), the setter stores one byte at renderer+0x131C, and
-`Phyre_RenderD3D11_Present` turns it into the `Present` sync interval, 1 or 0. The renderer
-constructor `sub_583580` zeroes the byte, so the game starts unsynced until the first frame
-services the flag.
+MAIN_LOOP.md section 7 left this half proven. The whole chain is: the settings menu writes
+`g_ffxGameSettings[40]` and sets the dirty flag `app+0x18` (`FFX_EscMenu_CommitVideoSettings`,
+0x6FF353), `Phyre__PApplication__frameTick 0x627940` calls `Phyre_RenderD3D11_SetVsync 0x58E170
+(setting != 0)` (or 0 while `app+0x1C` is set), the setter stores one byte at renderer+0x131C, and
+`Phyre_RenderD3D11_Present` turns it into the `Present` sync interval, 1 or 0.
+
+Corrected 2026-10-27 (`COMMAND_LINE.md`). This section used to say the `-vsync=` argument writes
+`g_ffxGameSettings[40]` and that the game starts unsynced until the first frame services the flag.
+Both were wrong. The renderer constructor `sub_583580` does zero the byte, but device creation then
+sets it: `FFX_Phyre_CreateDeviceAndSwapChain` stores its seventh argument, the window record's
+byte +9, into renderer+0x131C at 0x595AE6 (Hex-Rays drops that argument from the decompile, the
+disassembly shows the store). That byte is `app+0x288`, which `WinMain` sets to
+`settings[40] != 0` and `-vsync=N` then overrides with `N != 1`. So the boot interval is the ini's
+VSync, or the argument, and `-vsync=0` means on while `-vsync=1` means off. `SetVsync` is only
+reached again when the menu sets `app+0x18` (or `app+0x1D`, for which no setter was found).
 
 ## 5. Resize, two entry points
 

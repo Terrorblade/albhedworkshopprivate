@@ -128,6 +128,11 @@ the same question as "a cutscene is running".
 
 ## 2. Pacing mode 1, which was the project's biggest open determinism question
 
+`VOICE_TIMING.md` (2026-10-26) checks this section line by line, extends it to the voice syscalls and
+corrects three things: the syncdata path's `%s` is the constant "PS3", not a language, a forced
+`g_ffxPendingSteps` skips `LoadTimingTrack` (2.4), and `g_ffxTimingTrackTolerance` is really the
+current entry's recorded step length in ms, now `g_ffxTimingTrackStepDurationMs`.
+
 ### 2.1 Every writer of `g_ffxPacingMode 0x12FB8A0`
 
 There are exactly two, and both are in the same function.
@@ -163,13 +168,13 @@ void FFX_StepPacing_LoadTimingTrack(void)
 {
     int step88 = 0;
     if (FFX_SyncData_ReadNextTimingEntry(&g_ffxTimingTrackNextTime,
-                                        &g_ffxTimingTrackTolerance,
+                                        &g_ffxTimingTrackStepDurationMs,
                                         &step88) == 999) {
         g_ffxTimingTrackDueTime   = 0.0f;
         g_ffxTimingTrackElapsed   = 0.0f;
         g_ffxTimingTrackNextTime  = 0.0f;
         g_ffxPacingMode           = 0;              // <- back to the accumulator
-        g_ffxTimingTrackTolerance = 0.0f;
+        g_ffxTimingTrackStepDurationMs = 0.0f;
         g_ffxTimingTrackFirstStep = 1;
         g_ffxTimingTrackStartUs   = 0;
         g_ffxCatchUpExtraSteps    = 0;
@@ -178,7 +183,7 @@ void FFX_StepPacing_LoadTimingTrack(void)
         g_ffxPacingMode = 1;                         // <- the wall clock path
         g_ffxTimingTrackStepTicks[g_ffxCatchUpExtraSteps] = step88 << 7;
         g_ffxTimingTrackNextTime  *= 1000.0;
-        g_ffxTimingTrackTolerance *= 1000.0;
+        g_ffxTimingTrackStepDurationMs *= 1000.0;
     }
 }
 ```
@@ -252,14 +257,14 @@ if (g_ffxTimingTrackFirstStep == 1) {
     g_ffxTimingTrackElapsed = (float)(now - g_ffxTimingTrackStartUs) / 1000.0f;
     if (g_ffxTimingTrackDueTime <= g_ffxTimingTrackElapsed) {
         // BEHIND: take extra steps until the track catches up
-        while (g_ffxTimingTrackTolerance < Elapsed - DueTime && g_ffxPacingMode == 1) {
+        while (g_ffxTimingTrackStepDurationMs < Elapsed - DueTime && g_ffxPacingMode == 1) {
             ++g_ffxPendingSteps;
             ++g_ffxCatchUpExtraSteps;
             g_ffxTimingTrackDueTime = g_ffxTimingTrackNextTime;
             FFX_StepPacing_LoadTimingTrack();        // consume another entry
         }
     } else if (DueTime - Elapsed >= 0.1f) {
-        // AHEAD by 100 ms or more: BUSY-WAIT in a for(i=0;i<10000;++i) spin
+        // AHEAD by 0.1 ms or more (both sides are ms): BUSY-WAIT in a for(i=0;i<10000;++i) spin
         do { spin 10000; re-read the clock; } while (DueTime - Elapsed >= 0.1f);
     }
     g_ffxTimingTrackDueTime = g_ffxTimingTrackNextTime;
@@ -275,7 +280,9 @@ if (g_ffxPacingMode == 1)
 ```
 
 `g_ffxTimingTrackStepTicks 0x12FB828` is `DWORD[30]`, filled one entry per catch-up step from the
-`step88 << 7` field of the file. `FFX_Mot_AdvanceFrame` scales motion playback by
+`step88 << 7` field of the file. The store has no bound and index 30 is `g_ffxPacingMode 0x12FB8A0`,
+so a 30th extra entry overwrites the mode with `ticks << 7` and ends the catch-up there
+(VOICE_TIMING.md section 2). `FFX_Mot_AdvanceFrame` scales motion playback by
 `g_ffxStepScale88`, so in mode 1 **the amount of animation each simulation step advances comes out of
 the file, not out of the clock**.
 
@@ -757,7 +764,7 @@ slot and not its start, Movie:10 sets it from its start **and only on success**,
 | --- | --- | --- |
 | `FFX_Frame_GetSuspendState 0x6411E0` | `int (void)` | **NOT an FMV read**, see 7.2. 2 means a user suspend overlay is up. Lazily builds the 0x340-byte object at `g_ffxFmvState 0xCCC830`, returns 2 if either byte at `+0x338` or `+0x33C` is set, else the state dword at `+0`. The detail here was always right, the meaning on top of it was not. |
 | `FFX_Fmv_IsPlaying 0x641CF0` | `int (void)` | `g_ffxFmvPlayerManager + 1744`, set to 1 when a player is created |
-| `FFX_Fmv_IsDecoderBusy 0x641CE0` | `int (void)` | any decode slot still active, or the manager's queue not drained |
+| `FFX_Fmv_IsStartPending 0x641CE0` | `int (void)` | any decode slot still active, or the manager's queue not drained |
 | `FFX_Fmv_PlaybackComplete` | `u8` | `g_ffxFmvPlayerManager + 1764`. **The field Movie:9 and Movie:10 actually wait on**, and the one the old table was missing. |
 | `g_ffxFmvScriptRunning 0x112A008` | `int` | the ATEL script's own view |
 | `g_ffxFmvScriptBlocking 0x112A00C` | `int` | one dword past the above. Set by Movie:10's start and only on success, cleared by `FFX_Fmv_AbortForSceneChange 0x76ECE0`, and the Movie:10 wait's first test |
@@ -790,17 +797,20 @@ side.
 
 ### 8.1 One handle per class per screen
 
-Every one of the 66 `FFX_AtelSys_Came_*` syscalls that needs a camera handle goes through
+Every camera syscall that needs a handle goes through this function, which has 66 call sites: 51 in
+the handlers, 13 in helper bodies several handlers share, one in `FFX_Atel_BindActorCameraHandle`
+(core:2) and one in `SG_DebugWin_SplineEditorProc` (ATEL_CAME_LIBRARY.md, 2026-10-26). The first
+argument is the owner id and the third is the screen.
 
 ```c
-int FFX_Came_GetHandleForClass(int screenArg, int kind, unsigned slot)   // 0x7BA780
+int FFX_Came_GetHandleForClass(int ownerId, int kind, unsigned screen)   // 0x7BA780
 {
-    if (slot > 2) return 0;
+    if (screen > 2) return 0;
     switch (kind) {
-      case 0: if (!g_ffxCameEventHandles[slot])  g_ffxCameEventHandles[slot]  = FFX_Came_OpenHandle(screenArg, slot, 3); return g_ffxCameEventHandles[slot];
-      case 1: if (!g_ffxCameMapHandles[slot])    g_ffxCameMapHandles[slot]    = FFX_Came_OpenHandle(screenArg, slot, 1); return g_ffxCameMapHandles[slot];
-      case 2: if (!g_ffxCameBattleHandles[slot]) g_ffxCameBattleHandles[slot] = FFX_Came_OpenHandle(screenArg, slot, 5); return g_ffxCameBattleHandles[slot];
-      case 3: if (!g_ffxCameViewerHandles[slot]) g_ffxCameViewerHandles[slot] = FFX_Came_OpenHandle(screenArg, slot, 7); return g_ffxCameViewerHandles[slot];
+      case 0: if (!g_ffxCameEventHandles[screen])  g_ffxCameEventHandles[screen]  = FFX_Came_OpenHandle(ownerId, screen, 3); return g_ffxCameEventHandles[screen];
+      case 1: if (!g_ffxCameMapHandles[screen])    g_ffxCameMapHandles[screen]    = FFX_Came_OpenHandle(ownerId, screen, 1); return g_ffxCameMapHandles[screen];
+      case 2: if (!g_ffxCameBattleHandles[screen]) g_ffxCameBattleHandles[screen] = FFX_Came_OpenHandle(ownerId, screen, 5); return g_ffxCameBattleHandles[screen];
+      case 3: if (!g_ffxCameViewerHandles[screen]) g_ffxCameViewerHandles[screen] = FFX_Came_OpenHandle(ownerId, screen, 7); return g_ffxCameViewerHandles[screen];
     }
     return 0;
 }
@@ -875,7 +885,8 @@ The busy-wait in mode 1. It spins `for (i = 0; i < 10000; ++i)` with the clock r
 spins, and it does that **inside `FFX_StepPacing`, inside `FFX_MainStep`, inside `animate`**. A
 lockstep gate living in animate runs before it, so the gate is fine. But a gate living in the
 `FFX_MainStep` detour runs **after** `FFX_StepPacing` has already spun, so a machine that is ahead of
-its timing track will burn up to 100 ms spinning before the gate even gets asked. Use the animate
+its timing track spins until it is within 0.1 ms of the due time, which can be the whole length of
+the previous entry, before the gate even gets asked. Use the animate
 hook during a cutscene, not the narrow `FFX_MainStep` gate.
 
 ---

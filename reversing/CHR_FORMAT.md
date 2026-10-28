@@ -4,6 +4,10 @@ The PS2-era character file, shipped intact in `FFX_Data.vbf`. Reader: `../tools/
 Recovered from `FFX_Ch_RelocateChrBlob 0x8256F0`, which walks the whole header, and validated by
 parsing **all 865 `.chr` files with zero errors**.
 
+**Read `CHRDATA.md` section 10 alongside this.** It corrects five things here (2026-10-26): the relocation
+also walks sections 0, 1 and 4 and zeroes green and red colour keys, section 4 is the motreltab table and
+file relative, the section 9 floats go through fld/fstp, and the bone point kind return values.
+
 ## Where they live
 
 ```
@@ -62,8 +66,10 @@ sizes from an older build. Ignore them.
 
 The 865 `.wd` files are **sound wave dictionaries** under `ffx_ps2/ffx/proj/sound/`. None are under
 `chr/`. The 865-to-865 count match with `.chr` is a coincidence, and I initially misread it as a
-pairing. Same for `.ply`, `.rsd`, `.ma2`, `.omd`, `.an2` and `.anm`, which all live under
-`ffx_ps2/ffx/yonishi_data/` effect directories.
+pairing. Same for `.ply`, `.rsd`, `.ma2`, `.omd`, `.an2` and `.anm`. The first three live only
+under `ffx_ps2/ffx/yonishi_data/` effect directories and are dead tool sources (`RCDATA.md`). The
+other three are there too, but 7 `.omd`, 103 `.an2` and 13 `.anm` sit under
+`ffx_ps2/ffx/eiichi_abmap_data/` (the sphere grid tree) instead.
 
 ## Layout
 
@@ -135,6 +141,10 @@ Offsets are relative to the **section** base, because that is what the relocator
 | `0x2C` u16 | collision volume count, 96 bytes each | 0 | confirmed |
 
 Mesh stride is `rev >= 4884 || rev < 2097 ? 40 : 24` (`FFX_Ch_MeshEntryAt 0x828BE0`).
+A 24 byte entry has no `+0x18` count or `+0x1C` table, yet `FFX_Ch_RelocateModelSection` reads both
+from every mesh whatever the stride, so on those revisions the original relocates garbage and writes
+outside the blob. 34 shipped files are affected and none is reachable on a shipped path. See
+`CHRDATA.md` section 9.1.
 
 The bind-pose record is `s16[10]`: parent index, rotation in degrees x100, translation / 1000, scale
 / 4096. All of that comes from the conversion arithmetic in
@@ -185,3 +195,10 @@ dereferences the mesh table entries past offset 24. Checking that directly would
 Three `skl` stubs (`k201`, `k303`, `k403`) declare a section 9 shorter than the game reads, and only
 get away with it because `FFX_Ch_RomRead` over-allocates the blob buffer by rounding up to
 `((size + 143) & ~0x7F) - 16`. `chrfile.py verify` flags them.
+
+The game always reads 56 bytes of section 9, and 70 from block revision 5668. A shorter block followed
+directly by section 0 makes it read section 0's relocated header: 9 files (`m177`, `m999`, `f128`,
+`c999`, `k301`, `k502`, `k998`, `k999`, `_w064`) copy section 0's load address into `CHRDATA +0x4C`,
+and the 28 and 32 byte ones into `+0x38 m_modelScale` too. The many 56 byte blocks of revision 5649 and
+5665 that sit 64 bytes before section 0 are fine, since the tail is never read. `CHRDATA.md` section
+9.1 has the evidence.

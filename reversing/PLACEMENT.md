@@ -77,6 +77,13 @@ This is the whole recipe. Each step is justified in the sections below.
    VA `0x866800` / RVA `0x466800` calls `FFX_Ch_SetPos(chr, x, y - 0.1f, z)`, lifting the character
    0.1 world units clear of the stated Y so it does not start inside the floor.
 
+   The lift is the caller's to apply. `FFX_Atel_SetActorPos` itself hands Y to `FFX_Ch_SetPos`
+   unchanged (the call at `0x870BBB`). The only `- 0.1` is the `fsub ds:dbl_B921F0` at `0x8668C6`
+   inside `FFX_Atel_PushActorPosToChr`, and that path skips it when the actor's attach id at +0xA8
+   is CHR id `0x20E5` (not the actor id, `cmp [esi+0A8h], ax` at `0x86684F`) on the level whose
+   name hash is 7382 while the story counter is `0x5BE..0x5CD`. (Checked against the binary
+   2026-10-27 for the Project Zanarkand port of this sequence.)
+
 7. **Set the facing, both halves of it.**
    ```
    FFX_Ch_SetRotAndMoveDir(chr, yaw);   // VA 0x82B1B0, RVA 0x42B1B0
@@ -372,7 +379,7 @@ actor steppers intersect that segment against their own geometry:
 | `FFX_Atel_StepLineTrigger` | `0x8684B0` | `0x4684B0` |
 | `FFX_Atel_StepBoxTrigger` | `0x866CC0` | `0x466CC0` |
 | `FFX_Atel_StepVolumeTrigger` | `0x867C10` | `0x467C10` |
-| `FFX_Atel_StepPathTriggerLink` | `0x8680A0` | `0x4680A0` |
+| `FFX_Atel_TestCrossingForTarget` | `0x8680A0` | `0x4680A0` |
 
 All four read both `ctx+0x218` and `ctx+0x228`. `StepLineTrigger` is the clearest:
 
@@ -466,9 +473,11 @@ it `0x80000000`. Corrected.)
 ## 7. Rotation
 
 `FFX_Ch_SetRot` VA `0x82B520` / RVA `0x42B520` writes `m_rotY` (`CHR+0x158`) and validates the angle
-with `sub_6EF2D0`. On failure it writes `0.0` and prints
-`"VIRTUOS WARNING: got invalid rotation from atelscript in Ch_SetRot()!!"`. Do not hand it a NaN out
-of a network packet.
+with `sub_6EF2D0` (proposed name `FFX_Math_IsFiniteFloat`), which fails on `_isnan` or on
+`!_finite`, so a NaN and both infinities are refused. On failure it writes `0.0` and prints
+`"VIRTUOS WARNING: got invalid rotation from atelscript in Ch_SetRot()!!"`. Do not hand it a NaN or
+an infinity out of a network packet. `FFX_Ch_SetRotAndMoveDir` writes `m_moveDir` from the raw
+argument, so a bad angle still lands there even though `m_rotY` gets `0.0`.
 
 **`m_rotY` alone is not enough.** `m_flags1` bit `0x400` makes `FFX_Ch_AutoLocomotionAnim`
 VA `0x835BB0` / RVA `0x435BB0` (ground, `m_locomotionMode == 0`) and `FFX_Ch_AutoSwimAnim`

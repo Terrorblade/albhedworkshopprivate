@@ -33,9 +33,9 @@ problems, none of which is the one the old note describes, and two of which are 
 
 And the thing that matters more than any single minigame:
 
-**Every battle menu page in the game has a wall-clock input lockout.** `FFX_BtlMenu_Step 0x49AE20`
+**Almost every battle menu page has a wall-clock input lockout.** `FFX_BtlMenu_Step 0x49AE20`
 stamps a page's `startTime` at record+0xDC from `FFX_Time_AppElapsedSeconds`, computes
-`elapsed` at record+0xE0 every step, and eight of the nine state-4 callbacks refuse to run their
+`elapsed` at record+0xE0 every step, and eight of the ten state-4 callbacks refuse to run their
 page proc until `elapsed` passes 0.30 s (`flt_B3EB44`) or 0.45 s (`dbl_B43D50`). On top of that the
 cursor repeat in `FFX_BtlMenu_PageProc_Root/B/C/D` reads `g_ffxMenuPadWord10`, which is the
 wall-clock auto-repeat mask. So Grand Summon, Ronso Rage and Mix are wall-clock dependent not
@@ -60,7 +60,7 @@ Seven things to take away.
    Two characters cannot be inside an overdrive minigame at the same time. The result lands in the
    battle actor record at Actor+0xD28/0xD2C/0xD30 (and Actor+0xD40 for the reels). Section 6.
 5. **Wakka's reels are not in the executable.** FFX.exe supplies the shared timer, the HUD, the
-   sound cues, the per-actor symbol strip and the level number. The reel spin, the stop and the
+   HUD scenes (`battle_script.bin`, once called sound cues), the per-actor symbol strip and the level number. The reel spin, the stop and the
    symbol match are inside 10 of the 581 shipped `magic_NNNN.dll` files. Those DLLs sample the
    wall-clock auto-repeat mask through magic host API slot 303 and then never read what they stored,
    so the reels replicate anyway. Section 7, settled in 7.4.
@@ -144,11 +144,27 @@ sit in one run in `.rdata` at RVA 0x75ECCC..0x75ED31:
 | `bauro`, `bauro2` | 0x75ECCC, 0x75ECD4 | `FFX_BtlOd_AuronButtonSeqMinigame 0x490F70` |
 | `btidu` | 0x75ECEC | `FFX_BtlOd_TidusSwingBarMinigame 0x492320` |
 | `blulu`, `blulu2`, `bgoodl` | 0x75ED14, 0x75ED1C, 0x75ED24 | `FFX_BtlOd_LuluFuryStickMinigame 0x491B80` |
-| `bwakk` | 0x75ED2C | `FFX_BtlOd_WakkaReels_StopCue 0x490F10`, `FFX_BtlOd_WakkaReels_Draw 0x4974A0`, `FFX_BtlOd_WakkaReels_IsCuePlaying 0x4977C0`, `FFX_BtlOd_WakkaReels_Begin 0x498DC0` |
+| `bwakk` | 0x75ED2C | `FFX_BtlOd_WakkaReels_StopCue 0x490F10`, `FFX_BtlOd_WakkaReels_Draw 0x4974A0`, `FFX_BtlOd_WakkaReels_IsSceneDone 0x4977C0`, `FFX_BtlOd_WakkaReels_Begin 0x498DC0` |
 | `bgood` | 0x75ECDC | the Auron and Tidus minigames, plus `0x4977E0` and `0x49AB80` |
 
 There is no `byuna`, no `bkimah` and no `brikku`. That is the first sign that Yuna, Kimahri and
 Rikku have no input minigame.
+
+**Correction, 2026-10-28: these are not sound cues.** (And see MENU_DRAW_PATH.md 12: the scenes
+advance once per non-catch-up step, never on a catch-up, so the phase lengths they gate depend on
+the catch-up pattern.) They are scene names in `battle_script.bin`,
+the battle half of the menu layout script format (`MENU_SCRIPT.md`). The minigames start them with
+`FFX_MenuScene_Start(2, name)` (`sub_8AF0D0`) and poll them with `FFX_MenuScene_IsDone(2, name)`
+(`sub_8AE070`), and each one is a keyframed HUD animation (`blulu` has 47 tracks). The route still
+holds as naming evidence, it is just HUD evidence, not audio. Two consequences:
+
+- `FFX_BtlOd_WakkaReels_IsSceneDone 0x4977C0` returns `g_ffxBtlOdWakkaReelsActive == 1 &&
+  FFX_MenuScene_IsDone(2, "bwakk")`, and `0x4977E0` returns `FFX_MenuScene_IsDone(2, "bgood")`.
+  `IsDone` is true when the scene has **finished**, so both read the opposite way from their names.
+  They are not renamed because they are host API rows 652 and 653.
+- The scenes advance once per draw call (`FFX_BtlMenu_DrawRoot`, `FFX_BtlOd_WakkaReels_Draw`), and
+  the Auron, Tidus and Lulu state machines wait on them, so part of each minigame's phase timing is
+  draw clocked. See `MENU_SCRIPT.md` 7.
 
 **Route 3, the actor dispatch in the launcher.** `FFX_BtlOd_StartMinigameForActor 0x3AFD30`
 dispatches on the actor index and nothing else, and it has exactly three branches. Section 2.
@@ -173,7 +189,7 @@ The exe side. All verified by reading the disassembly of each one.
 | 0x49AB20 | `FFX_BtlOd_SetPhaseArmed` | host 659, phase 1 |
 | 0x49AB50 | `FFX_BtlOd_SetPhaseRunning` | host 660, phase 2 |
 | 0x49ABA0 | `FFX_BtlOd_SetPhaseArmed_dup` | host 662, byte-identical to 659 |
-| 0x4977E0 | `FFX_BtlOd_IsGoodCuePlaying` | host 653 |
+| 0x4977E0 | `FFX_BtlOd_IsGoodSceneDone` | host 653 |
 | 0x49AB80 | `FFX_BtlOd_PlayGoodCue` | host 661 |
 | 0x491A30 | `FFX_BtlOd_PressCircleGate` | a DLL-armed "press Circle" stall |
 | 0x490EC0 | `FFX_BtlOd_ArmPressCircleGate` | host 372, arms it |
@@ -197,7 +213,7 @@ The exe side. All verified by reading the disassembly of each one.
 | 0x498230 | `FFX_BtlOd_WakkaReels_End` | host 655 |
 | 0x490F10 | `FFX_BtlOd_WakkaReels_StopCue` | host 649 |
 | 0x4974A0 | `FFX_BtlOd_WakkaReels_Draw` | host 650 |
-| 0x4977C0 | `FFX_BtlOd_WakkaReels_IsCuePlaying` | host 652 |
+| 0x4977C0 | `FFX_BtlOd_WakkaReels_IsSceneDone` | host 652 |
 | 0x3B1910 | `FFX_BtlOd_WakkaReels_GetStrip` | host 645, the per-actor symbol strip |
 | 0x3B19F0 | `FFX_BtlOd_WakkaReels_GetLevel` | host 646, ability id -> level 0..3 |
 | 0x3B1A70 | `FFX_BtlOd_WakkaReels_PostDone` | host 647, fires battle event 136 |
@@ -208,7 +224,7 @@ overdrive-minigame plugin surface. 645..647 are Wakka-specific, 648..662 are sha
 ### 1.3 The three overdrives that are menus
 
 Nothing in `FFX_BtlOd_StartMinigameForActor` handles actors 1 (Yuna), 3 (Kimahri) or 6 (Rikku), and
-no sound cue exists for them. Their overdrives are battle menu pages. Section 8 covers what that
+no HUD scene exists for them (the strings 1.1 once called sound cues). Their overdrives are battle menu pages. Section 8 covers what that
 costs.
 
 ## 2. How a minigame starts
@@ -820,11 +836,11 @@ g_ffxBtlOdWakkaReelsActive`.
 
 ### 7.1 The exe only provides scaffolding
 
-`FFX_BtlOd_WakkaReels_Begin 0x498DC0` (host 656) starts the `bwakk` cue and sets
+`FFX_BtlOd_WakkaReels_Begin 0x498DC0` (host 656) starts the `bwakk` HUD scene and sets
 `g_ffxBtlOdWakkaReelsActive 0xF3C93F`. `FFX_BtlOd_WakkaReels_End 0x498230` (host 655) clears it.
 `FFX_BtlOd_WakkaReels_Draw 0x4974A0` (host 650) renders a 256x256 overlay and centres message 12307
-while the cue is in state 3. `FFX_BtlOd_WakkaReels_IsCuePlaying 0x4977C0` (host 652) is the sound
-poll. That is the whole of it. There is no reel spin, no stop logic and no symbol match anywhere in
+while the scene is in state 3 (held). `FFX_BtlOd_WakkaReels_IsSceneDone 0x4977C0` (host 652) is the scene
+poll, and it returns true when `bwakk` has finished, not while it plays (1.1). That is the whole of it. There is no reel spin, no stop logic and no symbol match anywhere in
 `FFX.exe`.
 
 `FFX_BtlOd_WakkaReels_GetLevel 0x3B19F0` (host 646) is the clinching evidence for the ability ids:
@@ -961,7 +977,7 @@ The callbacks are installed by `FFX_BtlMenu_InstallPageCallbacks 0x4A0DE0`, keye
 at record+0x06 which `FFX_BtlMenu_SetPageKindForCommand` takes from the ability row's byte 23. Record+0x90 is the draw
 callback, which `FFX_BtlMenu_DrawRoot 0x49B360` runs once the state byte is >= 3.
 
-**Eight of the nine state-4 callbacks gate their page proc on the wall-clock `elapsed`.** Example,
+**Eight of the ten state-4 callbacks gate their page proc on the wall-clock `elapsed`** (the tenth is the target page's, `FFX_BtlMenu_Target_Step 0x8A8BE0`, no lockout, `BATTLE_MENU.md` 3.4). Example,
 the one installed for page kinds 1, 2, 3, 4, 6, 0xE and 0x11:
 
 ```
@@ -976,7 +992,7 @@ the first 0.30 or 0.45 **real** seconds after it opens. At 60 fps that is 18 or 
 30 fps it is 9 or 13. The number of sub-steps a page is deaf for is therefore frame-rate dependent,
 and a player's first press after a page opens lands on a different step index on each peer.
 
-The ninth callback, `sub_8A87D0` for page kinds 0x15 and 0x16 (the quantity spinner, which handles
+The ninth callback, `sub_8A87D0` (`FFX_BtlMenu_Gil_Step`) for page kinds 0x15 and 0x16 (the quantity spinner, which handles
 `g_ffxBtlMenuStagedGil`), reads `g_ffxMenuPadWord10` directly. Its quantity step table is the powers
 of ten 1, 10, 100, ... 100000000. Watch out for the eighth entry, which IDA renders as
 `(offset loc_98967E+2)`: that is the plain constant 0x989680 = 10,000,000, not an address. Exactly
@@ -1167,9 +1183,9 @@ These are listed rather than edited, per the brief.
 8. **Not an error, a sharpening.** `MINIGAMES_TIMED.md` section 9.5 says
    "`FFX_BtlMenu_Step`'s own widget array at `0xF3C950` (stride 240, 8 slots) carries a `startTime`
    at `+0xDC` and an `elapsed` at `+0xE0` that are wall-clock seconds". Correct, and the consequence
-   is larger than the note implies: those two fields gate the page proc of eight of the nine page
-   kinds behind a 0.30 s or 0.45 s real-time lockout, which makes every battle menu in the game
-   frame-rate dependent. Section 8.2.
+   is larger than the note implies: those two fields gate the page proc of eight of the ten page
+   step callbacks behind a 0.30 s or 0.45 s real-time lockout, which makes nearly every battle menu
+   page frame-rate dependent (not the gil page or the target page). Section 8.2.
 
 ## 11. Addresses to promote
 
@@ -1295,7 +1311,7 @@ RVAs. Promote these into `loader\workshop\include\ffx\addresses\` yourself.
 | 0x498230 | fn | `FFX_BtlOd_WakkaReels_End`, host 655 |
 | 0x490F10 | fn | `FFX_BtlOd_WakkaReels_StopCue`, host 649 |
 | 0x4974A0 | fn | `FFX_BtlOd_WakkaReels_Draw`, host 650 |
-| 0x4977C0 | fn | `FFX_BtlOd_WakkaReels_IsCuePlaying`, host 652 |
+| 0x4977C0 | fn | `FFX_BtlOd_WakkaReels_IsSceneDone`, host 652 |
 | 0x3B1910 | fn | `FFX_BtlOd_WakkaReels_GetStrip`, host 645 |
 | 0x3B19F0 | fn | `FFX_BtlOd_WakkaReels_GetLevel`, host 646 |
 | 0x3B1A70 | fn | `FFX_BtlOd_WakkaReels_PostDone`, host 647 |
@@ -1308,7 +1324,7 @@ RVAs. Promote these into `loader\workshop\include\ffx\addresses\` yourself.
 | 0x49AB20 | fn | `FFX_BtlOd_SetPhaseArmed`, host 659 |
 | 0x49AB50 | fn | `FFX_BtlOd_SetPhaseRunning`, host 660 |
 | 0x49ABA0 | fn | `FFX_BtlOd_SetPhaseArmed_dup`, host 662 |
-| 0x4977E0 | fn | `FFX_BtlOd_IsGoodCuePlaying`, host 653 |
+| 0x4977E0 | fn | `FFX_BtlOd_IsGoodSceneDone`, host 653 |
 | 0x49AB80 | fn | `FFX_BtlOd_PlayGoodCue`, host 661 |
 | 0x49A2D0 | fn | `FFX_BtlOd_SetHudPos`, host 658 |
 | 0x4955E0 | fn | `FFX_BtlOd_DrawTimerHud` |

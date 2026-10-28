@@ -95,15 +95,15 @@ The id space is 16 bit with the class in the top nibble, decoded by
 | 0x4 | **monster ability** | `sub_790A50` |
 | 0x5, 0x7, 0xB | `sub_7ABDF0` | |
 | 0x6 | other | `sub_790A70` |
-| 0x8 | `sub_790970` | |
+| 0x8 | `FFX_Btl_GetAutoAbilityRow` | |
 | 0xA | `sub_790860` | |
 
 The id's low 12 bits are a row index into a kernel.bin table, fetched by
 `FFX_KernelTable_GetRow`. The ability names are therefore **not in the exe**, so none of the
 ids below are named here from the binary.
 
-Ids seen in the wild: 0x3000 (the root command Auto-Battle forces the cursor onto, so almost
-certainly Attack, but that is **inferred** from Auto-Battle behaviour not read from a table),
+Ids seen in the wild: 0x3000 (the root command Auto-Battle forces the cursor onto. It is Attack,
+read from command.bin in `BATTLE_MENU.md` 3.11, which names the other root commands too),
 0x3002, 0x300E, 0x3016, 0x3017, 0x3022, 0x3028 (the forced ability when `actor+0x6DE` is set),
 0x3056, 0x3057, 0x3103, 0x3108, 0x311E (list terminator in `FFX_Btl_ResolveAbilityId`), 0x3120
 (the confusion self attack, from `sub_799CD0`), 0x3124..0x312B (the eight Magus Sisters orders,
@@ -127,9 +127,9 @@ This is the section the mod lives or dies on, so it goes before the queue detail
 **The worst one.** There is exactly ONE 72 byte staging record for the battle command menu.
 
 * Zeroed by `FFX_BtlMenu_Open` (VA 0x89BB10).
-* Rebuilt **every single frame** by `FFX_BtlMenu_BuildStagedCommand` (VA 0x89AFC0), which is
+* Rebuilt **every single step** by `FFX_BtlMenu_BuildStagedCommand` (VA 0x89AFC0), which is
   called from the tail of `FFX_BtlMenu_Step` (VA 0x89AE20), which `FFX_Btl_MainStep` calls once
-  per frame. Not only on confirm. Every frame.
+  per sub-step, catch-up steps included (`BATTLE_MENU.md` 2). Not only on confirm. Every step.
 * `record+0` is stamped each frame from menu page 0's owner actor, so whoever owns the page
   stack owns the record.
 * Committed by `FFX_BtlMenu_ConfirmCommand` (VA 0x8975A0) and written inline by the four menu
@@ -147,8 +147,8 @@ One menu page stack, 8 deep, with one depth cursor. -1 means empty. `FFX_BtlMenu
 `240 * g_ffxBtlMenuPageDepth`. This is the "menu cursor owner" global. Page fields in use:
 
 ```
-page +0x01  u8   state, 1 = new, 6 = suspended
-page +0x02  u8   kind, 1 = a target / list page that contributes a mask
+page +0x01  u8   state 0..6, 1 = new, 4 = active, 6 = exit, a covered page sits at 0 (BATTLE_MENU.md 3.3)
+page +0x02  u8   1 = a target page. The page kind is the u16 at +0x06
 page +0x08  u16  owner actor index
 page +0x0B  u8   cursor index into the chosen id array
 page +0x0C  u16  the command id that opened this page
@@ -281,8 +281,9 @@ confirmed rather than assumed:
 ### Per-actor fields on the command path
 
 All relative to `FFX_Battle_GetActor(index)` (VA 0x794020). Ally / big records are 3984 bytes
-(0xF90) at `g_ffxBattleAllyActors`, indices 0..30. Indices 31..92 use a 912 byte record at
-`g_ffxBattleMonsterActors`.
+(0xF90) at `g_ffxBattleUnits`, indices 0..30. Indices 31..92 use a 912 byte record at
+`g_ffxBattleSideRecords`, the weapon and armour side records of units 0..30 (two per unit, see
+BATTLE_ACTOR.md, 2026-10-13).
 
 | offset | dec | meaning |
 |---|---|---|
@@ -403,7 +404,7 @@ covers both the player and the AI, because the game itself already funnels both 
 ### The player / AI fork
 
 `FFX_Btl_SendMenu` at **VA 0x792A90, RVA 0x392A90** (its original symbol is `send_menu`, from
-the internal error string it raises). Called once per frame from `FFX_Btl_MainStep`. It pops the
+the internal error string it raises). Called once per sub-step from `FFX_Btl_MainStep`. It pops the
 turn queue head and decides:
 
 ```c
@@ -491,8 +492,8 @@ The unit index space, from `FFX_Btl_SetupUnitRoster` (VA 0x79C110):
 | 8..17 | aeons, `actor+0x4FE = index - 8` |
 | 18, 19 | not assigned in the roster setup |
 | 20..27 | the eight enemy units, `actor+0xDF3 = 1` |
-| 28..30 | not assigned |
-| 31..92 | the 912 byte light records, a different array |
+| 28..30 | weapon stand-ins for units 4, 5 and 14 (Wakka, Lulu, Yojimbo), set up by `FFX_Btl_SetupWeaponChr`. That they are the ball, the doll and Daigoro is inferred, see BATTLE_ACTOR.md |
+| 31..92 | the 912 byte weapon and armour side records, 31 + unit and 62 + unit, see BATTLE_ACTOR.md |
 
 The three active party members are `g_ffxFieldPartyChars01[0..2]` (VA 0x11307E8), and the
 roster loop writes their battle slot into `actor+0x4FE`. That mapping is exactly where a
@@ -622,7 +623,9 @@ Two shipped debug flags here are directly reusable as lockstep tools:
 
 ## 7. Per frame order inside FFX_Btl_MainStep
 
-From `FFX_Btl_MainStep` at VA 0x790C10. Only the command-relevant calls:
+From `FFX_Btl_MainStep` at VA 0x790C10. Only the command-relevant calls. "Frame" here means one
+`FFX_Btl_MainStep` call, which is one sub-step of `FFX_MainStep`, catch-up steps included
+(`BATTLE_MENU.md` 2 and 4):
 
 ```
 FFX_Btl_CtbTick          0x790FB0   if FFX_Btl_IsCtbTickAllowed && g_ffxBtlSubPhase == 1
@@ -755,7 +758,8 @@ battle animations and camera keep running while the CTB waits.
   break if two bits were set, so "it is effectively a flag" is **inferred** from the read sites
   rather than tested.
 * **Unit indices 18, 19 and 28..30**, and what the 62 light records at 31..92 are for. The
-  roster setup does not assign them. 62 matching the queue capacities is suspicious but I have
+  roster setup does not assign them. (2026-10-13: 28..30 and 31..92 are answered in
+  BATTLE_ACTOR.md, 18 and 19 are still open.) 62 matching the queue capacities is suspicious but I have
   no evidence it is related.
 * **How the target candidate list gets built.** I found where it is consumed
   (`FFX_BtlMenu_PushPage`, `FFX_BtlMenu_RestoreCursorMemory`,

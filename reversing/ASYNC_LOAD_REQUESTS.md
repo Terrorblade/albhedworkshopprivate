@@ -16,7 +16,7 @@ thread reads to make decisions. These are the off step writes that matter:
 |---|---|---|---|---|---|
 | H1 | `dword_112CA68` (propose `g_ffxBtlMapLoadPending`) cleared to 0 | `sub_782FD0` from `sub_65A6C0`, the last map cluster's callback, on the worker | `FFX_Btl_StepSubPhase` case 34 waits for 0, then sets phase 10 and calls `FFX_Btl_RollPreemptiveOrAmbush(32)` and `sub_797A40` in the same step | **battle start step depends on disk speed**, and the ambush roll consumes battle RNG on that step | [V] |
 | H2 | gfx byte +4501 (map scene loading) set 1, or cleared 0 with +4500 set, on a failed header | `FFX_Gfx_LoadMapAssetHeader 0x65CBF0` on the worker | `FFX_Gfx_IsMapSceneLoading 0x641BF0` from `FFX_MainStep_IsFadeBlocking 0x81FCD0` | fade gate and map change timing | [V] |
-| H3 | gfx +36 and the texture slot tables +60, +84, +96 for magic TexLists | `sub_664550` and `sub_666880` on the worker | `FFX_MainStep_PollMagicPrxLoad 0x822250` via `sub_6420D0` -> `sub_6522B0`, which clears +36 when every slot is in, then starts the magic PRX | the step a spell's effect begins | [V] |
+| H3 | gfx +36 and the texture slot tables +60, +84, +96 for magic TexLists | `sub_664550` and `sub_666880` on the worker | `FFX_MainStep_PollMagicPrxLoad 0x822250` via `sub_6420D0` -> `sub_6522B0`, which clears +36 when every slot is in, then starts the magic PRX | the step a spell's effect begins, for load mode 2 and 3 ids. Mode 1 ids (622..628, 348, 631, 635) start before this wait (`cmp esi, 1` at 0x8222B4). The TexList is only requested after H4 completes, so the two waits add up. See `MAGIC_ASSETS.md` | [V] |
 | H4 | `dword_CE83C4` 2 -> 3, `dword_CE83C0` (HMODULE), and through the stashed callback `g_ffxMagicFileHinst`, `g_ffxMagicGetEffectOverlayTable`, `g_ffxMagicInitMagicPRX` | `FFX_LoadDll_AsyncWorker 0x6F9CC0` and `MagicFile__onDllLoaded` on the worker | `sub_6F9B70` (== 3), `sub_6793B0`, `sub_6793C0` in `FFX_MainStep_PollMagicPrxLoad`, and `sub_9DA280` | same as H3, the magic DLL gate | [V] |
 | H5 | ClassCharacter +4, +20, +24, +28, the gfx character table, `g_ffxBattleChrLoadsInFlight 0xC421DC` decrement, the pending record +264/+268 | `ClassCharacter__loadFromFile`, `FFX_Chr_OnSubAssetLoaded 0x65AE40`, `FFX_Chr_FinishCharacterLoad 0x65A760`, `FFX_Ch_OnModelLoaded 0x82A140` | `FFX_Chr_IsClassCharacterLoading 0x82A100`, the battle load wait on the in flight counter | battle and event wait loops end on a disk dependent step. Already written up in `CLASS_CHARACTER.md` | [V] |
 | H6 | `dword_12FB8F4`, an unlocked `++` | `FFX_Tex_OnAsyncLoaded 0x666740` | `FFX_DreamFilter_Update 0x8223A0` | `== 5` starts `sub_63DF70`. Visual as far as read | [V] write, [I] no sim effect |
@@ -96,7 +96,7 @@ Who calls A8 and A9:
 
 - `sub_664D80` (magic TexList) is reached from `sub_6420B0`, which is called by `sub_9DA280` and
   `MagicFile__load` 0x9DA665. It sets gfx+36 = 0 on the step first. When
-  `maybe_FFX_IsAsyncPrxLoad` (`dword_CCB464`) is 0 the same work runs synchronously through
+  `FFX_Magic_GetPrxLoadMode` (`g_ffxMagicPrxLoadMode`) is 0 the same work runs synchronously through
   `sub_665770` on the step thread instead. [V]
 - `sub_665F60` kind 4 comes from `sub_663F00` <- `sub_639310` <- the ATEL calls
   `FFX_AtelSys_Core_283 sub_8748A0` and `FFX_AtelSys_Core_282 sub_874B70`, with the path from
@@ -128,7 +128,8 @@ Orphans, no code or data reference anywhere in .text (rel32 and absolute scans):
 (callback `sub_6666A0`), `0x6DA300` (an FMV shader duplicate), `0x666310`, `0x666350`,
 `0x6666C0`, `0x666700`, `0x666780`, `0x6667C0`, `0x666800`, `0x666840`, `0x6D2D30`, `0x69A950`,
 `0x6DA900`, `0x645E20` (and so the titl TexList at `0x665FD0`), the credits loader `0x6DA550` and
-the MetaMenu timestamp reader `0x6D98E0`. [V]
+the MetaMenu timestamp reader `0x6D98E0`. [V] Its `/MetaMenu/...` paths are keys in `FFX_Data.vbf`'s
+own `metamenu/` tree, not in `metamenu.vbf` (`METAMENU.md` section 4).
 
 ## 3. ROM reads (asset loader slot 0) and the step thread completion
 
@@ -162,8 +163,9 @@ caller. All run on the step thread. [V]
 
 Many reads pass callback 0 and then block in `FFX_RomDev_PumpBlocking` or poll. Direct slot 0
 users with no callback include `FFX_Ch_RomRead`, `FFX_Ch_RomReadMotionSet`,
-`FFX_Ch_LoadRomIndexTables`, `FFX_Ch_RomReadEventMotionGroup`, `FFX_AtelSys_Movie_136_start` and
-`_resf`, `sub_76CFF0` and the site at 0x77D694. A blocking read is deterministic in result and
+`FFX_Ch_LoadRomIndexTables`, `FFX_Ch_RomReadEventMotionGroup`, `FFX_SaMenu_Draw 0x76F850` and
+`sa_menu_start 0x770430` (sa_menu code, not Movie syscalls as older names had them,
+`ATEL_MOVIE_SAVE_LIBRARIES.md` section 5), `sub_76CFF0` and the site at 0x77D694. A blocking read is deterministic in result and
 only costs wall time. A polled one has the same "which step" hazard as a callback. [V]
 
 ## 4. Kinds that are not on this manager

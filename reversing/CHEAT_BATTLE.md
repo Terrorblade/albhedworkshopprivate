@@ -809,7 +809,7 @@ Three more that are not in that block:
 |---|---|---|
 | 0xD3338C | BtlDbgKillAllHp | dword. Every HP damage event first does `curHp -= 99999`, all units, with units whose actor+4 is 1..7 exempt. `FFX_Btl_ApplyHpDamage`. Set by `0x38E620`, called from `0x2B81D0` |
 | 0xD333E8 | BtlDbgOverdriveAlwaysFull | dword. Fills the menu-opening unit's gauge to max. `FFX_Btl_GetUsableCommandKinds 0x38F700`. Set by `0x390420` |
-| 0xD33390 / 0xD33394 | BtlDealt9999Flag / BtlDealt99999Flag | dwords. Latched by `FFX_Btl_StageEffectsForTarget` when a single hit reaches the cap. Almost certainly the achievement trackers |
+| 0xD33390 / 0xD33394 | BtlDealt9999Flag / BtlDealt99999Flag | dwords. Latched by `FFX_Btl_StageEffectsForTarget` when a single hit reaches the cap. The achievement trackers for 18 and 21, read and cleared by `0x893290` (`STEAM_ACHIEVEMENTS.md`) |
 
 And four shipped debug functions worth binding to buttons:
 
@@ -974,8 +974,9 @@ tables above.
 
 * That the 0x100 bit of actor+0x616 is the status FFX calls Death. The bit's role as a non-HP death
   cause is verified, its name is not.
-* That `BtlDealt9999Flag` / `BtlDealt99999Flag` are achievement trackers. They are latched and never
-  read on the paths I looked at, which is consistent, but I did not find the reader.
+* Settled 2026-10-27, no longer inferred: `BtlDealt9999Flag` / `BtlDealt99999Flag` are the achievement
+  trackers. The reader is `maybe_FFX_BtlMenu_DrawDamagePopups 0x893290`, which unlocks achievement 18
+  (ACH_POWER_STRIKE) and 21 (ACH_MEGA_STRIKE) and clears the flags. See `STEAM_ACHIEVEMENTS.md`.
 * That actor+0x5A4 is specifically "max HP for the overkill test". It is written from record+0x24 and
   read only by the entry bit 0x80 test, which is what overkill is, but I did not chase what else
   reads bit 0x80.

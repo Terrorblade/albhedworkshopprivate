@@ -71,7 +71,10 @@ to patch.
 
 **6.** `GetCommandLineW` -> `CommandLineToArgvW` -> narrow argv. This is the real process
 command line (`DEBUG_MODE.md` has the proof). Usage string, when `argc > 1`, through
-`Phyre__PApplication__parseCommandLine`: `-resolution= -msaa= -vsync -host= -script=`.
+`Phyre__PApplication__parseCommandLine`: `-resolution= -msaa= -vsync -host= -script=`. The usage
+string is not the flag list. The parser knows 13 flags (`-h -help -? -script= -log= -input=
+-timestep= -resolution= -msaa= -vsync= -host= -fullscreen= -borderless=`), and `argv[1]` can also
+be `debug`, `DEBUG` or `_ECalm`. `COMMAND_LINE.md` (2026-10-27) has every one with its reader.
 
 **7.** `g_ffxTargetFrameTime = g_phyreFrameRateDivider / 59.94005994`. The limiter target.
 
@@ -176,7 +179,9 @@ CALM" when `argv[1] == "_ECalm"`. `app+944 = 0`.
 
 **27.** `FFX_InitFileSystem 0x6795B0`: `FFX_fios_setDataRoot("../../..")`,
 `FFX_VbfManager__createSingleton` (68 bytes -> `g_ffxVbfManager`), root `../../../`, mount
-`data\FFX_Data.vbf` (failure -> MessageBox string 30774), `sub_6DAFC0` (the language manager
+`data\FFX_Data.vbf` into mount slot 0 (failure -> MessageBox string 30774, then WM_CLOSE to the
+main window through `FFX_App_SendCloseToMainWindow 0x42F4D0`, and the boot carries on with no
+archive, see "The mount slots" in `VBF_FORMAT.md`), `sub_6DAFC0` (the language manager
 at `dword_CDED58`), the title id string PCSG00219 / PCSE00293 / PCSB00395 / PCSH00042 by
 region, `sub_6F9B60`. Log line "SKS: fiosInitialize finished".
 
@@ -187,8 +192,8 @@ line as a boot milestone.
 **29.** `sub_646910`: the `ffxsjistbl_*.bin` text encoding tables.
 
 **30.** `FFX_SaveSys_Init 0x647FE0`: `sub_6F1C10`, `sub_6F0330` (the save folder),
-`sub_6F1430` only when `g_ffxSteamApiReady` (an 0x50 byte Steam Cloud object at
-`dword_CE81A8`), `FFX_SaveUtil_AllocState` (3 bytes at `g_ffxSaveUtilState`), `sub_6F2070`.
+`sub_6F1430` only when `g_ffxSteamApiReady` (the 0x50 byte `StatsAndAchievements` object at
+`dword_CE81A8`, the Steam achievement client, not a cloud object, see `STEAM_ACHIEVEMENTS.md`), `FFX_SaveUtil_AllocState` (3 bytes at `g_ffxSaveUtilState`), `sub_6F2070`.
 
 **31.** `FFX_SaveFile_RegisterStagingBuffer 0x647FB0`: the 26880 byte save staging buffer.
 

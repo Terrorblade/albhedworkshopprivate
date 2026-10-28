@@ -158,14 +158,21 @@ to preserve or replace.
   command ring on every wake.
 - Publishes to the step thread: the step thread posts through `FfxFmod_QueueCommand 0x6FA300`
   into the 150 entry ring at 0xCE8458 (write index +40, read index +44) and sets the kick event
-  for commands 8 and 58 during boot scenes. Synchronous commands put their args at +48/+52 and
-  wait on the sync event +28 for the result at +72. The reverse direction is the voice state:
+  for commands 8 and 58 during boot scenes. Synchronous commands put their args at +48/+52, but
+  `FfxFmod_RunCommandSync 0x6FA500` runs seven of them (17, 18, 19, 22, 25, 63, 65) **inline on the
+  caller's thread**, reading this thread's state with no lock. Only the rest wait on the sync event
+  +28 for the result at +72, two waits of 5 ms, and a timeout returns 1. The one such command the
+  step uses is 20, the battle MUSIC task's "track 16 still loading" (`SOUND_CLASSES.md` 2.1). The
+  reverse direction is the voice state:
   `sub_70B750` (on this thread, from `FfxFmod__f7070D0`) stamps a voice start at +112 and the
   elapsed time at +120/+124 against the duration at +108, and calls `FmodVoice__f70A590` when
   the line is over. The ATEL voice syscalls 213, 214 and 215 (`CUTSCENE.md` section 2.6) poll
   the voice object for completion, which is how a wall clock on this thread decides which step
-  a cutscene script advances on. The exact field the syscalls read back was not traced in this
-  pass.
+  a cutscene script advances on. The field is `FmodVoice+64 | +68` (`VOICE_TIMING.md` section
+  3), and +64 is also cleared by FMOD's end of event callback `sub_707A50`, which runs on this
+  thread inside `EventSystem::update` [I]. The same callback clears a music track's and an SFX
+  instance's playing flag, which core:443 and core:403/416 read back (`SOUND_CLASSES.md` section
+  13).
 - Port: keep an audio thread with its own real clock (row C9 to C11), but the step must never
   read a wall clock derived audio field for a decision. "Voice done" has to become a step
   ordered event (the host decides the step), see the decision table.
@@ -247,12 +254,13 @@ to preserve or replace.
   body then `TerminateThread`s itself). `sub_6F2AE0/BB0/CC0` are PS2 intr handler stubs that
   return 0, `dword_1330268` holds their fake handle.
 - Not a thread, same module: `hdd_thread_main 0x7795xx` is registered through `sub_888740` into
-  `dword_1330254` (by `sub_76E630` in tklib init and `FFX_AtelSys_Movie_144_resi`), and its
-  would be scheduler loop at nofunc 0x8885C0 (`FFX_Sema_Wait(dword_1330250[idx])` then call
+  `dword_1330254` (by `sub_76E630` in tklib init and by `FFX_SaMenu_HddInstallStart 0x779120`, which
+  older notes called a Movie syscall. It is sa_menu code, and so is `FFX_SaMenu_Draw` in A21 below,
+  `ATEL_MOVIE_SAVE_LIBRARIES.md` section 5), and its would be scheduler loop at nofunc 0x8885C0 (`FFX_Sema_Wait(dword_1330250[idx])` then call
   `dword_1330254[idx]`) has no xrefs, so it never runs. `sub_888820` (`FFX_Sema_Release
   (dword_1330250)`) is called by the ROM device read path (`FFX_RomDev_ExecuteQueuedRead`,
-  `sub_A432A0`, `sub_778550`, `sub_778610`, `sub_7797A0`, `sub_76E1C0`, Movie 144) and releases
-  a semaphore nobody waits on. Dead on PC.
+  `sub_A432A0`, `sub_778550`, `sub_778610`, `sub_7797A0`, `sub_76E1C0`, `FFX_SaMenu_HddInstallStart`)
+  and releases a semaphore nobody waits on. Dead on PC.
 - Port: remove the thread. Corrected 2026-10-12: the first decision here (derive `saveData[47]`
   from the step counter) was wrong on two counts. The save block hash skips 0xBC..0xC0, the play
   time, in both the co-op kit's region table and the recreation's oracle probe, so the value is
@@ -279,21 +287,27 @@ to preserve or replace.
   through `sub_A3DDF0`, and creates the thread with the Phyre primitive, proc `sub_A27B90`, name
   "PVideoPlaybackWin32::_VideoDecodingThread". Callers `sub_66FB70`, `sub_6D8FC0`, `sub_6DA9B0`
   and nofunc 0x666904.
-- Role: VP8 (libvpx) video and Vorbis audio decode, frame timing against its own clock.
+- Role: VP8 (libvpx) video decode only. The Vorbis decode runs on FMOD's stream thread inside the
+  pcmread callback, and there is no frame timing on this thread: it decodes until the 30 frame queue
+  is full and the step consumes one frame per `FFX_MainStep` (corrected 2026-10-27,
+  `MOVIE_DECODE.md`).
 - Publishes to the step thread: the decoded frame ring and the frame index that
   `FFX_Fmv_DrawFrame` draws and that `FFX_StepPacing`'s pacing mode 1 (the FMV timing track)
   steps against. `FMV_SYNC.md` has the full treatment and the decision (frames are consumed by
   step count, not by wall time).
 - Port: keep decode off the step thread, consume by step count.
 
-### T12. libvpx decode workers (conditional, probably never)
+### T12. libvpx decode workers (never created)
 
 - `sub_40C350` (libvpx `vp8_decoder_create_threads`): `_beginthreadex(0, 0, StartAddress, ..)`
   for `min(cfg.threads, 8, mb_rows) - 1` threads, only when that is > 1. `cfg.threads` is
-  `pbi+15704`, copied in `sub_40AE10` (`vpx_codec_dec_init`) from the `vpx_codec_dec_cfg_t` at
-  `a2+16` that the caller `sub_409C70` passes. Where Phyre fills that cfg, and therefore whether
-  the retail build ever asks for more than one thread, was not resolved. libvpx's default is one
-  thread and no workers.
+  `pbi+15704`, copied in `sub_40AE10` (really `vp8_create_decoder_instances`, not
+  `vpx_codec_dec_init`) from the `vpx_codec_dec_cfg_t` at `a2+16` that the caller `sub_409C70`
+  passes.
+- Resolved 2026-10-27: the only `vpx_codec_dec_init_ver` call, in
+  `PVideoPlaybackWin32__startVideoDecodingThread` at 0xA27FBA, pushes ver 9, flags 0 and **cfg 0**.
+  With no config the decoder's thread count stays 0, so no worker is ever created. [V] for the call
+  site, [I] for the upstream 1.4.0 default. `MOVIE_DECODE.md` section 4.
 - Publishes: internal to the decoder. No port decision needed beyond T11.
 
 ### T13. Unidentified library housekeeping thread
@@ -361,7 +375,7 @@ raw QPC helper at nofunc 0x42FD60 has no callers. The Phyre `PTimer::GetTime` re
 | row | VA | function | feeds | class | port |
 |---|---|---|---|---|---|
 | C1 | 0x6EA100 | `sub_6EA050` (allocator init, from `sub_6EBD30` and friends, boot) | `dword_CE6EC4 = (GetTickCount() ^ 0x55555550) & ~0xF | 8`, the header cookie of the 1 MB arena allocator (`BOOT_SEQUENCE.md` step 78) | presentation (heap header bytes only, but a raw memory hash of that arena would see it) | remove, use a constant cookie |
-| C2 | 0xA27F69 | `PVideoPlaybackWin32___VideoDecodingThread` | `dword_1A84C80`, the decode clock base of the movie, read by nothing else in the exe (the decoder uses it internally) | presentation (decode pacing) | keep on the decode thread, frames are consumed by step count (`FMV_SYNC.md`) |
+| C2 | 0xA27F69 | `PVideoPlaybackWin32___VideoDecodingThread` | `dword_1A84C80`. Written at 0xA27F84 and read by nothing at all, the decoder included (corrected 2026-10-27, `MOVIE_DECODE.md` section 9) | dead | drop, frames are consumed by step count |
 | C3a | 0x6F0528 | `sub_6F0510` (save file write, <- `sub_6F1C40` <- `sub_647E10`) | `dword_CE730C = GetTickCount()` at the moment a save is written | simulation adjacent (it is the base of C3b) | remove with C3b |
 | C3b | 0x6F0674 | `sub_6F0670` (<- `FFX_MainStep_StepSaveScanAndCachePlayerPos 0x648480`, every step) | `(GetTickCount() - dword_CE730C) / 2000.0` clamped to 0..1, a 2 s ramp. When it reaches 1.0 the step calls `sub_641680`, which is a nullsub | simulation by position (it is on the step), effect nil in retail | remove (the gated call is empty) |
 | C4a | 0x42FE2F, 0x42FE67, 0x42FE92 | `Phyre_Time_Init` | the stored samples above, read by nothing | none | remove |
@@ -423,7 +437,7 @@ majority.
 | A18 | 0x6E854D, 0x6E8591, 0x6E85B3 | `sub_6E8540` (<- `FFX_Fmv_DrawFrame`) | movie fade in and out alpha | presentation | display clock |
 | A19 | 0x6E78A7 | `sub_6E78A0` (<- `FFX_Fmv_PollSkipButtons`, on the START edge) | prompt object `+4` = now, `+20 = 1`, `+21 = 1`: the skip prompt appears | presentation (the skip itself is the SQUARE edge, not timed, per the IDB comment on `FFX_Fmv_PollSkipButtons`) | display clock |
 | A20 | 0x6E78CC | `sub_6E78C0` (<- `FFX_Fmv_PollSkipButtons`, on the skip) | prompt `+8` = now, hide animation | presentation | display clock |
-| A21 | 0x774F6E, 0x774F9C | `sub_774CB0` (<- `FFX_AtelSys_Movie_136_start`) | `cos(t*8)*2` added to a text position before `sub_63EEE0` | presentation | display clock |
+| A21 | 0x774F6E, 0x774F9C | `sub_774CB0` (<- `FFX_SaMenu_Draw 0x76F850`) | `cos(t*8)*2` added to a text position before `sub_63EEE0` | presentation | display clock |
 | A22 | 0x68B538 | `sub_68B470` (<- `sub_68A3A0` <- `FFX_Input__updateFromFFXApp`) | an input record `+16` timestamp in the PC input bridge, state 2 | presentation unless a later reader compares it. Not traced further, `INPUT_LAYER.md` territory | display clock, verify |
 | A23 | 0x68B268 (nofunc) | same module as A22 | unknown | unresolved | verify with A22 |
 
@@ -450,9 +464,9 @@ majority.
 | C11 | 0x7070DB | `FfxFmod__f7070D0` (T5 tick, also `sub_6FA880`, `sub_707BD0`) | `qword_CEC168` stream service stamp, serviced when > 33000 us | presentation | keep, audio thread |
 | C12 | 0x70B25F | `FmodVoice__f70B160` (<- `FfxFmod__f7070D0`) | voice start stamp `+112` | **simulation** through C14 | see C14 |
 | C13 | 0x70B641 | `FmodVoice__f70B5C0` (<- `sub_707540`) | a voice stamp | **simulation** through C14 | see C14 |
-| C14 | 0x70B773, 0x70B78C | `sub_70B750` (<- `FfxFmod__f7070D0`) | `+120/+124` elapsed vs the duration at `+108`, and `FmodVoice__f70A590` when the line is over, which is what the ATEL voice syscalls 213 to 215 wait on | **simulation** (which step a voiced cutscene line is "done" on) | the host decides: "voice done" becomes a step ordered event. The field the syscall reads is the unresolved item |
+| C14 | 0x70B773, 0x70B78C | `sub_70B750` (<- `FfxFmod__f7070D0`) | `+120/+124` elapsed vs the duration at `+108`, and `FmodVoice__f70A590` when the line is over, which is what the ATEL voice syscalls 213 to 215 wait on | **simulation** (which step a voiced cutscene line is "done" on) | the host decides: "voice done" becomes a step ordered event. The field the syscalls read is `FmodVoice+64 \| +68`, and FMOD's event callback also clears +64 (`VOICE_TIMING.md`, `SOUND_CLASSES.md` 13) |
 | C15 | 0x6FA216 (nofunc) | `/ 1000.0` helper | no callers | none | remove |
-| C16 | 0x821F07, 0x821F5B, 0x822000, 0x82207B | `FFX_StepPacing 0x821E80`, pacing mode 1 | `g_ffxTimingTrackStartMs` (us), the FMV timing track elapsed `g_ffxTimingTrackElapsed = us/1000`, compared against the track's due times to set `g_ffxPendingSteps`, with a spin wait when early | **simulation** (step count per frame during a movie) | step clock. `FMV_SYNC.md` has the decision |
+| C16 | 0x821F07, 0x821F5B, 0x822000, 0x82207B | `FFX_StepPacing 0x821E80`, pacing mode 1 | `g_ffxTimingTrackStartMs` (us), the voice scene timing track (not FMV, VOICE_TIMING.md) elapsed `g_ffxTimingTrackElapsed = us/1000`, compared against the track's due times to set `g_ffxPendingSteps`, with a spin wait when early | **simulation** (step count per frame during a movie) | step clock. `FMV_SYNC.md` has the decision |
 | C17 | 0x8AB3D0 | `FFX_Cutscene_EnterPauseOverlay` | `qword_12FB820` pause start | **simulation** through C18 | step clock |
 | C18 | 0x8AB2EE | `FFX_Cutscene_StepPauseOverlay` | `g_ffxTimingTrackStartMs += now - qword_12FB820` on resume, so the paused real time is removed from the track | **simulation** (shifts C16) | step clock (pause is a run of frames with zero steps, nothing to compensate) |
 | C19 | 0x6903A1, 0x6903C1 | `FFEscMenu__scalar_deleting_dtor 0x68FFB0` (the Esc menu step, misnamed) | `this+240` open stamp, `g_ffxTimingTrackPauseMsPending = now - this+240` on close, consumed by C16 | **simulation** (shifts C16) | step clock |
@@ -463,7 +477,7 @@ majority.
 |---|---|---|---|---|---|
 | R1 | 0x79895A -> 0x798894 -> 0x786E15 | `FFX_Rand_SeedValueFromSystemClock 0x798950` <- `FFX_Rand_SeedAllStreams 0x798890` <- `FFX_InitNewSaveData 0x786B00` (<- `FFX_Btl_Init` at boot on a JobWorker, `FFX_AtelSys_Core_573_BeginNewGame` at New Game, `SG_DebugWin_BattleConsoleProc`) | the only seed of the game RNG: `g_ffxBattleRandState 0xC42200` and the 68 dword `g_ffxRandStreamState 0x1135EE0`, from `GetSystemTime` fields xor folded, times `seed + 1` | **simulation**, the only entropy in the game RNG | session seed from the host, applied at the same two points (boot and New Game) |
 | R2 | 0x7FF39F and 0x7FF3xx | `sub_7FF360` (<- `FFX_MainInit 0x82097B`, once) | `srand(0x3F4CF27B)` for the step thread's CRT stream and `g_ffxEffectRandState 0xC0A000 = -1.4980391f` for the effect float RNG | deterministic constants | keep |
-| R3 | 54 sites in 29 functions at 0x72F4B0..0x732390 and 0x757490..0x7582E0 | `FFX_Rand_EffectFloat1to2 0x72F420` readers, the VFX operators, many of them Magic plugin host API entries (62..65, 108, 119, 130, 156, 158, 174, 191, 193, 573, 591) | particle and effect parameters from `g_ffxEffectRandState` | presentation, deterministic given call order on the step thread | cosmetic stream, excluded from the hash |
+| R3 | 54 sites in 29 functions at 0x72F4B0..0x732390 and 0x757490..0x7582E0 | `FFX_Rand_EffectFloat1to2 0x72F420` readers, the VFX operators, many of them Magic plugin host API entries (62..65, 108, 119, 130, 156, 158, 174, 191, 193, 573, 591) | particle and effect parameters from `g_ffxEffectRandState`. `FFX_Rand_SignedScale 0x7E6700` and `FFX_Rand_Scale 0x7E6780` draw the same state, among them `pppDrawRain` (0x755A00, 0x756320), whose draw count follows the camera, `MAP_PARTICLES.md` 6 | presentation, deterministic given call order on the step thread and the same camera | cosmetic stream, excluded from the hash |
 | R4 | 155 sites in 44 functions | `srand(g_ffxEffectRandState & 0x7FFFFF)` in 41 VFX operators (0x72F4B0..0x733E40, 0x757490..0x762460, `sub_9DBB40` host API 241), Hex-Rays renders the mask as `((unsigned int)&loc_7FFFFD + 2)` | reseeds the calling thread's CRT `rand()` from the effect state before drawing particle noise | presentation | cosmetic stream, keep the semantics so the look matches |
 | R5 | 0x82395B | `sub_822DE0` (<- `sub_82E390`, per CHR per step on the step thread) | `rand() % 1000` as a float into a position passed to `sub_824E60` | **simulation** (step thread CRT stream, the phase depends on every other step thread `rand`/`srand` call) | move to the game RNG or a dedicated per step stream and hash it. Identify what `sub_824E60` does with it (unresolved) |
 | R6 | 0x7FF72C | `maybe_FFX_Yonishi__feedPadStateBothPorts` (per sub step from `FFX_MainStep 0x82141D`) | `rand()` with the result discarded (a PS2 libc side effect kept by the compiler) | simulation adjacent (advances the shared step thread stream that R5 reads) | remove, or keep in the same step thread stream as R5 so the phase matches the original |
@@ -474,7 +488,7 @@ majority.
 | R11 | 0x71DCE4, 0x71DD05, 0x71DD26, 0x71DD28 | `sub_71DBD0` (<- `sub_7116D0` via host API table 0xC65A58, nofunc 0x711651) | effect noise for plugins | presentation | cosmetic stream |
 | R12 | 0x75053B, 0x751EDB, 0x7541A9 | `sub_750510`, `sub_751EB0`, `sub_754180` (host API 153, 191, 613) | `return rand()` exported to the magic DLLs | presentation, unless a DLL feeds it into battle state (`MAGIC_DLL.md`, verify per DLL) | cosmetic stream |
 | R13 | 0x810E9B | `sub_810E20` (<- `sub_8124B0` via table 0xC49318) | effect rand + `FFX_Rand_Scale` | presentation | cosmetic stream |
-| R14 | 0x921172, 0x924E80, 0x92971C, 0x92E4F8, 0x93724B, nofuncs 0x92E438, 0x92E704 | `sub_9210E0`, `sub_924DF0`, `sub_9296D0`, `sub_92E4F0` (host API 469), `sub_937190` (<- `FFX_RcBg_Step`, `sub_936A00`), the rcBg background effects, and `rand_0` in the rcBg table at 0xC653F8 | sky, rain and particle backgrounds | presentation (on the step thread) | cosmetic stream |
+| R14 | 0x921172, 0x924E80, 0x92971C, 0x92E4F8, 0x93724B, nofuncs 0x92E438, 0x92E704 | `sub_9210E0`, `sub_924DF0`, `sub_9296D0` (this one is `rcfxWindApply`, the rcFlex wind force, and no shipped content enables it, `RCFLEX.md` 5), `sub_92E4F0` (host API 469), `sub_937190` (<- `FFX_RcBg_Step`, `sub_936A00`), and `rand_0` in the table at 0xC653F8. Per `RCBG.md`: `sub_9210E0` is the rcbgScene camera shake and only calls rand while a MapFx 038 shake with a random range runs, `sub_924DF0` and `sub_92E4F0` are the Yanagi magic host API and 0xC653F8 is that host API table, not rcBg, and `sub_937190` is rcui debug code that retail never reaches | sky, rain and particle backgrounds | presentation (on the step thread) | cosmetic stream |
 | R15 | 0x411E9C, 0x412621, 0x4126A2, 0xA7F6FF, 0xA8B05E | `sub_411E80`, `sub_4124B0`, `sub_412690`, `sub_A7F6FA`, `sub_A8B059` (<- `sub_40D2C0`, `sub_412E00`, libvpx postproc) | the VP8 postprocessor noise and dither tables | presentation (movie decode) | keep in the decoder |
 | R16 | 0x953EE7, 0x95405E, 0x954067 | `lua_math_random`, `lua_math_randomseed` | Phyre PScripting Lua, `-script` only | none in retail | remove with the script proxy |
 
@@ -489,23 +503,23 @@ reproducible is R7 and R8 on the workers, and those are render only.
 |---|---|
 | step clock | P1, A2, A3, A4, I1, I2, I3, I7, I8, I9, C16, C17, C18, C19 |
 | display clock | P2, P3, P4, A5 to A22 |
-| keep (another thread's own clock, the step never reads it) | C2, C9, C10, C11, R15, P6 |
+| keep (another thread's own clock, the step never reads it) | C9, C10, C11, R15, P6 |
 | original arithmetic on the frame thread, outside the hash | A1 |
 | host ordered event instead of a clock | C12, C13, C14 (voice done), T7 load complete |
-| remove | C1, C3a, C3b, C4a, C4e, P5, P7, P9, C15, I4, I5, I6, R16, T6, T8, T9, T13 |
+| remove | C1, C2 (dead store, 2026-10-27), C3a, C3b, C4a, C4e, P5, P7, P9, C15, I4, I5, I6, R16, T6, T8, T9, T13 |
 | session seed | R1 |
 | cosmetic stream, excluded from the hash | R3, R4, R7 to R14 |
 | keep as is | R2 |
-| unresolved | P8, A23, R5's consumer `sub_824E60`, the voice field C14's syscall reads, the vpx thread count (T12), T13's identity |
+| unresolved | P8, A23, R5's consumer `sub_824E60`, T13's identity |
 
 ## 2.9 Unresolved, collected
 
-- Which field of the FmodVoice object the ATEL voice syscalls 213, 214 and 215 read to decide
-  "voice done" (C14). `CUTSCENE.md` section 2.6 has the syscall side.
+- Resolved: the ATEL voice syscalls read `FmodVoice+64 | +68` for "voice done" (C14), see
+  `VOICE_TIMING.md` section 3.
 - What `sub_824E60` does with the random position from `sub_822DE0` (R5).
 - The sprite animation timer at nofunc 0x570500 (P8) and the input bridge stamp at 0x68B268
   (A23).
-- Where Phyre fills `vpx_codec_dec_cfg_t.threads` (T12).
+- (Resolved 2026-10-27) Where Phyre fills `vpx_codec_dec_cfg_t.threads` (T12): it passes no config.
 - The identity of the 1 Hz library thread `sub_947E30` (T13).
 - Whether any hold seconds reader of I2 decides anything (the `INPUT_LAYER.md` hold readers).
 

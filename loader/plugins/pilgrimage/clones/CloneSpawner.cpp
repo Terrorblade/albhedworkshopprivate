@@ -12,6 +12,7 @@
 #include "ffx/Character.h"
 #include "ffx/Api.h"
 #include "ffx/Layout.h"
+#include "ffx/Models.h"
 #include "ffx/Walkmesh.h"
 
 namespace pilgrimage
@@ -184,6 +185,14 @@ namespace pilgrimage
 		{
 			SetStatus("map has %d colliding characters, the engine's limit is %d", colliders, CollideListCapacity);
 			Log("%s refused: %d colliders already, one more overruns g_ffxChrCollideList", why, colliders);
+			return -1;
+		}
+		// A joiner's panel pick arrives here from the network, so this is the gate that
+		// matters. The engine's own load of these ids writes outside the file.
+		if (ffx::ModelCorruptsHeap(chrId))
+		{
+			SetStatus("model 0x%04X cannot be loaded, the engine would corrupt its heap", chrId);
+			Log("%s refused: 0x%04X is one of the ids FFX_Ch_RelocateModelSection relocates out of bounds", why, chrId);
 			return -1;
 		}
 		if (!EnsureCharacterDataLoaded(chrId))

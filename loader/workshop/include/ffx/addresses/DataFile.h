@@ -168,7 +168,8 @@ namespace ffx
 		//     +36 CRITICAL_SECTION  24 bytes, guards the request pool bookkeeping
 		//     +60 DWORD             rootPathLen
 		//     +64 char*             rootPath copy
-		// Nothing in it changes after FFX_InitFileSystem.
+		// Nothing in it changes after FFX_InitFileSystem until exit, when FFX_VbfManager__unmountAll
+		// frees every archive and clears the slots (reversing/VBF_FORMAT.md).
 		const DWORD VbfManagerPtr = 0x008C9C48; // g_ffxVbfManager, 0 before init
 		const DWORD VbfManagerBytes = 68;
 		const DWORD VbfManagerSlots = 16; // VbfArchive*[5]

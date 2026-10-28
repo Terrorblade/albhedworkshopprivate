@@ -116,14 +116,17 @@ an exit, it is `FFX_ScreenFade_Request(code, 1, 0)`. Read the disassembly. [V]
    `word_112C94E = 670` (the game over effect id, section 6). [V]
 5. The four `btl.bin` pointers `dword_112A9F0..FC`, the scene name `"%s_%02d"` (sound banks and
    per battle text only, CHEAT_BATTLE.md 13.6.1). [V]
-6. `FFX_Mot_SetKeepSpeed(1)`, `sub_793530`, **`sub_799FB0`** (allocates 0x21E8 = 31 x 280 bytes of
+6. `FFX_Mot_SetKeepSpeed(1)`, `FFX_Btl_AllocActorArrays`, **`sub_799FB0`** (allocates 0x21E8 = 31 x 280 bytes of
    reward records at `dword_1136068`, zeroed, and a 0x8A88 byte block at `dword_2310CD8` filled
    0xFF), `sub_79F9B0`, **`sub_798E90`** (copies the spoils AP accumulators to the snapshot, 4.4),
    `FFX_SaveData_RebuildItemLists`, `sub_89B660`, `sub_79E7A0`, then `sub_7829B0(high byte of
    word_112A9D4, &mode)` and `sub_79E5E0` when it returns >= 0. [V]
 7. `FFX_Field_FreezeActorsToScratch 0x866240(map)`: for a random battle (low byte of
    `word_112A9D4` is 0) `g_ffxFieldBootMode = saveData+0xE4 | (g_ffxFieldBootMode & ~0x10000)`.
-   Pushes the `"MUSIC"` boot task (`sub_862470`) and parks the field actors. [V]
+   Pushes the `"MUSIC"` boot task (`sub_862470`) and parks the field actors. [V] Its state 7 also
+   waits on FMOD: `if (sub_67A240() != 0) stay`, FMOD command 20, true while battle track 16 still
+   reads `FMOD_EVENT_STATE` LOADING. It is the one command the step thread runs synchronously across
+   to the FMOD thread, and a 10 ms timeout reads as "still loading" (`SOUND_CLASSES.md` 2.1). [V]
 8. `g_ffxBtlSubPhase = 4`, tail call `FFX_Btl_StepSubPhase`. A non zero mode skips 3, 6 and 7 and
    enters at phase 5. [V]
 
@@ -164,7 +167,7 @@ In order: [V]
 
 1. Zero 96 bytes at 0x1136008. Default the light fields of all 93 records (0..92).
 2. Units 0..30: a long list of defaults, among them `+0xDD2 = +0xDD3 = 1`, `+0x43B = 1`, and two
-   side records per unit from `sub_795B10`.
+   side records per unit from `FFX_Btl_GetSideRecord`.
 3. **Active party.** For j = 0..2, `c = g_ffxFieldPartyChars01[j]` (saveData+0x3D58). If not 0xFF:
    `actor(c)+0x10 = 1` (exists), `+0xDC8 = 1` (on the field), `+0x4FE = j`, `+0x3F8 = 1` for the
    middle slot. `g_ffxBattlePartyOrder[j] = c`, and `[3..6] = 0xFF`. GAME_STATE.md has this loop.
@@ -212,8 +215,12 @@ dword_1136068 + 280*k` (an all zero record, 4.2), `FFX_Btl_ComputeOverdriveRefDa
 `FFX_Btl_BuildActorEquipLists`, and with `byte_112C9CE` or script mode 2 `sub_79B470(k, 0x3002, 1)`.
 [V]
 
-Ability bitmaps come from `FFX_Btl_LoadPlayerData 0x7848B0`, which runs from `FFX_Btl_Init` and
-ORs `ply_save.bin` rows into the record block at 0x113209C, not per battle. [V]
+Ability bitmaps come from the save block character records (+0x3E of each `SAVE_CHAR_RECORD`), which
+`FFX_InitNewSaveData` seeds from `ply_save.bin` rows 0..17. Corrected 2026-10-27 (`BOOSTERS.md` 5.2):
+this used to say they come from `FFX_Btl_LoadPlayerData 0x7848B0` run from `FFX_Btl_Init`. That
+function, now `FFX_SaveData_GrantAllAbilities`, is the Unlock all skills booster. `FFX_Btl_Init` calls
+it only when `g_ffxBtlDbgFullSet` is set (0x781C2B), and it ORs the all-abilities rows 18 and 19 into
+every record, not each character's own row. [V]
 
 **Monsters (units 20..27)**, from `actor+0xF80` (param record, header dword +12 of mNNN.bin):
 +0x14 max HP, +0x18 max MP, +0x1C overkill threshold, +0x20..+0x27 the eight stats, +0x28,
@@ -245,7 +252,7 @@ The roll is in BATTLE_CTB_AND_STATUS.md 1.3. The battle count is also bumped by
 
 **Phase 11**: `g_ffxBattleChrLoadsInFlight = 0`, then for units 0..17 on the field
 `g_ffxTreasureStaging[unit] = 1` (the participation flag, 4.1) and the body load
-`FFX_Btl_QueueChrLoad(0, unit, unit, +4, 1)`, then `sub_7AD470(unit, 3)`. [V]
+`FFX_Btl_QueueChrLoad(0, unit, unit, +4, 1)`, then `FFX_Btl_QueueWeaponChrLoads(unit, 3)`. [V]
 
 **Phase 12 -> 13 -> 14.** `FFX_Btl_LoadMonsterData 0x783680` loads one mNNN.bin per call and
 returns. Its completion `sub_783990` binds the sections and calls it again. A slot whose type id
@@ -329,7 +336,7 @@ Runs from `FFX_Btl_MainStep` only when `FFX_Btl_IsCtbTickAllowed` passes **and**
 | 29 | **`word_112A8E3 = result`**, `sub_793290` (every unit), `sub_7882B0`. Battle script event per result: 1 -> 67, 2 -> 66, 3 and 5 -> 68, 4 -> 69, with `sub_7982A0(1 / 0 / 2 / 3)`. Victory pose wait 88 frames. **`sub_7B1540`**: every front unit 0..6 bumps overdrive mode 11's counter and gains 20 gauge if mode 11 is set (Victor [I], it runs for every result but needs a living front unit) | [V] |
 | 30 | victory: units 0..17 on the field, alive, not petrified, with `+0x43B`, play AI event 45 once (`+0x43A`). Game over: `byte_112C9EF = 1` starts global magic effect `word_112C94E` (670) through `maybe_FFX_Magic_BeginGlobalEffect` once the overlay is ready | [V] |
 | 31 | waits for the counters and `FFX_ScreenFade_RequestMode3(frames)` (45 on game over, 10 otherwise) when the boot mode keeps the fade or game over runs | [V] |
-| 32 | `maybe_FFX_Magic_OverlayFree(670)` after a game over effect | [V] |
+| 32 | `FFX_Magic_EndPhaseOverlayFree(word_112C94E)` after a game over effect. That is 670 unless a script changed it through Btl_284. Only 671 calls the DLL's overlay slot 8, anything else takes the plain free path (`EFFECT_OVERLAY.md` 2.1) | [V] |
 | 33 | done | [V] |
 
 ### 3.3 The teardown in `FFX_Btl_MainStep`, and what is written back
@@ -711,7 +718,7 @@ between, or any frame-counted logic, will see the difference. [V] unless marked.
 
 | point | what waits | thread | effect |
 |---|---|---|---|
-| phase 4 | the MUSIC boot task, which waits on `AssetLoader[2](1)` and the sound loader | step | battle start step |
+| phase 4 | the MUSIC boot task, which waits on `AssetLoader[2](1)`, the sound loader, and FMOD command 20 (track 16 loading, read across threads with a 10 ms budget) | step, FMOD thread for command 20 | battle start step |
 | phase 6 | battle field file ROM read, plus the `FFX_Btl_OpenFieldArchive` RegistTask (S1) | completion on step | roster step |
 | phases 9, 34 | battle map load, `g_ffxBtlMapLoadPending` cleared on the **worker** (H1) | off thread | the step of S2. Skipped entirely when the battle map is the current scene, then S2 runs on the roster step |
 | phase 12 | party CHR loads (H5) | off thread | |

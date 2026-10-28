@@ -166,7 +166,7 @@ flags1 0x200 player bit [V].
 | blob shadow quad | ChrShader buffer `dword_CCCA74`, four world-space vertices per CHR, set index from `sub_63FF50` (the DynGeoMem set) | reset by `sub_643DC0`, built by `sub_830240` -> `sub_82E3E0` -> `sub_831D10`, submitted by `sub_643DD0` -> `sub_69F9D0`. Shadow mode CHR+0x183 m_b183 with per-map overrides. step | the shadow mesh draw | continuous, no identity besides CHR order | rebuild per present from the interpolated CHR position and the snapshotted ground height | as position | V | yes: four vertices per CHR from the interpolated position, display only. The ground height input comes from the step |
 | shadow pass | `FFX_Ch_ShadowPassAll 0x830180` in the effects pass k == 0, shadow mode 1 | step | shadow cluster gfx+0x28C4 | derived | rebuild | inherits | V call, skimmed | partial: a render pass, skimmed |
 | sky projection offset | gfx+63932 | `sub_65D860`, called in StepAll's CHR loop when Tidus is in use: Tidus's projected screen Y, clamped to 0.035..0.295, with map special cases. step | `maybe_FFX_Gfx_ApplyProjOffsetToPhyreCamera 0x6507D0` for camera +2016 (cluster +140, preOpaque and preTransparent), per present. Also read live by the kind 3 prim job | continuous, camera-baked | recompute per present from the interpolated Tidus position and camera, or lerp | camera cut | V | no: one scalar, and the kind 3 prim job reads it live |
-| cloned ClassChar | CHR+0x834 m_clonedClassChar, flags1 0x200000 | `FFX_Ch_UpdateBoneMatrices 0x8314C0`, `sub_831480` (hide flags), `sub_830B90`. step | the clone's instances | as the joints | as the joints | inherits | V calls, skimmed | partial: as the joints |
+| cloth vertex clone | CHR+0x834 m_clonedClassChar (a 560 byte cloth clone record, CHR_CLUSTER.md 8), flags1 0x200000 | `FFX_Ch_UpdateBoneMatrices 0x8314C0`, `sub_831480` (hide flags), `sub_830B90`. step | the clone's instances | as the joints | as the joints | inherits | V calls, skimmed | partial: as the joints |
 | time-sliced flags1 0x400 | CHR+0x194 bit 0x400 | `FFX_Ch_TimeSlicedFlags1Bit10`, round robin on profiler ticks that come from `g_ffxPs2HwRegSink` (deterministic, not the wall clock). step | not traced | discrete | hold | none | V writer, meaning open | no: step state |
 | character texture animation | TextureAnimationInfo entries of the character materials | `setAnimatedMaterialsChar 0x6B3060` and `sub_6B33C0`, reached from the render job path. The autoplay frame advances per present, see section 6 | `sub_6B44A0` per present | discrete | hold, drive from the step clock | spawn | I, skimmed | yes: frame select by snapshot time, display only |
 | character light set (pass command 3) | `unk_CE6408`, 8 slots of 300 bytes, ids in `dword_CE63E4` | `sub_6E5C90` via `sub_642750` (step*) from `sub_A6D380` / `sub_A6D670` | `sub_6E5A40` from `FFX_GfxCtx_ExecPassCommand`, which frees the slot | continuous | lerp per slot id | spawn, map change | V, details in section 10 | no: small per-slot constant build, the lighting itself already runs in the shader |
@@ -311,8 +311,8 @@ so the render reads the set the latest non-catch-up step wrote [V, both call sit
 | 2D vertex positions | geom+12, 1920x1080 centred pixels | `FFX_Sprite2D_Draw` (PS2 512x416 mapping when a3 != 0), `sub_640660` rounds to whole pixels | through the mesh | continuous | lerp only for keyed sprites, glyphs stay pixel snapped | none | V | yes: per-present lerp of keyed sprites, display only |
 | 2D vertex colour | geom+20, float4 | step* | same | continuous | lerp when keyed | none | V | yes: as positions |
 | 2D UVs | geom+24 | step* | same | discrete for flipbooks, continuous for scrolls | hold, except known scrolls | none | V | yes: as positions |
-| 2D texture, depth, draw kind | geom+32 name, geom+40 sort depth, item+36 -> +180 kind, item+188 glyph flag | step*, kind writer not found | `sub_650CB0`, `sub_650340` | discrete | hold | none | V reads, I writer | no: discrete |
-| 2D clip rect | manager +23456 on, bounds +23480..+23492 | `sub_67E3B0` | culled at append by `sub_644320` (step) | discrete | hold | n/a | V | yes: the append-time clip has no step reader, a GPU scissor does it |
+| 2D texture, depth, draw kind | geom+32 name, geom+40 sort depth, item+36 -> +180 kind, item+188 glyph flag | step*, kind writer not found (corrected 2026-10-28, see the end of this doc) | `sub_650CB0`, `sub_650340` | discrete | hold | none | V reads, I writer | no: discrete |
+| 2D clip rect | manager +23456 on, bounds +23480..+23492 | `sub_67E3B0` (dead in retail, corrected 2026-10-28, see the end of this doc) | culled at append by `sub_644320` (step) | discrete | hold | n/a | V | yes: the append-time clip has no step reader, a GPU scissor does it |
 | menu dim level | `dword_184087C` 0..128 | `FFX_MenuSys_StepFrame` adds `dword_1840880` per menu step | black quad via `sub_8F3DB0` | continuous | lerp | `sub_8A9670` write | V | no: one scalar |
 | menu background fade | `dword_1841C68` 0..128 | StepFrame adds `g_ffxModuleDrawPrio` per step | `sub_8A9510`, a dead PS2 upload on PC. Read by step logic | continuous, no PC visual found | n/a | n/a | V | no: step state |
 | menu frame counter | `byte_1840884` | ++ per menu step | draw helpers via `sub_8A9C60`. Odd parity steps the menu's message windows every other step | discrete phase | derive from the interpolated step time | menu enter | V | no: step state |
@@ -361,7 +361,7 @@ only stall it. FMOD audio is the wall-clock part.
 |---|---|---|---|---|---|---|---|---|
 | video frame (Y, U, V planes) | PTexture2D at mgr+908, +1024, +1140, drawn as mesh mgr+904 | `sub_A284A0`, once per step, inline in StepPresentation, or for videos 46, 72 and 32 (mgr+1392 set) in the kind 44 job `sub_6DAE00` on the render thread, queued by `sub_5B5880` | `FFX_Fmv_DrawFrame 0x6D7570` via `sub_653960` and 0x642C4B | discrete | hold, never blend frames | `FFX_Fmv_CreatePlayer 0x6D9C80` zeroes +1752 and +1760, a skip writes 65534 | V | partial: the frame choice stays in the step, the YUV plane upload and conversion are GPU work |
 | frame index, previous index, consumed count | mgr+1752, mgr+1760, player+256 (ms interval player+264) | as above, step or RT | step: `FFX_Fmv_ApplyMovieCamera` via `sub_6410D0` -> `sub_6D91B0` | discrete | hold | 65534 means past the end | V | no: the step reads it |
-| "has frame" byte (the kit calls it PlaybackComplete) | mgr+1764 | set to 1 after every successful upload (0x6D769E `lea ebx,[edi+6E4h]`, stored at 0x6D7775), and in `sub_6DAE00`. Cleared by CreatePlayer and the constructor | `FFX_Fmv_DrawFrame` gate. Step readers `FFX_Fmv_PlaybackFinished 0x645DC0`, `FFX_Fmv_StepPresentation` | discrete | hold | movie start | V | no: the step reads it |
+| "has frame" byte (the kit calls it PlaybackComplete) | mgr+1764 | set to 1 after every successful upload (0x6D769E `lea ebx,[edi+6E4h]`, the pointer goes into the job at 0x6D7775 and the 1 is stored at 0x6D7828, corrected 2026-10-27), and in `sub_6DAE00`. Cleared by CreatePlayer and the constructor | `FFX_Fmv_DrawFrame` gate. Step readers `FFX_Fmv_FirstFrameShownOrStopped 0x645DC0`, `FFX_Fmv_StepPresentation` | discrete | hold | movie start | V | no: the step reads it |
 | draw aspect | mgr+1732 from mgr+1740 | `FFX_Fmv_DrawFrame` per present | same | derived per present | n/a | n/a | V | no: one value |
 | movie screen mode | `g_ffxMovieScreenMode 0x12FB8FB`, prev `0x12FB8FC` | movie ATEL calls, cleared by `FFX_Fmv_ApplyMovieCamera` when the index runs out. step | step only (gates the magic overlay step, `FFX_RcBg_Step`, the effects pass) | discrete | hold | itself | V | no: step gate |
 | skip prompt flag and alpha | mgr+1868, prompt object gfx+69088 (+16 alpha) | set by `FFX_Fmv_PollSkipButtons 0x6D9460` (step), cleared by `FFX_Fmv_DrawFrame` (present) when the wall-clock fade `FFX_Fmv_StepFadeAlpha 0x6E8540` ends | `sub_6E7F00` | flag discrete, alpha present-rate | n/a | n/a | V, F2 item 4 | no: F2 |
@@ -757,3 +757,20 @@ also writes it in `FFX_Gfx_LoadMapAssetHeader 0x65CBF0`: it sets +4501 = 1 befor
 cluster rows, and when the header parse `sub_667BB0` returns non zero it clears +4501 and may set
 +4500 on the worker. So `FFX_Gfx_IsMapSceneLoading` can see the edge from the worker as well as
 from render. See `ASYNC_LOAD_REQUESTS.md` H2. Verified in Hex-Rays.
+
+## Correction 2026-10-28 (the 2D kind and the 2D clip, PROGRESS 1.12.8)
+
+Found while writing MENU_DRAW_PATH.md. Checked in the binary.
+
+- **Section 7 row "2D texture, depth, draw kind".** geom+40 is not a sort depth. It is the pass
+  kind, the fifth argument of `FFX_Sprite2D_Draw` (and of `FFX_DynDrawList_Append`), which Sprite2D
+  stores at geom+40. The "kind writer not found" is `sub_67D920` (`FFX_DynDrawList_BindBatchGeometry`),
+  which copies geom+40 into record +180 when it binds the batch geometry at the end of the step.
+  Kind 0 draws in `sub_650CB0`, kind 1 in `sub_650340` (so under kind 0), kind 2 only under the
+  booster HUD with a scissor. Kinds 1, 2 and 10 force a fresh record. There is no 2D depth, quads
+  draw in append order. MENU_DRAW_PATH.md 6.
+- **Section 7 row "2D clip rect".** `sub_67E3B0` is the only writer of +23456, and its one caller, at
+  0x6448C6, sits in code near 0x644850 that has no xrefs and whose address is nowhere in the binary
+  as a pointer. So the append time clip never turns on in retail and `sub_644320` always passes.
+  The clipping the menus do see is the scissor of `sub_8F9230` (`FFX_Menu_SetClipRect`), applied
+  by the rect helpers before Sprite2D. MENU_DRAW_PATH.md 5.6.

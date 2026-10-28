@@ -42,9 +42,10 @@ The model of all of this is `tools/ctb.py` in the projectzanarkand repo. See sec
 
 ### 1.1 Per-unit fields
 
-The 0xF90 (3984) byte record `g_ffxBattleAllyActors + 3984 * i` holds units 0..30. Units 0..6 are
+The 0xF90 (3984) byte record `g_ffxBattleUnits + 3984 * i` holds units 0..30. Units 0..6 are
 the characters, 8..17 the aeons, 20..27 the eight monster slots (`FFX_Btl_GetEnemyUnit(j)` is
-unit 20 + j). The 912 (0x390) byte records at `g_ffxBattleMonsterActors` for units 31..92 carry
+unit 20 + j). The 912 (0x390) byte records at `g_ffxBattleSideRecords` for units 31..92 (the
+weapon and armour side records, not monsters, BATTLE_ACTOR.md) carry
 **no CTB and no status fields**: every offset below is past 0x390, and `FFX_Btl_CtbTick`,
 `FFX_Btl_BuildCtbPreview` and the initial setup only walk 0..30. [V]
 

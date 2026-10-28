@@ -196,12 +196,19 @@ and that is where the game-logic data lives.
 
 | doc | tool | what it covers | state |
 |---|---|---|---|
-| `VBF_FORMAT.md` | `vbf.py` | the archive container | complete, header MD5 verified, 412 sampled files decompress exactly |
+| `VBF_FORMAT.md` | `vbf.py`, `apply_mount_names.py` | the archive container, and the VbfManager's 5 mount slots with every writer | complete, header MD5 verified, 412 sampled files decompress exactly. Mount slot writers proved complete 2026-10-28 |
+| `METAMENU.md` | `metamenu.py` | `metamenu.vbf`, the launcher's archive, all 150 files and who opens them | 149 reachable from the launcher IL, 1 never, FFX.exe never mounts it |
 | `EBP_FORMAT.md` | `ebp.py` | the ATEL event scripts, container and full bytecode | 397/397 parse, 17.1M instructions decode, disassembler works |
 | `ATEL_CONTEXT.md` | `ebp.py` | the event package load, the actor pool segments, the actor constructor and the script context setups | traced in IDA, segment census over 397/397, ported in the recreation |
 | `CHR_FORMAT.md` | `chrfile.py` | the character containers | 865/865 parse, 0 errors |
+| `RCDATA.md` | `apply_rcdata_names.py`, no reader | the PS2 `rcData` library: the chunk and cursor the rcBg stream reads through, and the dead `.rsd` `.ply` `.ma2` `.tm2` loaders | 230/230/230/84 shipped files match the dead parsers exactly, no retail path reaches them |
 | `MGRP_FORMAT.md` | `mgrp.py` | motion groups and the sequence bytecode | 3,156/3,156 parse, 0 rejections |
 | `MAP_FORMAT.md` | `mapfile.py` | map containers and the walkmesh | 491/491 parse, exports OBJ |
+| `BTLMAP_FORMAT.md` | `btlmap.py` | the battle map containers, the Phyre scene beside them, the battle start load and what feeds the simulation | 58/58 containers to the last byte (57 decoded, 1 refused stream), 2,734 Phyre side files classified |
+| `MAP_PARTICLES.md` | `mapparticle.py`, `apply_mapparticle_names.py` | MAP1 section 10, the field placed particle set: format, the ppp program VM, the per-frame update, its RNG and what the step reads, and the Thunder Plains rain port spec | 317/317 sets to the last byte, 0 unclaimed |
+| `MENU_SCRIPT.md` | `menuscript.py`, `apply_menuscript_names.py` | `menu_script.bin`, `system_script.bin` and `battle_script.bin`: the value and scene format, the loader and lookup, how a menu screen is built, and which parts reach the simulation | 6/6 copies parse to the last byte, renders a screen's rectangles to SVG |
+| `SOUND_FORMATS.md` | `fsb.py`, `fev.py` | the FMOD sound banks and event projects, and how SE, BGM and voice ids reach them | 1,260/1,260 banks and projects parse, FMOD Core agrees with the header parse on all 33,362 subsounds |
+| `SAVE_FILE.md` | `savefile.py` | the PC save file: path, header, the quirked CRC-16, the writers, the autosave and the load checks | 12/12 real saves round-trip byte for byte, the CRC reproduces on all 12 |
 | `FFX_GAME_NOTES.md` | `magicdll.py` | the shipped magic-DLL plugin system | ABI and host API table mapped |
 | `../COOP_DESIGN.md` | `pcmodels.py` | which character models are spawnable, and the co-op design that needs them | 25 of 35 `c`-series models have field locomotion |
 

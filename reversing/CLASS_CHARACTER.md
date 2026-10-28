@@ -69,7 +69,8 @@ table and +0x18 is the count of it.
      child list that the worker runs right after the parent job
 6. Each sub-asset job loads its row's cluster and hands it to sub_65AE40, which stores it. For a
    row `sub_6F46B0` says is a model row the cluster goes to the job's model slot and the
-   `m_bounds+28` byte of its PMeshInstances is cleared.
+   `m_bounds->m_meshInstance` dword (+28) of its PMeshInstances is cleared (0x65AF07), which takes
+   the templates out of the render. See CHR_CLUSTER.md 3.1.
 7. The last row's job runs sub_65A760:
    - sub_623580 links the imports across the bundle (sub_441F20, sub_441620). On failure it sets
      +28 = 1 with +4 left null

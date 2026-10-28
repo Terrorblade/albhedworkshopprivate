@@ -98,6 +98,11 @@
 // presentation suppressed on all but the last. That is the same mechanism the HD
 // Remaster fast forward uses, reached a different way.
 //
+// NOT DURING PACING MODE 1. The same "only when zero" test is what loads the next
+// voice timing track entry (FFX_StepPacing_LoadTimingTrack), so forced steps take
+// no track entries and PublishStepScale then reads a stale, later negative, index.
+// RequestCatchUpSteps refuses while the mode is 1. reversing/VOICE_TIMING.md, 2026-10-26.
+//
 // Three independent multipliers exist and they stack. Know which one you are
 // pulling:
 //
@@ -257,7 +262,8 @@ namespace ffx
 	// Ask for n simulation steps in the next presented frame, 1 being normal. Write
 	// this BEFORE the original animate runs. Values above about 8 have never been
 	// asked of this engine, and FFX_StepPacing's own dt clamp caps it near 9, so
-	// this refuses anything over maxReasonableCatchUpSteps.
+	// this refuses anything over maxReasonableCatchUpSteps. It also refuses while a
+	// voice timing track is pacing (PacingMode 1), see HOW TO CATCH UP above.
 	const int maxReasonableCatchUpSteps = 8;
 	bool RequestCatchUpSteps(int steps);
 	bool PendingSteps(int* out);

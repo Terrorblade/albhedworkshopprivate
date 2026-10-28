@@ -42,8 +42,10 @@ straight to unify) becomes `../../..host0:/...`, loses `../../..h` to the skip, 
 ### 1.1 Archives
 
 `FFX_InitFileSystem` mounts only `data\FFX_Data.vbf` (71,979 entries). `metamenu.vbf` (150
-entries) belongs to the launcher and is never opened by FFX.exe. There are no per language
-archives, every language lives in `FFX_Data.vbf` side by side. [V]
+entries) belongs to the launcher and is never opened by FFX.exe. The `/MetaMenu/...` timestamp
+paths FFX.exe does hold resolve into a separate 15 entry `metamenu/` tree inside `FFX_Data.vbf`,
+not into `metamenu.vbf`, see `METAMENU.md` section 4. There are no per language archives, every
+language lives in `FFX_Data.vbf` side by side. [V]
 
 ## 2. Language numbering
 
@@ -77,7 +79,8 @@ A byte read by `FFX_MesWin_GetTextLanguage_impl 0x887D00`. Its only writer is
 `FFX_MesWin_SetTextLanguage_impl 0x887D20`, called from the ATEL Save library function 93
 (`FFX_AtelSys_Save_093_resi 0x878470`) and the debug menu `sub_7CE450` case 45. Nothing on the PC
 language path sets it, so it starts as 0. Which scripts call Save 93, and with what value, was not
-traced. [V] for the writers, [I] for the value.
+traced. [V] for the writers, [I] for the value. Closed 2026-10-28: no shipped script calls Save 93,
+so the byte stays 0 (`INTERNATIONAL_CONTENT.md` 3). [V]
 
 It gates two remaps: the battle root (section 6) and the dead localized event directory
 substitution (section 7.2).
@@ -142,10 +145,10 @@ Every row is [V] (read in Hex-Rays) unless marked.
 | helpgra | `sub_774AE0` | `PS3Data/<help dir>/helpgra/GCM/help%d.dds.phyre` |
 | event TexList | `sub_874C50` | `PS3Data/event/<prefix>obj/<xx>/<name>/tex/TexList.txt` |
 | magic TexList | `sub_664D80` | `PS3Data/magic/<magic name>/tex[_<code2>]/TexList.txt` |
-| magic texture | `FFX_Magic_BuildTexturePath 0x906420` | `tex_cn` for `magic_0697` and `magic_0698` when the language is 11 |
+| magic texture | `FFX_Magic_DrawSpriteTex0 0x906420` | `tex_cn` for `magic_0697` and `magic_0698` when the language is 11. This is host 812, a 2D sprite draw used by 10 DLLs, not the magic texture loader. The ordinary magic textures are the TexList rows above, see `MAGIC_ASSETS.md` |
 | map header | `sub_659290` | `PS3Data/<map dir>[/2d]/<last>.ahwin32`, map dir is `path + 23` up to `/bin` |
 | field fp TexList | `sub_664F60` | `PS3Data` + gfx+64240 + `fp/tex/TexList.txt`. The gfx+64240 string was not traced, the checker assumes `/<map dir>/` [I] |
-| voice maps | `FmodMusic__initList` | `PS3Data/Sound_PC/Voice/VoiceIDMapper.txt`, `PS3Data/Sound_PC/Voice/<US,JP>/VoiceFevMapper.txt` by the voice flag (FmodMusic+4), not the language |
+| voice maps | `FmodVoice__initList` (0x70AB90, `SOUND_CLASSES.md` section 6) | `PS3Data/Sound_PC/Voice/VoiceIDMapper.txt`, `PS3Data/Sound_PC/Voice/<US,JP>/VoiceFevMapper.txt` by the voice flag (FmodVoice+4), not the language |
 | SyncData | `FFX_SyncData__requestForMap` | `/FFX_Data/GameData/%sData/SyncData/SyncData_%4.4d x5.txt`, no language |
 | credits | `0x6DA550` (orphan) | `/ffx_ps2/ffx/master/new_<tree>/event/obj_psv/cr/credits/credits.bin` |
 | ability map | `sub_A45E30` | `PS3Data/menu/abmap` + `/dat00/` or `/dat12/` + `tex/D3D11` + `/14080_19.dds.phyre`, no language |
@@ -158,15 +161,16 @@ Names passed to these builders, from the call sites:
   (`FFX_Btl_LoadKernelTable`), `ply_save` (`FFX_InitNewSaveData`,
   `FFX_SaveData__reloadCharNames`), `status_txt`, `arms_txt`, `btl_txt`, `btlend_txt`,
   `build_txt`, `config_txt`, `item_txt`, `menu_txt`, `mmain_txt`, `name_txt`, `save_txt`,
-  `summon_txt` (`sub_78FEF0`), `important` (`sub_7908C0`), `w_name` (`sub_7A2600`), `sphere`,
-  `panel` (`FFX_SphereGrid_LoadPanelTables`, `sub_A54AB0`). [V]
+  `summon_txt` (`FFX_KernelString_LoadGroup`), `important` (`FFX_KeyItem_LoadTable`), `w_name` (`FFX_Equip_LoadNameTable`), `sphere`,
+  `panel` (`FFX_SphereGrid_LoadPanelTables`, `FFX_SphereGrid_ReadPanelTables`). [V]
 - localized bin: `monster1..3` (`FFX_Btl_OpenMonsterArchives`), `macrodic`
   (`FFX_MenuRes_LoadMacroDic`), the battle field name (`FFX_Btl_OpenFieldArchive`, the path table
   kind 14 entry with everything up to `/battle/btl/` and from the last slash removed), the event
   name (`FFX_Ev_LoadEventPackage`, `g_ffxCurrentEventName`, the kind 12 entry between
   `/event/obj/` and the last slash, for example `bl/bltz0000`). [V]
 - localized ftc: the same battle and event names, `base` and `newkit` (`TOInit`), `help`
-  (`FFX_AtelSys_Movie_136_resf`), `cr/credits` (orphan). [V]
+  (`sa_menu_start 0x770430`, sa_menu code, not a Movie syscall as an older name had it), `cr/credits`
+  (orphan). [V]
 - menu bin: `menumain` (`FFX_Module0_ExecBoot`), `albheddic` (`TOInit`). [V]
 
 ## 5. The language table
@@ -329,8 +333,9 @@ Per family, `found/absent-ok/MISSING/not loaded`. Path table rows are in section
 
 1. **`magic_0048` has no localized TexList.** It is in the `sub_65EFD0` list (ids 7, 8, 32, 40, 46,
    48, 50, 405), so us, fr, sp, de and it ask for `magic/magic_0048/tex_<code2>/TexList.txt`,
-   and only `tex/` ships. What `sub_664550` does with a missing TexList was not read. [V] for the
-   miss, [I] for the effect.
+   and only `tex/` ships. `sub_664550` treats a missing TexList as done: it sets gfx+36 = 1 and
+   returns 5, so in those five languages none of `magic_0048`'s textures load and the effect starts
+   without them (2026-10-27, `MAGIC_ASSETS.md` section 7). [V] for the miss and the code.
 2. **Event TexLists `lc/lchb0803` and `lc/lchb0806`** are missing for fr, sp, de and it (the
    `off_C52768` prefix sends them to `event/<xx>/obj/`), and **`hi/hiku0801`** is missing for sp.
    These are only requested by event scripts through ATEL `Core_282` / `Core_283`, so the miss

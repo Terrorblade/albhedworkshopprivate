@@ -99,7 +99,7 @@ ACTOR DEFINITION RECORD (52 bytes, confirmed)
                   are type 0, and all 441 opcode-0x34 ret instructions sit inside
                   a type-0 actor - exactly one ret per type-0 actor.
                 1 character, 2 line trigger, 3 box trigger,
-                4 no motion state, 5 and 6 unidentified
+                4 no motion state, 5 crossing line trigger, 6 enter and leave volume
   +0x01..0x07 unknown                                                   [unk]
   +0x08  u16  number of script entry points (table at +0x20)
   +0x0A  u16  number of jump labels        (table at +0x24)
@@ -404,7 +404,7 @@ SYSCALL_NAMES = {
     (0, 214): "VoiceStart",
     (0, 216): "VoiceStatus",
     (0, 217): "VoiceSync",
-    (0, 247): "FFX_AtelOp_ResolvePartyMemberActor",
+    (0, 247): "WaitPartyMemberTasks",
     (0, 413): "ChN_DataDispose",
     (0, 432): "premovie_load_result",
     (0, 453): "ReadAlBhedFromSaves",
@@ -431,15 +431,16 @@ SYSCALL_NAMES = {
     (7, 19): "BtlSetUnitMoveSpeed",
     (8, 10): "mpfpbindpos",
     (9, 0): "atel_test_print",
-    (11, 2): "movie_stub2",
+    (11, 2): "movie_status",
     (11, 11): "movie_force_destroy",
     (11, 12): "movie_end_frame_result",
+    # Not syscalls: what movie:135.. would land on, the sa_menu table past Movie's 16 rows.
     (11, 135): "sa_menu_init",
     (11, 136): "sa_menu_stop",
     (11, 143): "hdd_install_end",
     (11, 144): "hdd_format",
-    (12, 0): "atelsaveram_read",
-    (12, 1): "atelsaveram_write",
+    (12, 0): "atelsaveram_write",
+    (12, 1): "atelsaveram_read",
     (12, 11): "yiLoadBattleFieldParticleNo",
     (12, 12): "yiLoadFieldParticleNo",
     (12, 86): "saveram_read_group",
@@ -459,6 +460,9 @@ LIB_INFO = {
     7:  (0xC42628, 296, 234),
     8:  (0xC5DC90, 108, 107),
     9:  (0xC5D8C0, 1, None),
+    # Movie's own rows are 0..15 (ATEL_MOVIE_SAVE_LIBRARIES.md). 16..145 are the sa_menu pointer table at
+    # 0xC40F30 that follows it, which the original would read as rows because it never bounds the index.
+    # Kept at 146 to match atel_syscall_shapes.py and the recreation's SyscallLibraryRows.
     11: (0xC40E30, 146, 13),
     12: (0xC52DD8, 94, 91),
     13: (0xC85EB0, 1, None),

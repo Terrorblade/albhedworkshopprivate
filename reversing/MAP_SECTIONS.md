@@ -123,8 +123,11 @@ field region load task "MAPREG"  sub_861650 (pushed by sub_8615B0)
   case 4: sub_919DA0(dword_1326B68)  guide map model select
           sub_729A10(&dword_1326BE0) particle state restore
   case 5: sub_873CC0  pending zone swap, sub_90A2B0, sub_919A40
-battle:  FFX_Btl_StepSubPhase -> FFX_Map_LoadMapAsync(btlMap, 0) -> group 26, zone 0
-         and sub_908600 -> group 19 on the way back
+battle:  FFX_Btl_StepSubPhase case 8, at battle START:
+           map id & 0x400 -> FFX_Map_LoadMapAsync(id & 0x3FF, 0) -> group 26, zone 0
+           otherwise      -> sub_908600(id, 0) -> group 19, a field map as the background
+         the way back to the field is the MAPREG task above (sub_908630), not sub_908600
+         (corrected 2026-10-27, BTLMAP_FORMAT.md 3)
 sync:    sub_9085D0 (group 19) from FFX_Ev_LoadEventPackage and Save 003,
          FFX_Map_LoadMapSync (group 26) from Save 049
 unload:  sub_909EA0  walkmesh off, rcBg context torn down and recreated (j_rcbgMain__f921CE0),
@@ -156,18 +159,22 @@ sub_865740(on): if on != save[+40]: save[+40] = on,
                                       12 set to 63 (on) or 127 (off), through sub_886FF0
      sub_8682A0(on)                   for each effect group id in dword_1326CF0[0..3]:
                                       on:  sub_729700 (reset the runtime records) and
-                                           sub_7295B0 (clear runtime flag 0x10)
-                                      off: sub_729570 (set runtime flag 0x10)
+                                           sub_7295B0 (clear runtime flag 0x10, the group runs)
+                                      off: sub_729570 (set runtime flag 0x10, the group is
+                                           suspended and its meshes unlinked)
 ```
 
-What it means [I]: "the player is indoors". When set, the placed particle effect groups named by
-the event (rain, snow) stop, because `FFX_MapFx_UpdatePlacedEffects` only runs records with runtime
-flag 0x10, and flagged ambient sounds drop to about half (63 against 127, I that parameter 12 is
-volume). The 49 maps that set it are
+What it means [I]: "the player is indoors", from the sound half: flagged ambient sounds drop to
+about half (63 against 127, I that parameter 12 is volume). The effect half runs the other way from
+what this doc used to say. `FFX_MapFx_UpdatePlacedEffects` **skips** a record with runtime flag 0x10
+(`test byte ptr [eax],10h` at 0x729B65, then `MapFx__f728E40` unlinks its meshes through
+`sub_645710(x, 0)` and `FFX_Gfx_LinkMeshToNode(x, 0)`) [V]. So with the bit on, the groups named by
+the event are reset and **run**, and with it off they are suspended. Which effects those groups hold
+was not checked, so the old reading "rain and snow stop indoors" does not follow from the code and
+is open (corrected 2026-10-28, see `RCFLEX.md` 7). The 49 maps that set it are
 temple cloisters (`*yt*`), Guadosalam, ship cabins (`slik`, `swin`), Besaid huts (`bsvr`), Luca
-interiors, and `ptkl08` and `ptkl14` in the Thunder Plains, which is the one place where a stopped
-rain effect would be obvious. A map without the bit can still go indoor per frame by camera height,
-through the event context's threshold at `+520`.
+interiors, and `ptkl08` and `ptkl14` in the Thunder Plains. A map without the bit can still go
+indoor per frame by camera height, through the event context's threshold at `+520`.
 
 Why it matters: **save data bytes +40 and +41 are written from map data every field step**, and the
 dynamic branch reads the camera position inside the step. In a lockstep simulation both peers load
@@ -300,19 +307,21 @@ Header, 32 bytes [V code, V data for the values]:
 | +14 | u16 | | not read | 0 |
 | +16..+28 | u32 x4 | table offsets, relocated in place | `sub_711FA0` | |
 
-Placed effect record, 80 bytes, from +32 [V]: +0..+44 twelve floats and +48, +56, +60, +64 four
-more, copied into the runtime table at `unk_D2C29C` (stride 128). +68 u16 **effect group**, which
+Placed effect record, 80 bytes, from +32 [V]: +0 position, +16 four s32 angles, +32 scale, +48 s32
+start state, +52 program, +56..+64 cull values (`MAP_PARTICLES.md` 3.2 has every field), copied into the runtime table at `unk_D2C29C` (stride 128). +68 u16 **effect group**, which
 `sub_729570` (set runtime flag 0x10 in the 76 byte records at `unk_D30260`), `sub_7295B0` (clear
-it) and `sub_729700` (reset the record) match to switch every effect of a group. The update only
-runs records with 0x10 set, and group 0 records are also frustum culled. The indoor flag of section
+it) and `sub_729700` (reset the record) match to switch every effect of a group. The update skips
+records with 0x10 set and unlinks their meshes (0x729B65), so 0x10 means suspended, and group 0
+records are also frustum culled. The indoor flag of section
 4 uses exactly these calls. +74 u8, value 2 sets `dword_D2C25C`. The count rule
 `32 + 80 * count` fits inside the section in all 317 shipped [V data]. Special case: a set with
 exactly 40 effects, or map name hash 564, sets `dword_CEC228`.
 
 Drives: placed map particle effects (waterfalls, rain, fireflies). Presentation. Their random
 numbers are the cosmetic effect stream (`THREADS_AND_CLOCKS.md` R3/R4). The group show and hide
-calls come from scripts and from the indoor flag, both step side, but nothing in the step reads
-particle state back [I].
+calls come from scripts and from the indoor flag, both step side. The step does read some state
+back: ATEL waits on group state (MapFx 4 and 5), the point light mask lands in CHR +0x188, and the
+`pppRand*` ops reseed the step thread's CRT `rand()`. `MAP_PARTICLES.md` 7 has the list [V].
 
 ## 8. Sections 11 and 12
 
@@ -323,7 +332,8 @@ YNGM is read by `rcbgLoad__f92B2F0`: 4 bytes, u32 size, `size` bytes of vertex d
 (when there is no section 0, `rcbgPre__f921640` makes a default scene). The current one is chosen by
 `sub_919DA0` (scene +26), drawn every step through `FFX_Field_DrawGuideMap` -> `sub_919D00` ->
 `sub_91DA80` -> `sub_928020`. That is the GuildMapDynamicGeometry minimap of `DYNAMIC_MESHES.md`
-9.3. Presentation.
+9.3. Presentation, except that the same draw writes the save block GuideMap explored bits on four
+scenes (`RCBG.md` 4.4).
 
 **Section 12, particle textures** [V for the reads, I for "these are the section 10 textures"]. A YN
 stream of `YNFT` chunks. Each becomes a texture transfer object of type `0x20006` holding two TRX
@@ -361,7 +371,7 @@ Header `+8` and `+12`: no reader in the complete list of section 3, and 0 in all
 | sections 2..9 | the walkmesh | yes |
 | section 1 | part animation and map light tracks on the step thread | no [I]: nothing reads them back |
 | section 10 | placed effects on the step thread | no: cosmetic RNG stream, nothing reads back [I] |
-| sections 11, 12 | minimap draw, particle textures | no |
+| sections 11, 12 | minimap draw, particle textures | mostly no. The guide map draw writes the save block GuideMap explored bits on scenes 582/584/590/591, gated on option flag 0x40 (`RCBG.md` 4.4) |
 | YNTM in section 0, header +8/+12, sections 13..27, slot 7 | nothing | unread |
 
 ## 11. Proposed IDB names
@@ -409,8 +419,8 @@ IDA was read only for this pass. One row each, with the evidence.
 | 0x72AA40 | `sub_72AA40` | `FFX_MapFx_LoadParticleTextures` | OEF2 textures and CLUTs of the loose `.bin` |
 | 0x909190 | `sub_909190` | `FFX_MapParticle_LoadPair` | `.bin` then `.pdt` from host0 |
 | 0x711FA0 | `sub_711FA0` | `FFX_Vfx_RelocateParticleSet` | relocates +16..+28 and the four tables |
-| 0x729570 | `sub_729570` | `FFX_MapFx_EnableGroup` | sets runtime flag 0x10 for every record whose +68 matches, the update runs only flagged records |
-| 0x7295B0 | `sub_7295B0` | `FFX_MapFx_DisableGroup` | clears the same flag |
+| 0x729570 | `sub_729570` | `FFX_MapFx_SuspendGroup` (was applied as `FFX_MapFx_EnableGroup`) | sets runtime flag 0x10 for every record whose +68 matches. The update skips flagged records and unlinks their meshes, so this stops the group. Renamed by `tools/apply_rcflex_names.py` |
+| 0x7295B0 | `sub_7295B0` | `FFX_MapFx_ResumeGroup` (was applied as `FFX_MapFx_DisableGroup`) | clears the same flag, the group runs again |
 | 0x729700 | `sub_729700` | `FFX_MapFx_ResetGroup` | zeroes the 128 byte runtime record of every match |
 | 0x191389C | `g_ffxMapOutSection0` | keep, comment "write only" | four stores, no load |
 

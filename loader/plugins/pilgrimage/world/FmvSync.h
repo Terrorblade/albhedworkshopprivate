@@ -129,6 +129,14 @@
 //
 // ## A VIDEO THAT WILL NOT OPEN, which looked unfixable and is not
 //
+// CORRECTED 2026-10-27 (reversing/MOVIE_DECODE.md): the premise below is
+// inverted. FFX_Fmv_StartVideo returns 0 on success AND on a missing file, and
+// Movie:10 start sets g_ffxFmvScriptRunning and g_ffxFmvScriptBlocking only when
+// it returns nonzero, which is the sampler create failing. So on PC Movie:10
+// shows no movie and its poll completes on the first look on every machine, which
+// is symmetric. Arming the barrier regardless, as this design does, is still right,
+// it just costs nothing for Movie:10. The original reasoning follows.
+//
 // Movie:10 start sets g_ffxFmvScriptRunning and g_ffxFmvScriptBlocking ONLY when
 // FFX_Fmv_StartVideo actually created a player, and Movie:10's poll completes on
 // its first look when blocking is 0. So a machine with a missing or unreadable

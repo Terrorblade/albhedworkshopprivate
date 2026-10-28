@@ -75,6 +75,15 @@ namespace ffx
 	// passes. Asks the engine rather than re-walking the table.
 	bool ModelLoadable(int chrId);
 
+	// True for the 29 listed ids whose file the engine's own loader relocates outside
+	// the allocation: c051 and 28 of the skl skeletons. Their model section is on the
+	// 24 byte mesh stride (revisions 2097 to 4883), and FFX_Ch_RelocateModelSection
+	// still reads +24 and +28 of every entry, so it adds the load address to dwords
+	// megabytes away from the blob. No shipped script, battle or magic DLL loads them.
+	// SwapPlayerModel refuses them, and anything else that loads a model by id should
+	// too. reversing/CHRDATA.md section 9.1.
+	bool ModelCorruptsHeap(int chrId);
+
 	// Every listed model, as picker options. Ids are chrIds and labels are "c001
 	// (pc)" with the character or aeon name appended for the eighteen that have one.
 	// Built once, RefreshModelList rebuilds it.
@@ -98,7 +107,8 @@ namespace ffx
 		SwapNoDataSlot,   // all 40 CHRDATA records are taken, and the engine's claimer
 		                  // memsets through a null pointer when that happens
 		SwapNoAsset,      // in the index but ships no file, which is the c046 case
-		SwapFailed        // the allocation itself came back null
+		SwapFailed,       // the allocation itself came back null
+		SwapCorruptsHeap  // ModelCorruptsHeap, the engine would write outside the file
 	};
 
 	const char* SwapResultText(SwapResult result);

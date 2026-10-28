@@ -329,6 +329,22 @@ namespace ffx
 		return Resolve<FindRomEntryFn>(Rva::ChFindRomEntry)(chrId) >= 0;
 	}
 
+	bool ModelCorruptsHeap(int chrId)
+	{
+		// FFX_Ch_MeshEntryAt 0x828BE0 gives these a 24 byte stride, measured over every
+		// .chr in FFX_Data.vbf by the recreation's ChrEveryShippedFileLoadsUnrelocated
+		if (chrId == 0x0033) // c051
+			return true;
+		// 28 of the 42 skl skeletons, k004 is on the same stride but its borrowed counts are 0
+		static const int kSkeletons[] = { 0x6001, 0x6002, 0x6003, 0x6005, 0x6006, 0x6007, 0x600C, 0x600E, 0x600F, 0x6010,
+			0x6011, 0x6065, 0x6067, 0x6068, 0x6070, 0x6071, 0x6072, 0x60CA, 0x60CC, 0x60D4, 0x60D6, 0x612E, 0x6191, 0x6192,
+			0x61F5, 0x61F7, 0x61F8, 0x61F9 };
+		for (int id : kSkeletons)
+			if (id == chrId)
+				return true;
+		return false;
+	}
+
 	void RefreshModelList()
 	{
 		// NOTHING IS STARTED HERE. FriendlyName reads the place labels for every model
@@ -398,6 +414,9 @@ namespace ffx
 			return "that model is in the engine's index but ships no file";
 		case SwapFailed:
 			return "the allocation came back null";
+		case SwapCorruptsHeap:
+			return "the engine's own loader writes outside that model's file and would corrupt "
+			       "the heap. Nothing in the game loads it.";
 		}
 		return "?";
 	}
@@ -425,6 +444,8 @@ namespace ffx
 		const int romIndex = Resolve<FindRomEntryFn>(Rva::ChFindRomEntry)(chrId);
 		if (romIndex < 0)
 			return SwapBadId;
+		if (ModelCorruptsHeap(chrId))
+			return SwapCorruptsHeap;
 
 		GetSizeFn* getSizeSlot = (GetSizeFn*)ModuleAddress(Rva::RomDevGetSize);
 		if (Readable(getSizeSlot, sizeof(void*)) && *getSizeSlot

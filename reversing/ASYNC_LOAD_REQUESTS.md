@@ -122,7 +122,7 @@ Every caller of `AsyncLoadManager__enqueueWithContext`. The callback runs on the
 | `sub_6C1520` 0x6C1738 and 0x6C1821 | `sub_6C1280`, `sub_6C1320` | dynamic geometry materials | render objects, `sub_6A4240` vtable 0xB47E58 | [V] |
 | `sub_6C2710`, `sub_6C38B0`, `sub_6C5360` | `sub_6C28B0`, `sub_6C3950`, `sub_6C53E0` | distortion and blend frame shaders | boot, all from `sub_657A50` | [V] |
 | `FFX_Fmv_CreatePlayer 0x6DA160` (`Video.cgfx`) | `sub_6DA460` | player+864, `sub_6D86E0` | each FMV, from `FFX_Fmv_StartVideo` 0x6416AA | [V] |
-| `FFX_DebugText_LoadFont` 0x6F639B (`off_C38E10`, PhyreText tuffy) | `FFX_DebugText_OnAssetLoaded 0x6F63F0` | debug font | debug only | [V] |
+| `FFX_DebugText_LoadFont` 0x6F639B (`off_C38E10`, PhyreText tuffy) | `FFX_DebugText_OnAssetLoaded 0x6F63F0` | debug font | every boot: 11 callers. `PostProcessTweakUtil__initLabels` runs at boot step 75, `sub_657A50` in `FFX_Boot_FirstAsyncLoad` runs the eight page initialisers, `CharacterLightingTweakUtil__initLabels` and `sub_6DDC80` (0x657B30) with no gate (corrected 2026-10-28, was "debug only") | [V] |
 
 Orphans, no code or data reference anywhere in .text (rel32 and absolute scans): `0x664520`
 (callback `sub_6666A0`), `0x6DA300` (an FMV shader duplicate), `0x666310`, `0x666350`,

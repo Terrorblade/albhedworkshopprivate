@@ -125,7 +125,7 @@ wrong offset here corrupts something else.
 | **+0x5D4** | dword | **current MP** | record+0x20 at 0x39B5EE, and the dword `FFX_Btl_ApplyMpDamage` and `FFX_Btl_SpendCommandCost` subtract from. Certain. |
 | **+0x606** | word | **status word 1** | written from entry+0x14. Bit 0x0001 = KO, 0x0004 = removed from the field, 0x0100 / 0x0200 / 0x0400 / 0x0800 gate acting. `FFX_Btl_LoadUnitParams` 0x39BB32 sets bit 0 and actor+0xDCC = 2 for a unit loaded dead. |
 | **+0x616** | word | **status word 2** | written from entry+0x16. Bit 0x0100 is the non-HP DEATH cause, see 2.3. 0x0400 blocks overdrive gain, 0x4000 = confuse. |
-| +0x640 | byte | derived status flags | bit 4 zeroes MP costs, bit 8 = Zombie (healing becomes 9999 damage), bit 0x20 / 0x40 scale overdrive gain |
+| +0x640 | byte | derived status flags | bit 4 zeroes MP costs, bit 8 on the ATTACKER lifts every HP amount of 1..9998 to 9999 and of -9998..-1 to -9999, both signs, before the clamp (0x38ED07, it is not Zombie), bit 0x10 makes every crit roll succeed (0x389701), bit 0x20 / 0x40 scale overdrive gain |
 | +0x65C | byte | CTB counter | `FFX_Btl_ApplyCtbDelay` adds to it, clamped 0..255 |
 | **+0x6BC** | word | **auto-ability flags 1** | OR'd from equipment ability row +98. Bit 0x4000 = Half MP Cost, 0x8000 = One MP Cost |
 | **+0x6BE** | word | **auto-ability flags 2** | OR'd from ability row +100. **Bit 0x800 = Break Damage Limit.** Bits 1 / 2 double / triple overdrive gain, bit 4 doubles at low HP, bit 8 = Overdrive to AP |
@@ -175,7 +175,7 @@ Inside `FFX_Btl_ComputeEffectForTarget 0x38E630`, read off the instruction strea
 0x38ECE7   add  ebx, 270Fh            ; 9999  ->  cap = 9999 or 99999
 0x38ECED   test al, al
 0x38ECEF   jns  short 0x38ECF8
-0x38ECF1   mov  ebx, 1869Fh           ; ability row +0x20 bit 0x80 forces 99999
+0x38ECF1   mov  ebx, 1869Fh           ; ability row +0x20 bit 0x80 forces 99999, then jumps past the 0x40 test
 0x38ECF8   test al, 40h
 0x38ECFC   mov  ebx, 270Fh            ; ability row +0x20 bit 0x40 forces 9999
 ...
@@ -188,7 +188,10 @@ So:
   bit 0x800 set, which is Break Damage Limit, folded in from equipment by
   `FFX_Btl_LoadCharRecordIntoActor 0x39C5F0` (ability row word +100 OR'd into actor+0x6BE).
 * The ability row's own flag word at +0x20 overrides the per-attacker answer: bit 0x80 forces 99999
-  regardless of equipment, bit 0x40 forces 9999 regardless.
+  regardless of equipment, bit 0x40 forces 9999 regardless. With both set 0x80 wins.
+* Between the cap and the clamp, an attacker whose actor+0x640 has bit 0x08 gets any HP amount of
+  1..9998 lifted to 9999 and any of -9998..-1 to -9999 (0x38ED07). That lift is 9999 even with Break
+  Damage Limit, and it only looks at the HP slot.
 * The clamp is symmetric, so **healing is capped at 9999 / 99999 too**, with the same cap value.
 * It applies to all three slots, so MP damage carries the same cap. Current MP has a second, tighter
   cap of 9999, applied in `FFX_Btl_SpendCommandCost 0x38E5A0`.
@@ -539,7 +542,7 @@ The function then calls `FFX_Battle_IsActive()` and, if a battle is running, re-
 usable-ability state through `0x39BB50`. **That is why you call it instead of setting the bit
 yourself:** one call covers the save block and the live battle actor.
 
-The matching test is `maybe_FFX_SaveData_TestEventFlag 0x385020`, same two branches.
+The matching test is `FFX_SaveData_TestCharAbilityBit 0x385020`, same two branches.
 
 The engine itself uses exactly this pair to teach Kimahri a Ronso Rage: in
 `FFX_Btl_ApplyPendingEffects`, when the target is unit 3 and the entry's flag byte has bit 2, it
@@ -591,7 +594,7 @@ char *table = FFX_Btl_GetMenuAbilityTableRow(0, &stringBase);   // 0x390200, ker
 for (char *e = table; (unsigned char)e[0] != 0xFF; e += 4) {
     if ((unsigned char)e[0] != wantedChar) continue;
     unsigned short id = *(unsigned short *)(e + 2);
-    bool known = maybe_FFX_SaveData_TestEventFlag(wantedChar, id);   // 0x385020
+    bool known = FFX_SaveData_TestCharAbilityBit(wantedChar, id);   // 0x385020
     const char *name = (const char *)FFX_Menu_GetAbilityName(id);    // 0x4C1A20
 }
 ```
@@ -781,8 +784,8 @@ has a switch.
 | 0xD2A90B | BtlDbgPrintInfo | already in Battle.h |
 | **0xD2A90C** | **BtlDbgLimitBreakOn** | **overdrive abilities usable at any gauge. Four readers** |
 | 0xD2A90D | BtlDbgDmgCritOn | always critical |
-| 0xD2A90E | BtlDbgDmgIs1 | every HP and MP damage becomes 1, before the clamp |
-| 0xD2A90F | BtlDbgDmgIs10000 | becomes 10000, clamps to 9999 |
+| 0xD2A90E | BtlDbgDmgIs1 | every HP and MP damage becomes 1, before the clamp. Only for a hit whose entry+0x18 has the HP (or MP) bit, so a miss or a Nul stays 0 |
+| 0xD2A90F | BtlDbgDmgIs10000 | becomes 10000, clamps to 9999, or stays 10000 with Break Damage Limit or ability +0x20 bit 0x80. Same HP or MP bit test |
 | **0xD2A910** | **BtlDbgDmgIs100000** | **becomes 100000, clamps to 9999 or 99999** |
 | 0xD2A911 | - | `0x38B760`, `0x3990D0` |
 | 0xD2A912 | - | `0x3990D0` |
@@ -809,7 +812,7 @@ Three more that are not in that block:
 |---|---|---|
 | 0xD3338C | BtlDbgKillAllHp | dword. Every HP damage event first does `curHp -= 99999`, all units, with units whose actor+4 is 1..7 exempt. `FFX_Btl_ApplyHpDamage`. Set by `0x38E620`, called from `0x2B81D0` |
 | 0xD333E8 | BtlDbgOverdriveAlwaysFull | dword. Fills the menu-opening unit's gauge to max. `FFX_Btl_GetUsableCommandKinds 0x38F700`. Set by `0x390420` |
-| 0xD33390 / 0xD33394 | BtlDealt9999Flag / BtlDealt99999Flag | dwords. Latched by `FFX_Btl_StageEffectsForTarget` when a single hit reaches the cap. The achievement trackers for 18 and 21, read and cleared by `0x893290` (`STEAM_ACHIEVEMENTS.md`) |
+| 0xD33390 / 0xD33394 | BtlDealt9999Flag / BtlDealt99999Flag | dwords. Latched by `FFX_Btl_StageEffectsForTarget` when a single hit's HP amount is >= 9999 / >= 99999, and only for an attacker whose name text at actor+0x50 is empty, which is a character (the strlen at 0x389810), so a monster's hit never latches them. The achievement trackers for 18 and 21, read and cleared by `0x893290` (`STEAM_ACHIEVEMENTS.md`) |
 
 And four shipped debug functions worth binding to buttons:
 

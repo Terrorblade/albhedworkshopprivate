@@ -26,8 +26,10 @@ Position sub-struct offset inside the actor depends on the kind:
 - kind 4: null
 
 Fields inside that sub-struct that the triggers use:
-- +0, +4, +8    previous position x y z
-- +16, +20, +24 current position x y z
+- +0, +4, +8    current position x y z
+- +16, +20, +24 previous position x y z
+  (corrected 2026-10-28, this said the reverse. `FFX_Atel_PullActorPosFromChr` copies +0 into +16 at
+  0x869E69..0x869E7B, then `FFX_Ch_GetPos` writes the new position into +0)
 - +28           Y half height, 0 or less means do not gate on Y
 - +40 (u16)     TARGET ACTOR ID, 0xFFFF means use the global bound player
 - +48           X half extent
@@ -625,3 +627,28 @@ for confirming the double indirection landed on something real before trusting a
 `ActorCanFireEvent` reads all three gates through the engine's own
 `FFX_Atel_GetEventChannel` and `FFX_Atel_GetEventScriptEntry` rather than from a transcribed
 copy of the tables, so it cannot drift from the binary even if the tables above are mistyped.
+
+## 15. Corrections from the Project Zanarkand port (2026-10-28, PROGRESS 11.12)
+
+Checked against the disassembly while porting `FFX_Atel_TestPlayerProximity 0x866980`, the StepFrame arm
+and commit and `FFX_Atel_GrantTalkBonusOnce 0x865650`. ATEL_CONTEXT.md section 14 has the detail.
+
+- Section 6 step 2 says the closest actor wins with its squared distance in ctx+492 (+0x1EC). That is true
+  for characters only. The line and box triggers store their squared REACH, `(talkRadius + ctx+0x1F0)^2`,
+  in the same slot and compare that against it (0x8688BD, 0x867206), so a character and a trigger compete
+  on unlike values. The section 7 row "winner squared distance" has the same caveat.
+- Section 7's "player interaction radius ctx+496" (+0x1F0) is written by one row only, core:402 `0x85F700`,
+  and it is a reach added to each candidate's own talk radius (+0x40), not a radius of its own. It is 0.0
+  after a reset.
+- ctx+487 (+0x1E7), not in the table above, is the party character the last talk bonus went to.
+  GrantTalkBonusOnce writes it, the debug HUD 0x8807B0 reads it. Per player it does not matter, nothing in
+  the simulation reads it back.
+- The talk bonus is a once per MAP flag (the map id from `FFX_SaveData_GetMapId 0x88D660` picks a bit of
+  the 640 event flag bits at save +0x4C), paid only for kind 0, a party index below 8 (unsigned), and a
+  character not in `g_ffxAtelTalkBonusSuppressMask`. It writes the save block, so in co-op it belongs to the host the way the
+  chest's give does.
+- A character's examine test is 3D by default (talkHeight -1), and characters with bit 0x200 of +0x34
+  (bindable, which core:66 sets for party member 0 only) or 0x20 (pad controlled) can never win. That is
+  what keeps the bound player from examining itself.
+- StepFrame only arms the scan while ctx+0x00 & 0x22. Bit 0x02 comes from core:93 (BindPlayerChr) and goes
+  with core:94, which a chest's entry 2 runs first, so every press during the open sequence is dropped.

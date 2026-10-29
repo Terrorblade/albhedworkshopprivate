@@ -206,8 +206,8 @@ slot, the carrier's actor id and `m_parentJoint`. The hash covers the three inte
 who is holding what, in **pool slot order**.
 
 Slot order rather than sorted, on purpose. Under lockstep both machines allocate CHRs from the
-same scripts in the same order, and `FFX_Ch_MoveChrMemory 0x826FA0` compacts the heap blocks a
-CHR points at but does not relocate CHRs themselves, so the slot order already has to agree. If
+same scripts in the same order, and `FFX_Ch_MoveChrMemory 0x826FA0` never runs in this build
+(`MEMORY_ARENAS.md` 4.3) and would not have relocated CHRs themselves anyway, so the slot order already has to agree. If
 it ever does not, the machines have already diverged somewhere upstream, and a hash that papered
 over that by sorting would hide the bigger problem in order to report the smaller one.
 

@@ -59,7 +59,7 @@ loaded image is `actor+0x48`. `FFX_Btl_BindMonsterArchiveSections 0x783B00`, cal
 | 2 | +0x0C | `+0xF80` | parameter record (stats, command list, capture species) | [V], BATTLE_START_AND_END 2.5 |
 | 3 | +0x10 | - | zero in all 361 files | [D] |
 | 4 | +0x14 | `+0xF88` via a copy | the 280 byte reward record | [V], BATTLE_START_AND_END 4 |
-| 5 | +0x18 | - | handed to `sub_7A01B0` when `+0x11` is set and count > 6 | [V] |
+| 5 | +0x18 | - | handed to `FFX_Btl_QueueSoundSections` when `+0x11` is set and count > 6 | [V] |
 | 6 | +0x1C | `+0xF84` | not traced | [V] binding only |
 | 7 | +0x20 | - | not read by the binder | [V] |
 

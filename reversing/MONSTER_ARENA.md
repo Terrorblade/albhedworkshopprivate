@@ -617,7 +617,7 @@ on the seeded streams:
 All seeded, all already in RANDOM_ENCOUNTER.md's scope. Nothing arena-specific to do.
 
 **The one real clock.** `FFX_Rand_SeedValueFromSystemClock 0x798950` xors the eight bytes of a
-`GetSystemTime` buffer. Its only caller is `FFX_Rand_SeedAllStreams 0x798890`, whose only caller is
+`GetSystemTime` buffer, six from the clock and two never written (THREADS_AND_CLOCKS 2.7, R1 in full). Its only caller is `FFX_Rand_SeedAllStreams 0x798890`, whose only caller is
 `FFX_InitNewSaveData 0x786B00`, which is reached from `FFX_Btl_Init 0x781700`, from the battle
 debug console, and from ATEL syscall `core:573 0x856520`. `nagi0700` calls `core:573` zero times.
 But the existing IDB comment on `g_ffxRandStreamState` says the streams are seeded "once at boot",

@@ -103,7 +103,7 @@ staging access, no script declaration, and no record-relative access through any
 | +0x29 | 1 | u8 | map out flag, bit 0 | `FFX_Field_UpdateIndoorFlag`, `FFX_Field_GetIndoorFlag` | derived |
 | +0x2A | 1 | u8 | loaded from file | `FFX_SaveData_MarkLoadedFromFile 0x88EA50` sets it on the copy `FFX_SaveFile_Serialize` writes, `SetSceneAndSub` consumes and clears it | scratch |
 | +0x2B | 1 | u8 | script byte | core:250 writes it (9 script uses), `sub_88E570` clears it. Only core:249 (no script uses it) and the debug page `sub_8807B0` read it | scratch |
-| +0x2C | 32 | u32[8] | LoveParam | core:301..304, `sub_86BCC0` (picks the top one), `FFX_Atel_GrantTalkBonusOnce`, `sub_7845E0`, `sub_7871B0` | persistent |
+| +0x2C | 32 | u32[8] | LoveParam | core:301..304, `sub_86BCC0` (picks the top one), `FFX_Atel_GrantTalkBonusOnce`, `maybe_FFX_SaveData_AdjustAffection`, `sub_7871B0` | persistent |
 | +0x4C | 80 | u8[80] | 640 event flag bits | core:305, 568, 569, `FFX_Atel_GrantTalkBonusOnce` | persistent |
 | +0x9C | 12 | f32[3] | **player position at save time** | file image only, see 2.1.1 | persistent |
 | +0xA8 | 2 | u16 | checkpoint BGM | `maybe_FFX_Scene_Init` writes, `FFX_SaveUi_BeginSave` sets the staging copy to 0xFFFF for a manual save, the load hands it to `dword_C526D0` | persistent |
@@ -248,7 +248,7 @@ players walk different parts of one of those maps.
 | +0x3D18 | 16 | | **unused** | the tail of the party_data template copy | unused |
 | +0x3D28 | 32 | u16[16] | innate ability bits, kernel table 31 | words 0..5 ids 0x3000..0x305F, words 6..15 ids 0x3060 and up. `FFX_SaveData_TestInnateAbilityFlag 0x7850B0`, `sub_785D40` | persistent |
 | +0x3D48 | 4 | u32 | gil | `FFX_SaveData_GetGil`, `SetGil`, `SpendGil`, `sub_784830` | persistent |
-| +0x3D4C | 4 | u32 | RNG seed base | conf template value, read only by `FFX_InitNewSaveData`: `FFX_Rand_SeedAllStreams(dword_11307DC + sub_887E10())` | persistent |
+| +0x3D4C | 4 | u32 | RNG seed base | party.bin row 0 +4 (inside the 0x84 byte party_data copy at 0x786BE3, not the conf template, corrected 2026-10-29), read only by `FFX_InitNewSaveData`: `FFX_Rand_SeedAllStreams(dword_11307DC + maybe_FFX_Tk_GetVblankCount())`, and that second term is always 0 on PC | persistent |
 | +0x3D50 | 8 | | **unused** | conf template | unused |
 | +0x3D58 | 3 | u8[3] | the three active party members | `FFX_SaveData__getFieldParty`, `FFX_Btl_CommitPartyToField`, `SetPartyOrderSlot` | persistent |
 | +0x3D5B | 17 | u8[17] | aeon order | `FFX_Btl_CommitAeonOrderToSave`, `FFX_Btl_SetupUnitRoster` | persistent |

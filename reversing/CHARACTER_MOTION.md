@@ -1304,7 +1304,7 @@ field map works, the motion code reads nothing from the map but the scene id.
 4. `FFX_Ch_StepSecondaryPhysics` and the bone pass that writes `m_bodyCentre` run on worker jobs and
    feed the next step's composer choice. Neither is ported. Correction 2026-10-13: StepSecondaryPhysics
    is not on the render job. Its only caller is `FFX_Ch_JointOverrideJob 0x82E390`, which `FFX_Ch_StepAll`
-   posts to worker 0 (0x82FD9A, 0x82FDD6). It also calls the CRT `rand()` at 0x82395B (`rand() % 1000`,
+   posts to queue 0, which any of the four workers drains (0x82FD9A, 0x82FDD6). It also calls the CRT `rand()` at 0x82395B (`rand() % 1000`,
    a jitter scale). MSVCR110 keeps the rand seed per thread, so that draw does not move the main thread's
    sequence, see `CHR_POOL.md` section 5.3.
 
@@ -1347,7 +1347,7 @@ Named, with the evidence (all [V] unless marked):
 | CHR 0x6FC, 0x700 | `m_i6FC`, `m_i700` | `m_texAnimProgram`, `m_texAnimHandle` | `sub_83D0A0` 0x83D0A0, `movie_str__f77C950` 0x77C950, `FFX_Ch_SetTexAnimPattern` 0x83D040 |
 | CHR 0x704, 0x708 | `m_i704`, `m_p708` | `m_texListACopy`, `m_texListACopyActive` | `sub_83C710` copies, `sub_83C940` switches, `sub_83C810` frees |
 | CHR 0x7EC..0x7EE | `_unk_7EC` | `m_anmJointCopyMode`, `m_motionMissing`, `m_b7EE` | `FFX_Mot_EvalAnmClip` 0x8388DE, `FFX_Ch_SetMotionKey` 0x837C03 and 0x837CDD |
-| CHR 0x804..0x81C | `_unk_804`, `m_f814`, `m_f818`, `_unk_81C` | `m_windYaw`, `m_windPitch`, `m_windStrength`, `m_swaySettleAlways`, `m_swaySettleIters`, `m_swayGainY`, `m_swayGainXZ`, `m_swayBattleClamp` | `FFX_Ch_StepSecondaryPhysics` 0x822DE0, `sub_824C90`, `sub_824920` [I for "gain"] |
+| CHR 0x804..0x81C | `_unk_804`, `m_f814`, `m_f818`, `_unk_81C` | `m_windYaw`, `m_windPitch`, `m_windStrength`, `m_swaySettleRequest`, `m_swaySettleIters`, `m_swayGainY`, `m_swayGainXZ`, `m_swayBattleClamp` | `FFX_Ch_StepSecondaryPhysics` 0x822DE0, `sub_824C90`, `sub_824920` [I for "gain"] |
 | CHR 0x840..0x863 | `_unk_840` | `m_cdfBoundsMin`, `m_cdfBoundsMax`, `m_cdfBoundsInvSize` | `sub_826340` 0x826340 from `FFX_ChCache_GetCdf`, no reader |
 | CHRDATA 0x018..0x068 | `_unk_18`, `m_f1C`, `m_f28`, `m_f2C`, `_unk_3C` | `m_texDataAux`, `m_collisionRadiusScale`, `m_height`, `m_rootPointLift`, `m_f3C`, `m_lookAtMirror`, `m_headSwayAxis`, `m_headSwayFlip`, `m_headRestRot`, `m_paramRevision`, `m_specIntensity`, `m_specPower`, `m_p68` and placeholders with comments | `FFX_Ch_InitChrDataFromBlob` 0x825EE0 (the section 9 parameter block), `FFX_Ch_UpdateBlink`, `FFX_Ch_UpdateLookAt`, `FFX_Ch_StepAll` [I for the two spec names] |
 | CHRDATA 0x0FC..0x11C | `_unk_F9` | `m_anmFrames`, `m_anmFile`, `m_anmName`, `m_sysMotTbl`, `m_relationTbl`, `m_motRelCount`, `m_motRelTabs`, `m_p11C` | `FFX_Ch_LoadAnmFile` 0x8283C0, `sub_837FA0`, `FFX_Ch_SetMotionKey` 0x837B05, `FFX_Ch_DataFree` 0x8258D0 |
@@ -1356,8 +1356,8 @@ Named, with the evidence (all [V] unless marked):
 Corrections to the old comments:
 
 - `m_p708` is a byte flag (`movsx` at 0x82716B), not a heap block, and `m_i700` is a slot index in the
-  texture animation table at 0x2310000, not a pointer. `FFX_Ch_MoveChrMemory` relocates the slot's data
-  through `sub_77E9F0` / `sub_77EA10`, not the field.
+  texture animation table at 0x2310000, not a pointer. `FFX_Ch_MoveChrMemory` would relocate the slot's data
+  through `sub_77E9F0` / `sub_77EA10`, not the field (it never runs in this build, `MEMORY_ARENAS.md` 4.3).
 - `m_p6DC` is the texture animation block, not cloth. `CHR_POOL.md` proposes `FFX_Ch_ReleaseClothBlock` for
   `sub_83C810`, which frees `m_texListACopy` (0x704). "Cloth" is wrong there too, a better name is
   `FFX_Ch_FreeTexListACopy`.

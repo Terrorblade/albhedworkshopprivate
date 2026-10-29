@@ -246,10 +246,10 @@ Contexts 2 and 4 were not censused (section 10).
 | `+0x0A4 + 8i`, i < 32 | word 0 | only the first word |
 | `+0x1A4 + 8i`, i < 8 | dword 0 | only the first dword |
 | `+0x1E4` | byte 0 | the examine scan armed flag (`FFX_Atel_ArmExamineScan 0x8655B0`) |
-| `+0x1E7` | 0xFF | |
-| `+0x1E8` | `0xFFFF` | |
+| `+0x1E7` | 0xFF | the talk bonus character, written by `FFX_Atel_GrantTalkBonusOnce 0x865650`, read by the debug HUD 0x8807B0 (section 14) |
+| `+0x1E8` | `0xFFFF` | the examine winner (section 14) |
 | `+0x1EA` | 0 | |
-| `+0x1EC`, `+0x1F0` | 0.0 | |
+| `+0x1EC`, `+0x1F0` | 0.0 | `+0x1EC` the winner's key, `+0x1F0` the player's reach that core:402 writes (section 14) |
 | `+0x1F4..+0x204` | 0 | `+0x1F4` is also cleared by `FFX_Atel_DeactivateContext 0x86ED40` |
 | `+0x208` | 0.0 | |
 | `+0x20C` | 0 | |
@@ -910,10 +910,13 @@ IDB names, applied and saved 2026-10-26 after a check of the step dispatch and t
 
 - What reads `+0x34` bits 13..14, which core:2 and core:127 write for the trigger types.
 - Whether any syscall fires events 0, 1 or 3 at a type 5 or 6 actor.
-- Which of shape `+0x00` and `+0x10` of a target is its current position. The steppers pair `+0x10`
-  with `ctx+0x228` and `+0x00` with `ctx+0x218`, `INTERACTION_PATH.md` section 1 names `+0x00` the
-  previous one and its trigger hazard note names `ctx+0x228` the previous one, and the two cannot both
-  hold.
+- Closed 2026-10-28: shape `+0x00` is the current position and `+0x10` the previous, the same as
+  `ctx+0x218` current and `ctx+0x228` previous. `FFX_Atel_PullActorPosFromChr 0x869E40` copies shape
+  `+0x00` into `+0x10` (0x869E69..0x869E7B) before `FFX_Ch_GetPos` refills `+0x00`, and for the bound
+  actor copies `ctx+0x218` into `ctx+0x228` (0x869EC6) before writing the new position. So the trigger
+  hazard note was right and `INTERACTION_PATH.md` had the shape fields reversed (fixed there). The box
+  and volume steppers test their height band against the previous Y, `ctx+0x22C` (0x866D55, 0x866E7E).
+  Ported as `src/engine/atel/FieldTriggers` in Project Zanarkand (PROGRESS 11.11).
 - Definition bytes `+0x01..+0x07` and `+0x0C..+0x13` of types 5 and 6 were not checked against a reader.
 
 ## 13. The syscall dispatch (2026-10-26, PROGRESS 11.3)
@@ -1074,3 +1077,104 @@ used to be here are gone. They are sa_menu functions, not syscall handlers, and 
 - `g_ffxAtelActorClampCount` is cleared by a push onto a full stack, including a result push. Readers
   not traced (11.2 open item).
 - What the misnamed `_wcstoul` pair and the `loc_` slots do is 11.4 to 11.9's.
+
+## 14. Proximity, the examine scan and the bound actor (2026-10-28, PROGRESS 11.12)
+
+Read instruction by instruction for the Project Zanarkand port (`src/engine/atel/PlayerProximity.h`).
+Everything here is [V] unless marked.
+
+### 14.1 The scan fields
+
+| field | what | writers |
+|---|---|---|
+| `+0x0A` u16 | the bound actor | `FFX_Atel_SetPlayerActorId 0x86F6A0` only, from core:67 and from `SetControlledActor 0x86F580` (the debug camera filter) |
+| `+0x1E4` u8 | the scan is armed | StepFrame's first pass clears it, `FFX_Atel_ArmExamineScan 0x8655B0` sets it (the arm is inlined in StepFrame, the function itself has no xrefs, nor does its partner `0x865550` that clears it) |
+| `+0x1E6` u8 | the event kind, 1 when the press was not `0x20` | the arm, left alone by the reset |
+| `+0x1E7` u8 | the talk bonus character | `FFX_Atel_GrantTalkBonusOnce 0x865650`, 0xFF after a reset |
+| `+0x1E8` u16 | the winner | the arm (0xFFFF), the character test and the line and box triggers |
+| `+0x1EC` float | the winner's key | the same three. See 14.2, the units differ |
+| `+0x1F0` float | the player's reach, added to each candidate's talk radius | core:402 `0x85F700` (`fst [esi+1F0h]`, a float result), 0.0 after a reset |
+
+`+0x00` bit 0x02 is "a player is bound". `FFX_Atel_BindPlayerChr 0x871AB0` (core:93) sets it whether or
+not it found a CHR to bind, `FFX_Atel_UnbindPlayerChr 0x8719E0` (core:94) clears it. StepFrame arms the scan
+only while `+0x00 & 0x22` is nonzero (0x20 is the debug control swap).
+
+### 14.2 The winner key has two units
+
+`FFX_Atel_TestPlayerProximity 0x866980` stores the candidate's squared DISTANCE (0x866C92), and the slot
+test is "free, or the stored key is larger than my squared distance". The line trigger (0x8688BD) and the
+box trigger (0x867206) store their squared REACH, `(talkRadius + ctx+0x1F0)^2`, and compare that against
+the stored key. So when a character and a trigger are both in reach, the comparison is between unlike
+values. "Closest wins" is only true among characters. INTERACTION_PATH.md section 6 says closest actor,
+which is the character half.
+
+### 14.3 TestPlayerProximity, the order the port follows
+
+1. The locals are loaded, then an actor whose `+0xAA` is not 1 (no CHR attach) returns 0 at once, before
+   anything is written.
+2. `and word [esi+36h], 0FFFEh`, the retest bit.
+3. The proximity event: `touchHeight > |py - y|` (test ah, 41h, so NaN fails), then the XZ squared
+   distance against `touchRadius^2` (test ah, 1, so equal is inside). Inside fires event 3 through
+   `FFX_Atel_FireActorEvent`. Then bit 0x40 of `+0x34` is written from the result, after the fire.
+4. The examine scan, only for `+0xAB` bit 0 (event 0 enabled) and `ctx+0x1E4 == 1`. `talkHeight` (+0x2C)
+   below 0 means a 3D distance with no band, 0 or more (or NaN) means XZ plus the band
+   `talkHeight > |py - y|`. The reach is `ctx+0x1F0 + talkRadius (+0x40)` squared, and `reachSq > d2` is
+   strict. Excluded: `+0x34` bit 0x20 (pad controlled) or 0x200 (bindable), `+0x36` bit 0x08 (the
+   debug swap actor). Then the slot test, then `FFX_Atel_TestFacingCone` with the PLAYER's rotY
+   (motion state +0x34 of the actor whose id is `ctx+0x0A`) and the candidate's talk cone (+0x3C).
+
+A character's motion state defaults to talkHeight -1, so its examine test is the 3D one. Actor 57 in
+bsil0100 is a shared setup the characters call into (callactor 57). For the chest it leaves talkRadius 13
+(core:97), the touch radius 10 (core:133) and the cone 1.0472 (core:99), and talkHeight stays -1 (read
+back from the port after the boot, so core:108's 16 goes somewhere else).
+
+### 14.4 GrantTalkBonusOnce `0x865650`
+
+Only for kind 0, only while `+0x02` bit 0x40 holds (the reset sets 0xC8). The actor id goes through
+`FFX_Atel_GetActor` (clamped), then it needs `+0xAA == 1` and a live `+0x9C`. The party index (+0x40)
+is compared unsigned below 8, so -1 is out, and bit c of `g_ffxAtelTalkBonusSuppressMask` suppresses it. The amount is
+`+0x04` (4 after a reset) when the character's ply_rom +0x10 has bit 1 (`0x784F60`), then `+0x06` (2) when
+it has bit 0 (`0x784F90`), so bit 0 wins when both are set. It is paid once per map: the map id from
+`FFX_SaveData_GetMapId 0x88D660` (the u16 at save +0x00, which the IDB comment called "unique spot index")
+picks bit `map % 32` of save word `+0x4C + 4 * (map / 32)` for a map id under 640, and LoveParam[c] at
+save `+0x2C + 4c` gains the amount. Then `+0x1E7 = c`.
+
+`g_ffxAtelTalkBonusSuppressMask 0x1326B90`: core:544 sets a bit and core:543 (dead)
+clears one, both through `0x870250`, which refuses a bit of 8 or more with a SIGNED compare. 0x863AE0,
+called from `FFX_Ev_LoadEventPackage`, clears the whole mask. The debug HUD 0x8807B0 reads it through
+0x86BD40 and prints `+0x1E7` beside it.
+
+### 14.5 The bound actor rows
+
+- core:66 `0x85CB40`, `FFX_AtelSys_Core_066_BindActorPartyChar_resi`: pops the index, and for a type 1
+  actor writes `+0x40` and pushes it to the CHR (`FFX_Atel_PushPartyIndexToChr 0x872160`, 255 for -1,
+  whenever `+0x9C` is live). Then `FFX_Atel_SetActorBindable(actor, index == 0)`, so only party member 0
+  becomes bindable, then `0x86A0E0` (the rebind), then on context index 0 (`ctx+0x1A`) the 0x184 slot
+  (the index below 8 unsigned, else 15) to the CHR, to `+0xAF` and to `FFX_Atel_SetByte184Owner`. Returns
+  the index. Tidus's entry 0 in bsil0100 calls it with 0.
+- core:67 `0x85C9A0`: `FFX_Atel_SetPlayerActorId(actor +0x2E)`, returns the id.
+- core:96 `0x856920`, core:49 `0x856BA0` and core:50 `0x856DA0` (both dead): `FFX_Atel_SetActorBindable`
+  then the rebind. core:96 pops the value and returns the new bit, 49 returns 1 and 50 returns 0.
+- `0x86A0E0`, proposed `FFX_Atel_RebindPlayerChr`: remembers bit 0x02, unbinds, binds again when the
+  hold-off bits (`+0x01` 0x04, `+0x03` 0x84) are clear and `+0x00 & 0x22` was set, then puts bit 0x02 back
+  as it was.
+
+### 14.6 The pads StepFrame reads
+
+`FFX_Atel__samplePadsBothPorts 0x871D70` fills six masks once per ATEL step from the scePad ring at lag 0
+(`FFX_Pad__getRingLagWindow` is always 1). StepFrame remaps `g_ffxAtelPadPressed` through
+`FFX_Pad__remapButtonMask(0, 0, mask)` and drops the remaps of the two held masks it also computes. The
+remap table is the identity after `FFX_Pad__resetPort`. A table entry of 16 or more sets nothing, since
+the `shl ax, cl` is 16 bit.
+
+### 14.7 What the port proved on bsil0100
+
+The chest (actor 17) boots with its own entry 0 and actor 57's setup, Tidus boots with core:66 0 and
+core:67, and a confirm press through the scePad layer commits the chest on exactly the press step the
+geometry predicts (step 13, 12 units out against a reach of 13, key 144, the 3D test). The press two steps
+earlier, 15 out, armed the scan and found no winner. Entry 2 starts on the next step and its core:94
+unbinds at once (step 14), so presses during the open arm nothing. Its two waits, core:0 30 and 15, put
+the opened bit (script var 7 bit 8, class 0 +0x1C5, save +0x3B1) on step 59, 45 steps after the unbind,
+the only byte of script work that changed, and its core:93 binds the player again. core:347 (the give, treasure id 268) is not
+ported, so the inventory half of the done-when is still open. Not a live capture: the same step as the
+original still needs one.

@@ -19,7 +19,9 @@ numbers and the new ones.
 ## Summary, read this first
 
 1. **`g_ffxMagicHostApiTable` at RVA `0x864CE8` is 947 slots**, and it is **not** a pure function
-   table. 913 slots are function pointers into `.text` and **34 are pointers to engine globals.**
+   table. 913 slots are function pointers into `.text`, **33 are pointers to engine globals**, and
+   slot 854 is a null pointer (the dword at RVA `0x865A40`, VA `0xC65A40`, is 0). This said 34 globals until
+   2026-10-28, the 34th was the null. `MAGIC_HOST_API.md` names every slot.
    `MagicFile__start 0x5DA7F0` passes its address to the loaded DLL's `InitMagicPRX` export.
 
 2. **581 DLLs, `magicFiles/FFX/magic_NNNN.dll`, 24 KB to 3.4 MB each.** `NNNN` is
@@ -96,7 +98,8 @@ of the four is identified.
 RTTI name strings, so the end is unambiguous. Of the 947:
 
 - **913 are function pointers** into `.text`
-- **34 are pointers to engine globals**, listed in section 3
+- **33 are pointers to engine globals**, listed in section 3
+- **1 is a null pointer**, slot 854 (the dword at RVA `0x865A40`, VA `0xC65A40`, is 0)
 
 Only one thing in the exe references the table: `MagicFile__start` pushes its address.
 
@@ -149,7 +152,7 @@ code a step-deterministic number of times**, and the lockstep gate on `FFX_MainS
 all of it. That is the most reassuring fact in this document. Section 5 is about the fact that it does
 not finish the argument.
 
-## 3. The 34 engine globals handed to every DLL
+## 3. The 33 engine globals handed to every DLL
 
 These are the slots that are not functions. **All 581 DLLs copy 32 of them into plain globals of
 their own in `InitMagicPRX`**, the same 32 in every DLL, slot 741 included. Slot 743 is not one of
@@ -163,44 +166,46 @@ up early. It also picked the wrong table pointer global in nine DLLs for the sam
 
 | slot | RVA | name |
 | --- | --- | --- |
-| 741 | `0x1F0FFE0` | unnamed |
-| 742 | `0x1F32E8C` | unnamed |
+| 741 | `0x1F0FFE0` | `g_ffxPppDefaultHeap` |
+| 742 | `0x1F32E8C` | `g_ffxEffectPacketCursorA` |
 | **743** | `0xEA40C0` | **`g_ffxEffectUnitPtrs`**, effect-unit pointers indexed by `opp_main` / `FFX_Magic_Oef2Disp` |
-| 744 | `0xD3FCD0` | unnamed |
-| 745 | `0xD3FD10` | unnamed |
-| 746 | `0x1F21540` | unnamed |
-| 747 | `0xD9FE90` | unnamed |
-| 748 | `0x1F22780` | unnamed, byte |
-| 749 | `0x1EFB450` | unnamed |
-| 750 | `0xDA0060` | unnamed |
-| 751 | `0x844BF0` | unnamed, float |
-| 752 | `0x1F0FF60` | unnamed |
-| 753 | `0x1F0FD2C` | unnamed |
-| 754 | `0x1F0FFA0` | unnamed |
-| 755 | `0x1F0FE20` | unnamed |
-| 756 | `0x1F0FE60` | unnamed, float |
-| 757 | `0x1F0FF20` | unnamed |
-| 758 | `0x1F0FD34` | unnamed |
-| 759 | `0x8498DC` | unnamed, pointer |
-| 760 | `0x21D5A20` | unnamed |
-| 761 | `0x1F0FD30` | unnamed |
-| 762 | `0x1F0FD50` | unnamed, float |
-| 763 | `0xDA0710` | unnamed |
+| 744 | `0xD3FCD0` | `g_ffxEffectViewMatrix` |
+| 745 | `0xD3FD10` | `g_ffxEffectProjMatrix` |
+| 746 | `0x1F21540` | `g_ffxEffectRgSettings` |
+| 747 | `0xD9FE90` | `g_ffxBattleEffectUnit` |
+| 748 | `0x1F22780` | `g_ffxEffectDebugState` |
+| 749 | `0x1EFB450` | `g_ffxMagicDllSharedBlock` |
+| 750 | `0xDA0060` | `g_ffxEffectSysFlags` |
+| 751 | `0x844BF0` | `g_ffxSinTable4096` |
+| 752 | `0x1F0FF60` | `g_ffxVfxViewMatrix` |
+| 753 | `0x1F0FD2C` | `g_ffxVfxPacketCursor` |
+| 754 | `0x1F0FFA0` | `g_ffxPppPartWorldMatrix` |
+| 755 | `0x1F0FE20` | `g_ffxPppDrawMatrix` |
+| 756 | `0x1F0FE60` | `g_ffxVfxProjMatrix` |
+| 757 | `0x1F0FF20` | `g_ffxPppModelViewMatrix` |
+| 758 | `0x1F0FD34` | `g_ffxVfxTimeFrozen` |
+| 759 | `0x8498DC` | `g_ffxSharedWorkBufPtr` |
+| 760 | `0x21D5A20` | `g_ffxYanagiCtx` |
+| 761 | `0x1F0FD30` | `g_ffxPppDrawHookTable` |
+| 762 | `0x1F0FD50` | `g_ffxPppOwnerScale` |
+| 763 | `0xDA0710` | `g_ffxGsDrawEnvPacket` |
 | **764** | `0x1FCBBF0` | **`g_ffxMainStepCounter`**, the game's own frame number |
-| 765 | `0x83E6C0` | unnamed, byte |
-| 769 | `0x864CE0` | unnamed, sits immediately before the table itself |
+| 765 | `0x83E6C0` | `g_ffxClutSwizzleTable` |
+| 769 | `0x864CE0` | `maybe_g_ffxMagicHostApiVersion` |
 | **827** | `0xD3335C` | **`g_ffxInMagicOverlayCall`**, set around a DLL overlay call when the table is the current DLL's, and by DLLs around their own Oef2 calls |
-| 850 | `0x8CCA58` | unnamed |
-| 880 | `0x1F0FCA0` | unnamed |
-| 919 | `0xD33398` | unnamed |
-| 921 | `0x83BBB0` | unnamed, pointer |
-| 935 | `0x1540AC4` | unnamed |
+| 850 | `0x8CCA58` | `g_ffxVfxDynGeoForceBlend4` |
+| 880 | `0x1F0FCA0` | `g_ffxVfxInvViewMatrix` |
+| 919 | `0xD33398` | `g_ffxMagicSpecialActorList` |
+| 921 | `0x83BBB0` | `g_ffxPppOpTableForDlls` |
+| 935 | `0x1540AC4` | `g_ffxMagicHideChrOnStop` |
 | **936** | `0xEFB7D0` | **`g_ffxIsCatchUpStep`**, set by `FFX_MainStep` when `g_ffxPendingSteps > 0` |
 
-Twenty-seven of the thirty-four are unnamed, and naming them is a cheap way to learn what the effect
-system actually shares with the engine. Note the cluster around `0x1F0FD2C..0x1F0FFE0`, which is
-eleven slots into one small region, so that region is probably one effect-system structure worth
-mapping as a unit.
+All 33 are named now, see `MAGIC_HOST_API.md` section 4 for the evidence. This paragraph said
+twenty-seven of thirty-four were unnamed until 2026-10-28. The thirty-fourth was slot 854, which is
+a null pointer, not a global. The cluster around `0x1F0FCA0..0x1F0FFE0` turned out to be the ppp and
+vfx draw state: view, inverse view and projection matrices, the part world, draw and model view
+matrices, the draw hook table, the owner scale, the packet cursor, the time freeze flag and the
+default ppp heap.
 
 ## 4. Slot 632: magic DLLs attach characters to bones
 
@@ -342,7 +347,7 @@ RVAs. Add 0x400000 for the IDA VA.
 
 | RVA | type | what |
 | --- | --- | --- |
-| `0x864CE8` | `void*[947]` | `g_ffxMagicHostApiTable`, 913 functions + 34 globals |
+| `0x864CE8` | `void*[947]` | `g_ffxMagicHostApiTable`, 913 functions + 33 globals + 1 null |
 | `0x864CA0` | `int` | `g_ffxMagicFileId`, which `magic_NNNN.dll` is current |
 | `0x864CAC` | `HINSTANCE` | `g_ffxMagicFileHinst`, -1 when nothing is loaded |
 | `0x1EFB6A0` | `void(*)(void*)` | `g_ffxMagicInitMagicPRX`, the resolved DLL export |
@@ -381,7 +386,7 @@ divided by four. Three figures from it were wrong:
 
 | I said | actually | why |
 | --- | --- | --- |
-| the table is 741 function pointers | 947 slots, 913 functions and 34 globals | 741 is where the first run of data slots starts, not the end |
+| the table is 741 function pointers | 947 slots, 913 functions, 33 globals and 1 null | 741 is where the first run of data slots starts, not the end |
 | 718 of 741 slots referenced, 115426 references | 640 distinct slots, highest index 946 | the loose pattern matched struct accesses |
 | slot 632 called by 4 DLLs, 16 sites | 2 DLLs, 4 sites each | `magic_0162` and `magic_0165` were false positives |
 
@@ -486,7 +491,9 @@ Ranked.
 1. **What the DLLs that read `g_ffxIsCatchUpStep` or `g_ffxMainStepCounter` do with it.** All 581
    hold pointers to both, 4 read the catch-up flag and 20 the step counter (`EFFECT_OVERLAY.md`
    section 9). magic_0515 and magic_0446 are read and look like presentation. 0611, 0667 and 0668
-   are the catch-up readers still to decompile. The runtime experiment in section 5 still settles it.
+   are the catch-up readers still to decompile. (2026-10-28: all four also clear the Slow counter +0x614 of a unit
+   through host 925 at effect frame 30, BATTLE_ACTOR.md 9.4. In magic_0515 that write is not behind the
+   catch-up test.) The runtime experiment in section 5 still settles it.
 2. **Whether the two attaching DLLs attach on a step-driven schedule.** The overlay step that drives
    them is step-driven, which is a strong argument but not a proof about the DLL's own control flow.
    This decides whether checksum region 15 is stable during spell animations.
@@ -496,8 +503,8 @@ Ranked.
    bound by construction otherwise: the scanner does not follow the table pointer
    through a stack spill or around a loop back edge, so a DLL that only ever reaches a slot that way
    is missed. Section 7 says how small the measured residue is.
-4. **27 of the 34 exposed globals are unnamed**, including an eleven-slot cluster in one small
-   region. Cheap to work out and probably informative.
+4. **The 33 exposed globals are all named now** (`MAGIC_HOST_API.md` section 4). The eleven-slot
+   cluster is the ppp and vfx draw state. This said 27 of 34 were unnamed until 2026-10-28.
 5. **The four simulation-reachable CRT `rand` callers in the exe are unidentified** `sub_` functions
    (`sub_63DF70`, `sub_9210E0`, `sub_937190`, and the thunk path through `sub_810E20`), so I do not
    know whether any makes a decision that matters.

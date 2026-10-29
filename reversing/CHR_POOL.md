@@ -291,7 +291,7 @@ the story progress, the ATEL context bit 2, the battle state, the camera matrice
   not `0x20`: `m_flags1 |= 0x1000`, the joint override matrices for magic 437 and 438, the job list for
   CHRs with `m_flags1 & 0x200000` and a cloned ClassCharacter, the texture animation call (not on
   catch-up), `FFX_Ch_AccumulateLights`, the shadow registry bit, the specular upload. Then the job list
-  is posted to worker 0 as `FFX_Ch_JointOverrideJob 0x82E390`, ids 3 and 103 first.
+  is posted to the shared job queue as `FFX_Ch_JointOverrideJob 0x82E390`, ids 3 and 103 first.
 
 **`FFX_Ch_UpdateCameLenAndZClip`** [V]: clears hide bits `0x08 | 0x20` and `m_flags1 & 0x10000000`,
 `m_cameLen = |m_bodyCentre - FFX_Came_GetPos(1)|`. Returns 1 if any other hide bit is set, 0 without
@@ -309,9 +309,9 @@ recreation keeps the pass, with the argument, as a no-op.
 
 | Job | Posted by | Thread | Joined | Writes |
 |---|---|---|---|---|
-| `FFX_Ch_UpdateRenderJob 0x833530` mode 0 | `FFX_Ch_UpdateMotionAll`, end | Phyre pool via `JobSchedule__postJob3` | the next UpdateMotionAll's pass 4, or DispatchInBatches' first join | blink (`rand`, worker state), look at, skin matrices and bone positions (`m_bodyCentre`) when `m_flags1 & 0x3000000`, shade from lights, `m_flags1 & 0x200` = is the controlled CHR, `+0x878` stage marker |
+| `FFX_Ch_UpdateRenderJob 0x833530` mode 0 | `FFX_Ch_UpdateMotionAll`, end | the shared job queue via `JobSchedule__postJob3` | the next UpdateMotionAll's pass 4, or DispatchInBatches' first join | blink (`rand`, worker state), look at, skin matrices and bone positions (`m_bodyCentre`) when `m_flags1 & 0x3000000`, shade from lights, `m_flags1 & 0x200` = is the controlled CHR, `+0x878` stage marker |
 | the same, mode 1 | `FFX_Ch_DispatchInBatches` | the same | its own second join | the same for parented CHRs, plus the shade constants |
-| `FFX_Ch_JointOverrideJob 0x82E390` | `FFX_Ch_StepAll` walk 4, through `FFX_Ch_PostJointOverrideJob` -> `JobSchedule__postJob2OnWorker` | worker 0 | `FFX_Job_WaitWorker0Idle` at the end of the step, and inside StepAll before it regrows the job list | joint override matrices, **`FFX_Ch_StepSecondaryPhysics 0x822DE0`**, which draws `rand()` on worker 0 and is the only clear of `m_flags3 & 4` |
+| `FFX_Ch_JointOverrideJob 0x82E390` | `FFX_Ch_StepAll` walk 4, through `FFX_Ch_PostJointOverrideJob` -> `JobSchedule__postJob2OnWorker` | queue 0, any of the four workers | `FFX_Job_WaitQueueIdle` at the end of the step, and inside StepAll before it regrows the job list | joint override matrices, **`FFX_Ch_StepSecondaryPhysics 0x822DE0`**, which draws `rand()` on worker 0 and is the only clear of `m_flags3 & 4` |
 
 Correction: the `m_flags3 & 4` clear is in the joint override job StepAll posts, not in
 `FFX_Ch_UpdateRenderJob`. Both run between one step's motion and the next, so the probe caveat in
@@ -319,9 +319,11 @@ Correction: the `m_flags3 & 4` clear is in the joint override job StepAll posts,
 
 The worker `rand()` (checked 2026-10-13): StepSecondaryPhysics calls the imported MSVCR110 `rand` at
 0x82395B as `rand() % 1000` and scales a jitter vector by it. That CRT keeps the seed in per thread data,
-so the draw advances worker 0's own sequence, never the step thread's (which `FFX_Time` drains once per
-sub-step). It is reproducible only while worker 0 is the one thread that runs this job and nothing else
-on it draws. Whether the jittered result reaches a hash visible field is open [I].
+so the draw advances the running worker's own sequence, never the step thread's (which `FFX_Time` drains once per
+sub-step). Correction 2026-10-28: "worker 0" is queue 0. There is one shared queue, `startWorkers` passes 0 to all
+four workers (0x6DBB35), so any of them can run this job and the draw order is not reproducible. That does not
+matter: the gust only moves the sway particles (CHRPART +0x0C and +0x08), and no joint, CHR field or step reader
+takes it. It is a cosmetic stream outside the hash, see `THREADS_AND_CLOCKS.md` R5.
 
 Open [I]: between the mode 0 dispatch at the end of one UpdateMotionAll and its join, the step thread runs
 `FFX_PlayerCam_Step` and, with two sub-steps, the whole next sub-step's player control, battle, ATEL,
@@ -450,7 +452,7 @@ Not applied, the IDB was read only for this pass.
 | 0x83C810 | `FFX_Ch_ReleaseTexListACopy` (applied) | | frees `m_texListACopy` (CHR+0x704) and its render side, from `FFX_Ch_Dispose` and the magic host table entry 346. Corrected 2026-10-13: +0x6DC..+0x708 is texture animation, not cloth (CHARACTER_MOTION.md section 12) |
 | 0x7FC650 | `FFX_Ch_ReleaseShadowRegistryEntry` | `FFX_Ch_ReleaseEffectRegistryEntry` | finds the CHR in `g_ffxChrShadowRegistry` and releases its effect unit |
 | 0x7FC780 | `FFX_Ch_RegisterShadowRegistryEntry` | `FFX_Ch_RegisterEffectRegistryEntry` | its counterpart, called from `FFX_Ch_Allocate` |
-| 0xA44B40 | `FFX_Ch_PostJointOverrideJob` | `FFX_Ch_PostJointOverrideJob` | posts `FFX_Ch_JointOverrideJob` to worker 0 |
+| 0xA44B40 | `FFX_Ch_PostJointOverrideJob` | `FFX_Ch_PostJointOverrideJob` | posts `FFX_Ch_JointOverrideJob` to queue 0 (any worker) |
 | 0x82E200 | `sub_82E200` | `FFX_Ch_IsWakkaModel` | `m_id == 3 \|\| m_id == 103`, the ids StepAll posts first [I for the character] |
 | 0x820580 | `?_Get_future_error_what@std@@YAPBDH@Z_2` | `FFX_Prof_GetPrevSectionTicks` | returns `g_ffxProfSectionTicksPrev[a1]`, a misidentified CRT match |
 | 0x824620 | `sub_824620` | `FFX_Ch_InitBlock864` | zeroes `+0x864..+0x86C`, `+0x868 = 11245.0` for id 101 |

@@ -8,8 +8,9 @@ RVA that goes in `loader\workshop\include\ffx\addresses\`.
 
 Everything below was read out of the IDB by decompiling and by checking every xref to each global.
 Claims are marked **confirmed** when they came out of the disassembly or out of the shipped data
-file, and **inferred** when they did not. There is one thing I could not settle and it has its own
-section near the end, read that before you build anything on the formation picker.
+file, and **inferred** when they did not. Section 8 was the one thing I could not settle. It is settled
+now, see the correction of 2026-10-28 at the end, which also corrects the scene id offset, the booster
+and the gate writers.
 
 Names and evidence comments for every function and global here are in the IDB.
 
@@ -121,7 +122,8 @@ denominator. They exist only for that display. The roll does not read them. Conf
 non-write xrefs are in the debug window.
 
 All four accumulators are reset by `FFX_Field_ResetEncounterAccum 0x780FF0`, which runs on a
-successful roll, from `FFX_Btl_BeginBattle 0x781020`, and from `0x781C50` on map load.
+successful roll, from `FFX_Btl_BeginBattle 0x781020`, from `0x781C50` on map load, and from `0x780C70`
+(argument 0, so the return tasks survive), which is core:527's tail.
 
 ## 3. Whose movement it reads
 
@@ -204,8 +206,8 @@ Map entry, 14 bytes, confirmed:
 | off | field |
 |---|---|
 | +0 | `s16` map id. `FFX_Btl_FindEncounterSceneByMapId 0x79D1C0` linear searches this and returns -1 when the map is absent |
-| +2 | `u16` offset into `g_ffxEncZoneBlob` |
-| +4 | `u16` not used by this path |
+| +2 | `s16` offset into `g_ffxEncZoneBlob`, read `movsx` at `0x79D17B` |
+| +4 | `s16` the field asset base, `FFX_Btl_ResolveFieldAssetIndex 0x79D15E`, not used by this path |
 | +6..+13 | 8 char battle scene base name, e.g. `bjyt02`, `mihn08`, `klyt00` |
 
 Zone table at `g_ffxEncZoneBlob + entry[+2]`, confirmed:
@@ -223,9 +225,9 @@ Zone record, confirmed against all 192 records in the file:
 | +0 | `u8` formation entry count |
 | +1, +2 | `u8` `u8` the battle map word, little endian. Bit 0x400 set means a battle map |
 | +3 | `u8` **ENCOUNTER RATE**. 0 means no random battles in this zone. Shipped values are 0, 20, 30, 40, 50, 60, 65 |
-| +4 | `u8` the modulo divisor for the formation pick, equal to the sum of the weights |
+| +4 | `u8` the modulo divisor for the formation pick, the sum of the LIVE weights, rewritten by every weight reset |
 | +5 + 2i | `u8` battle scene variant number, becomes the `_%02d` in the scene name |
-| +6 + 2i | `u8` weight |
+| +6 + 2i | `u8` weight. Low nibble the shipped default, high nibble the live weight the pick reads. The file has 0 in every high nibble, `FFX_Btl_ResetEncounterZoneWeights 0x7828A0` fills it on map load |
 
 Worked example, Mi'ihen Highroad, confirmed by parsing the file. Map entry 20 is map id 218, scene
 name `mihn08`, two zones. Zone 0 has rate 50, divisor 18, and 8 formations with variants 0..7 and
@@ -244,9 +246,11 @@ Is there a global holding the current map's rate or table pointer? Only partly.
 - During the field step the lookup is done fresh every frame from the scene id and the zone byte.
   There is no "current map rate" global. Confirmed.
 
-The scene id used for the lookup is `FFX_SaveData_GetSceneId 0x88D690`, which is
-`(u16)g_ffxSaveData[0]`, unless `g_ffxAtelSceneIdOverride 0xC5273C` is greater than 0, in which case
-that wins. The override is -1 at `FFX_Atel_Init` and written by `0x870130`. Confirmed.
+The scene id used for the lookup is `FFX_SaveData_GetSceneId 0x88D690`, which is the u16 at
+`g_ffxSaveData + 0x04` (`movzx eax, word ptr [eax+4]` at `0x88D695`, the entry map number, not the map
+id at +0x00, corrected 2026-10-28), unless `g_ffxAtelSceneIdOverride 0xC5273C` is greater than 0, in
+which case that wins. The override is -1 at `FFX_Atel_Init`, set back to -1 by map unload (`0x872D7E`)
+and by `FFX_Ev_LoadEventPackage` (`0x872F89`), and written by `0x870130` from core:527. Confirmed.
 
 ## 5. The "no encounters" gates
 
@@ -260,8 +264,8 @@ The list is confirmed from the disassembly of `0x871BC0` and `0x780D10`.
 | `g_ffxAtelCtxArray[0] & 1` | `0x871BD6` | context 0 is live. Set by `FFX_Atel_InstallContextCallbacks 0x8711A3` |
 | `ctx+10 != 0xFFFF` | `0x871C77` | a player actor is bound |
 | `ctx[0] & 2` | `0x871C7F` | the player-bound flag. Set by `FFX_Atel_BindPlayerChr 0x871AB0`, cleared by `FFX_Atel_UnbindPlayerChr 0x8719E0` |
-| `ctx[1] & 4 == 0` | `0x871C87` | writer not found, see unsettled |
-| `ctx[3] & 0x84 == 0` | `0x871C8C` | writer not found, see unsettled |
+| `ctx[1] & 4 == 0` | `0x871C87` | no message window holds the player. Set by `FFX_Atel_MesWinPullStateAndGatePlayer 0x872028..0x87204C`, only while `ctx[1] & 8` |
+| `ctx[3] & 0x84 == 0` | `0x871C8C` | bit 0x04 is set by the core:347 and core:534 starts (`0x85A8BB`, `0x85B2ED`) and cleared by their resi (`0x85B4C5`, `0x85B934`), the treasure and ability messages. Bit 0x80 is set by `FFX_Field_FreezeActorsToScratch 0x8663AF` (from BeginBattle and save:36) and cleared at `0x871FFA` |
 | `ctx[0] & 0x10 == 0` | `0x871C92` | a per-frame scratch bit, cleared by `FFX_Atel_StepFrame 0x8679F4` |
 | `ctx[1] & 1 == 0` | `0x871C97` | cleared at the end of this same function, so a one-frame latch |
 | `ctx[0] & 8` | `0x871C9C` | **the context's actors have finished booting**. Set by `FFX_Atel_BootAllActors 0x8683E0`, the callback the context ctor installs at ctx+80 |
@@ -270,8 +274,8 @@ The list is confirmed from the disassembly of `0x871BC0` and `0x780D10`.
 | `g_ffxSaveData[19] & 6` | `0x871CB8` | see below, effectively always true |
 | `ctx+528 & 4 == 0` | `0x871CBE` | **the main menu is not open**. `FFX_Field_StepMenuOpenRequest 0x873620` clears this bit at `0x87365F` and sets it at `0x873848` when it calls `FFX_MenuSys_RequestOpen` |
 | `FFX_Btl_IsBattlePendingOrActive() == 0` | `0x871CF5` | `FFX_Btl_GetPhase() != 0 \|\| g_ffxBattlePendingKind != 0` |
-| `ctx[3] & 3 == 0` | `0x871D04` | writer not found |
-| `sub_886630() == 0` | `0x871D0A` | a thunk to `sub_886650` which is `return 0`. Dead gate in this build |
+| `ctx[3] & 3 == 0` | `0x871D04` | the return from a battle. `FFX_Btl_ReturnToField 0x861160` sets bit 1 for mode 1 (`0x861282`) and bit 0 otherwise (`0x861311`), `FFX_Field_BootDoneTask 0x861480` clears them. Also gates the stroll |
+| `FFX_Field_EncounterHoldStub() == 0` | `0x871D0A` | a thunk to `FFX_Field_EncounterHoldStub_impl` which is `return 0`. Dead gate in this build |
 | `assetLoader[2](1) == 0` | `0x871D18` | no disc read in flight. No encounter while streaming |
 
 Also, when `ctx+528 & 2` is set on entry it calls `FFX_Btl_CancelPendingBattle 0x781530` first, which
@@ -292,7 +296,7 @@ suppression mechanism.
 
 | gate | address | what it means |
 |---|---|---|
-| `g_boosterEncounterRate` | `0x780D73` | 0 zeroes the distance and bails, 1 falls through to `g_ffxEncountersEnabled`, 2 multiplies the distance by 10 before accumulating |
+| `g_boosterEncounterRate` | `0x780D73` | 0 zeroes the distance and bails, 1 falls through to `g_ffxEncountersEnabled`, 2 multiplies the distance by 10 before accumulating AND skips the No Encounters test (esi stays 1, `0x780D85..0x780D8F`). Any other value also skips it |
 | `g_ffxBattlePendingKind == 2` | `0x780DAA` | a scripted battle is already queued and wins |
 | scene index < 0 | `0x780DAF` | the map has no row in `btl.bin`. **This is the cleanest per-map "no random battles here"** |
 | `dist == 0.0` | `0x780DC0` | the player did not move |
@@ -314,8 +318,8 @@ It is recomputed by `FFX_Btl_Shutdown 0x781590` at the end of every battle and b
 
 ### Two gates that look live and are not
 
-- `dword_112CA24` and `byte_112CA28` at the very top of `FFX_Field_StepRandomEncounter` are a forced
-  encounter hook. `dword_112CA24` has **exactly one xref in the entire binary**, this read, so
+- `g_ffxEncForcedHook` and `maybe_g_ffxEncForcedFormation` at the very top of `FFX_Field_StepRandomEncounter` are a forced
+  encounter hook. `g_ffxEncForcedHook` has **exactly one xref in the entire binary**, this read, so
   nothing ever writes it, and it lives in the zero-filled tail of `.data`. The branch is dead.
   Confirmed.
 - `g_ffxEncUsesSceneReq 0x112A8F7` chooses between a scene transition request and the deferred flag
@@ -369,8 +373,9 @@ reentrancy worry, and no mid-frame state problem. That is as good as this questi
 out.
 
 Reentrancy note: `FFX_Field_StepRandomEncounter` refuses to overwrite a pending kind of 2, and
-`FFX_Btl_IsBattlePendingOrActive` stops the whole field step while any battle is pending, so the flag
-cannot be stacked. Confirmed.
+`FFX_Btl_IsBattlePendingOrActive` stops the stroll step and the encounter call (not the rest of the
+field step) while any battle is pending, so the flag cannot be stacked. A pending kind 1 does not stop
+`FFX_Field_StepRandomEncounter` itself, only its caller. Confirmed.
 
 ## 7. The RNG, and the correction to the premise
 
@@ -402,6 +407,10 @@ the ambush outcome impossible, so that bit is First Strike or Initiative, not No
 Encounters is `record+0x4E` bit 1 and goes through `g_ffxEncountersEnabled`. Confirmed.
 
 ## 8. The one thing I could not settle
+
+Settled 2026-10-28, see the correction at the end. The `>> 4` is real and so is the data. The live
+weight lives in the high nibble and is filled from the low nibble on every map load, so in memory the
+pick works. What follows is kept as it was written.
 
 The weighted formation pick does not agree with the shipped data, and I could not work out which side
 of that I am misreading.
@@ -521,7 +530,7 @@ Reasons this is the right shape and not just the easy one:
   large fraction of maps. Calling `FFX_Field_StepRandomEncounter` honours all of it for free, and
   calling `FFX_Atel_StepFieldFrame` honours even more.
 - Do not force `g_ffxBattlePendingKind = 2` for a random encounter. The two values are distinguished
-  downstream: `FFX_Btl_MainStep 0x790EE1` reads `word_112A9D4` to decide the return-to-field tasks,
+  downstream: `FFX_Btl_MainStep 0x790EE1` reads `g_ffxBtlReturnTasks` to decide the return-to-field tasks,
   and `FFX_Field_ResetEncounterAccum(1)` zeroes it on the random path while
   `FFX_Btl_RequestScriptedBattle` fills it in.
 - Do not call `FFX_Btl_BeginBattle 0x781020` directly to start a random battle. It frees and
@@ -578,3 +587,44 @@ matching bit. The roll draws stream 1 even when `0x112A923` later forces the res
 `FFX_Btl_BeginBattle` sets sub phase **4**, not 5, and tail calls `FFX_Btl_StepSubPhase 0x783020`.
 Phase 4 waits for the boot task queue (the MUSIC task) to drain. Only a non zero mode enters at 5.
 `0x112A8E0` is `g_ffxBtlSubPhase` in the IDB now, the name `g_ffxBtlPhase` above is the old one. [V]
+
+---
+
+**Correction, 2026-10-28** (the Project Zanarkand port of 12.6, `src/engine/map/RandomEncounter` and
+`src/engine/atel/FieldFrame` there). All [V], read off the disassembly and the shipped `btl.bin`.
+
+- **The formation pick, section 8, settled.** `FFX_Btl_ResetEncounterZoneWeights 0x7828A0` (mapId,
+  keep) walks every zone of the map's scene. Unless keep is set it rewrites each weight byte as
+  `(b & 0xF) << 4 | (b & 0xF)` (`0x7828F6..0x782902`), the default copied into the high nibble, and
+  then it re-sums the high nibbles into `zoneRecord[4]` as a byte. `FFX_Field_ResetPerMapEncounterState
+  0x781C50` calls it with keep 0, and that runs from `FFX_Ev_LoadEventPackage 0x87316F` with the entry
+  map number and from `FFX_Btl_Init 0x781BAD` with 0. So in memory the high nibbles hold the shipped
+  weights and the pick converts. Straight from the file, before any reset, every hit is dropped. The
+  other callers: `0x780C70` (core:527), `0x782B40` (btl:138, reset by battle id), `0x782BA0` (btl:140,
+  sets one live nibble clamped to 0..15, then re-sums with keep 1). `0x782940` (btl:139) reads one live
+  nibble. The battle id those take is `(s16 mapEntry[0] << 16) + variant byte` (`0x782982`), and the
+  variant is matched as a byte, so a low word above 255 never resolves.
+- **The scene id is at save +0x04**, not +0x00 (section 4, fixed in place). The IDB comment on
+  `FFX_SaveData_GetSceneId` says +0x00 and is wrong too.
+- **Booster 2 skips the No Encounters ability.** The esi = `g_ffxEncountersEnabled` load is only on
+  the value 1 path. With High encounters set, a party wearing No Encounters still gets battles.
+- **The zone offset in the map entry is s16** (movsx), and +4 is the field asset base.
+- **The gate writers of section 5 are found** (fixed in the table): `ctx[1]` bit 0x04 is the message
+  window hold, `ctx[3]` bit 0x04 the treasure and ability messages, bit 0x80 the battle and reload
+  freeze, bits 0x01 and 0x02 the return from battle. All are ordinary byte stores through a context
+  pointer, which is why the scan for `[reg]` and `[reg+1]` missed them.
+- **core:226 is not quite vestigial.** `FFX_AtelSys_Core_226` pops on, writes save +0x13 bit 1 and
+  returns on. `FFX_Atel_StepFrame` sets the bit again only on its first pass (`0x8679E9`), and
+  `FFX_Atel_StepFieldFrame` runs after `FFX_Atel_StepFieldContexts` in the same sub-step (`0x872C13`
+  then `0x872C18`), so a script that clears it holds the check off for the rest of that frame.
+- **The threshold carry of section 8's last bullet is real and not rare.** With booster 2 a frame
+  brings 10 times the distance, so a second pass in one call is common, and it compares the carried
+  threshold, not the step count, with rate / 2.
+- **The dead paths.** `g_ffxEncForcedHook` (one xref), `g_ffxEncUsesSceneReq` (always 0) and
+  `FFX_Field_EncounterHoldStub` (jumps to `xor eax, eax`, `ret`) stay dead. `g_ffxBattleCount` is only incremented on
+  the dead forced path.
+- **The order of the gates** in `FFX_Atel_StepFieldFrame` past the ready checks: the stroll steps when
+  no battle is pending or active and `ctx[3] & 3 == 0`, the encounter call needs those plus
+  `ctx+528 & 1`, `save[19] & 6`, `ctx+528 & 4 == 0`, the dead `FFX_Field_EncounterHoldStub` and no disc read. The
+  `ctx+528 & 2` cancel runs first and keeps the request when `g_ffxBtlDbgAutoExecute 0x112A8F5` is set.
+  `ctx[1] &= 0xFC` at `0x871D58` runs on every path.

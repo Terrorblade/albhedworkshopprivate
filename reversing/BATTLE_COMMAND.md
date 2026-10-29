@@ -490,7 +490,7 @@ The unit index space, from `FFX_Btl_SetupUnitRoster` (VA 0x79C110):
 |---|---|
 | 0..6 | the seven playable characters |
 | 8..17 | aeons, `actor+0x4FE = index - 8` |
-| 18, 19 | not assigned in the roster setup |
+| 18, 19 | not assigned in the roster setup, and never used: every character loop stops at 18 and the enemy slots start at 20 (2026-10-28, BATTLE_ACTOR.md 9.3) |
 | 20..27 | the eight enemy units, `actor+0xDF3 = 1` |
 | 28..30 | weapon stand-ins for units 4, 5 and 14 (Wakka, Lulu, Yojimbo), set up by `FFX_Btl_SetupWeaponChr`. That they are the ball, the doll and Daigoro is inferred, see BATTLE_ACTOR.md |
 | 31..92 | the 912 byte weapon and armour side records, 31 + unit and 62 + unit, see BATTLE_ACTOR.md |
@@ -759,7 +759,7 @@ battle animations and camera keep running while the CTB waits.
   rather than tested.
 * **Unit indices 18, 19 and 28..30**, and what the 62 light records at 31..92 are for. The
   roster setup does not assign them. (2026-10-13: 28..30 and 31..92 are answered in
-  BATTLE_ACTOR.md, 18 and 19 are still open.) 62 matching the queue capacities is suspicious but I have
+  BATTLE_ACTOR.md. 2026-10-28: 18 and 19 are an unused gap, BATTLE_ACTOR.md 9.3.) 62 matching the queue capacities is suspicious but I have
   no evidence it is related.
 * **How the target candidate list gets built.** I found where it is consumed
   (`FFX_BtlMenu_PushPage`, `FFX_BtlMenu_RestoreCursorMemory`,

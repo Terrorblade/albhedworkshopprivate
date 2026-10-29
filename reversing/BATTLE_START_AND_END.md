@@ -55,7 +55,7 @@ Read with: `BATTLE_CTB_AND_STATUS.md` (CTB init, the per-unit stream map), `RAND
 | 0x112A8E2 | `g_ffxBattlePendingKind` | 0 none, 1 random, 2 scripted. Consumed by `FFX_Btl_MainStep` | [V] |
 | 0x112C254 | `g_ffxBattleSceneAndMap` | low word battle map id (bit 0x400 = battle map), high word scene index | [V] |
 | 0x112C258 / 0x112C259 | `g_ffxBattleZoneIndex` / `g_ffxBattleFormationIndex` | zone and formation slot | [V] |
-| 0x112A9D4 | `word_112A9D4` | low byte: the return mode a script passed to `Btl 002` (1 = no results screen when the boot mode byte is 1..4, section 3.4). High byte: a scripted battle argument read by `sub_7829B0` at begin. Cleared by `FFX_Field_ResetEncounterAccum` and after the return | [V] |
+| 0x112A9D4 | `g_ffxBtlReturnTasks` | low byte: the return mode a script passed to `Btl 002` (1 = no results screen when the boot mode byte is 1..4, section 3.4). High byte: a scripted battle argument read by `sub_7829B0` at begin. Cleared by `FFX_Field_ResetEncounterAccum` and after the return | [V] |
 | 0x112A8E0 | `g_ffxBtlSubPhase` | the one phase variable. `FFX_Btl_GetPhase` returns it. 0 = no battle | [V] |
 | 0x112A8E3 | `word_112A8E3` low byte | **the end result**, copied from the over test at end phase 29. 5 or 6 ends the battle on the same step | [V] |
 | 0x112A8E4 | `word_112A8E3` high byte | the script hold `Btl 060` / `Btl 151` (BATTLE_CTB_AND_STATUS.md) | [V] |
@@ -66,7 +66,7 @@ Read with: `BATTLE_CTB_AND_STATUS.md` (CTB init, the per-unit stream map), `RAND
 | 0x112C9EC | `word_112C9EC` | two frame counters. `FFX_Btl_EndPhaseStep` only runs on a step where the low byte read 0 | [V] |
 | 0x112C9EB | `g_ffxBtlMonstersKilledThisBattle` | ++ per enemy death, picks result 2 over 4 | [V] |
 | 0x112C9DC | (`dword_112C9DB` byte 1) | the advantage, 0 normal, 1 pre-emptive, 2 ambush | [V] |
-| 0x112C9FF | (`dword_112C9FC` byte 3) | escape mode. 0 roll, 1 never, 2 always. `Btl 166` writes it, begin resets it to 0 | [V] |
+| 0x112C9FF | `g_ffxBtlEscapeMode` (was `dword_112C9FC` byte 3, the dword is four bytes since 2026-10-29) | escape mode. 0 roll, 1 never, 2 always. `Btl 166` writes it, begin resets it to 0 | [V] |
 | 0x112CA00 | `g_ffxBtlEscapeAllowed` | 1 at begin, `Btl 184` writes it, read by `FFX_Btl_GetEscapeCommandId` | [V] |
 | 0x112C9E5 | `g_ffxBtlScriptMode` | `Btl 275` = 1, `Btl 276` = 2. Zeroed at begin by the dword store of 0xFF to 0x112C9E4 | [V] |
 | 0x112C9E7 | (byte 3 of that dword) | party arrangement was pushed by `FFX_Btl_BeginSummon`, so the commit restores it | [V] |
@@ -120,9 +120,9 @@ an exit, it is `FFX_ScreenFade_Request(code, 1, 0)`. Read the disassembly. [V]
    reward records at `dword_1136068`, zeroed, and a 0x8A88 byte block at `dword_2310CD8` filled
    0xFF), `sub_79F9B0`, **`sub_798E90`** (copies the spoils AP accumulators to the snapshot, 4.4),
    `FFX_SaveData_RebuildItemLists`, `sub_89B660`, `sub_79E7A0`, then `sub_7829B0(high byte of
-   word_112A9D4, &mode)` and `sub_79E5E0` when it returns >= 0. [V]
+   g_ffxBtlReturnTasks, &mode)` and `sub_79E5E0` when it returns >= 0. [V]
 7. `FFX_Field_FreezeActorsToScratch 0x866240(map)`: for a random battle (low byte of
-   `word_112A9D4` is 0) `g_ffxFieldBootMode = saveData+0xE4 | (g_ffxFieldBootMode & ~0x10000)`.
+   `g_ffxBtlReturnTasks` is 0) `g_ffxFieldBootMode = saveData+0xE4 | (g_ffxFieldBootMode & ~0x10000)`.
    Pushes the `"MUSIC"` boot task (`sub_862470`) and parks the field actors. [V] Its state 7 also
    waits on FMOD: `if (sub_67A240() != 0) stay`, FMOD command 20, true while battle track 16 still
    reads `FMOD_EVENT_STATE` LOADING. It is the one command the step thread runs synchronously across
@@ -179,7 +179,7 @@ In order: [V]
    from `sub_7ABDC0(+0x592 / +0x593)`.
 7. Units 0..30: enemy slots get `+0x3F5 = 0x0303`, `+0x43D = 3`, `+0x4FD = 5`. Others get
    `+0x3F5 = 0`, `+0x43D = 8`, and either the aeon set (`+0x4FD = 4`, `+0x4FE = unit - 8`, ...) or
-   the character set (`+0x4FD = 3`, `+0x438 = 1`).
+   the character set (`+0x4FD = 3`, `+0x437 = 1` at 0x79C538, the neck aim enable).
 8. Enemy slots 0..7 (units 20..27): `+0x0E` = the u16 at field monster section `+12 + 2*slot`,
    `FFX_Btl_ResolveUnitChrId`, and for a non 0xFFFF id: the seen bit in saveData+0x440C,
    `+0x4FE` = running visible index, `+0xDF3 = 1` (AI), `+0x10 = 1`, `+0xDC8 = 1`, and others.
@@ -224,9 +224,9 @@ every record, not each character's own row. [V]
 
 **Monsters (units 20..27)**, from `actor+0xF80` (param record, header dword +12 of mNNN.bin):
 +0x14 max HP, +0x18 max MP, +0x1C overkill threshold, +0x20..+0x27 the eight stats, +0x28,
-+0x2A, +0x2B..+0x2E, +0x2F..+0x47 added to the 25 status resistances, +0x48..+0x4E, +0x4E,
-+0x50.. the command list (into `dword_2310CD8`, 1144 bytes per unit), +0x70, +0x74, +0x76 (the
-capture species, MONSTER_ARENA.md), +0x77, +0x78. And the 280 byte reward block, header dword +20
++0x2A, +0x2B..+0x2E (absorb, immune, half and weak elements into +0x5DA..+0x5DD), +0x2F..+0x47 added to the 25 status resistances, +0x48..+0x4E, +0x4E,
++0x50.. the command list (into `dword_2310CD8`, 1144 bytes per unit), +0x70, +0x74, +0x76, +0x77, and the
+u16 at +0x78, the capture species (into +0x6D6 at 0x79B8C7, MONSTER_ARENA.md). And the 280 byte reward block, header dword +20
 of the file, is copied to `dword_1136068 + 280*unit` and that pointer stored at `+0xF88`. [V]
 These run from `sub_79CB10` inside `FFX_Btl_RegisterMonsterMotions`, after all monster files are
 in. [V]
@@ -327,7 +327,7 @@ Runs from `FFX_Btl_MainStep` only when `FFX_Btl_IsCtbTickAllowed` passes **and**
 |---|---|---|
 | 1 | test non zero -> 2 | [V] |
 | 2 | waits for an empty command queue and `HIBYTE(word_112C9D4) == 0`. Aeon recall (3.1), or test non zero -> 23, else back to 1 | [V] |
-| 23 | waits for `sub_886650`, `sub_8864B0`, `sub_886640` (sound) and `sub_79D050` (text) to be idle. Latches the test into `word_112C9F1`, `sub_7982A0(4, ..)` | [V] |
+| 23 | waits for `FFX_Field_EncounterHoldStub_impl`, `sub_8864B0`, `sub_886640` (sound) and `sub_79D050` (text) to be idle. Latches the test into `word_112C9F1`, `sub_7982A0(4, ..)` | [V] |
 | 24 | waits for the script hold and the same four. `sub_8AB7B0`. Result 1 with `!(g_ffxFieldBootMode & 0x200)`: game over sequence on (`dword_112C9F4 = 1`, waits 30, music track 20 [I], effect 140) -> 25. Result 2 with `!(g_ffxFieldBootMode & 0x100)`: victory pose (`HIBYTE(word_112C9F1) = 1`, wait 10, track 12 [I], effect 138) -> 25. Result 4: wait 30 -> 27. Else -> 27 | [V] |
 | 25 | `sub_8863F0` / `sub_886AF0` with the track id | [V] |
 | 26 | `sub_79FFF0(effect)`, wait 10 | [V] |
@@ -463,8 +463,8 @@ draws three times on stream 10**. [V]
 The record pointer non null, then in this order: [V]
 
 ```c
-ap   = overkill ? rec.u16[+4] : rec.u16[+2];         // x100 with debug byte_112A912
-gil  = rec.u16[+0];                                  // x100 with debug byte_112A913
+ap   = overkill ? rec.u16[+4] : rec.u16[+2];         // x100 with debug g_ffxBtlDbgApTimes100 0x112A912
+gil  = rec.u16[+0];                                  // x100 with debug g_ffxBtlDbgGilTimes100 0x112A913
 mult = 1;
 for (i = 0; i < 18; ++i) mult = sub_798A00(i, actor(i), ap, mult);    // AP, no RNG
 
@@ -498,7 +498,8 @@ if (Rand(10) % 255 < rec[+11] || (dbgDmgProbOff && rec[+11]))
 `victim+0x708` is the bribe ratio `((gilPaid << 8) / maxHP) / 20 - 64` that `FFX_Btl_RollBribe`
 stored, not the gil. The x87 rounding points are kept above (sqrt stored to float, the product
 stored to double, the sum stored to float, then truncated). Language 11 swaps item 0x2065 for
-0x2048 x4 (bribe) or 0x2032 with a fixed quantity (drop). [V]
+0x2048 x4 (bribe, and the swap is written back into the record at 0x79922D) or 0x2032 x4, x8 on an
+overkill (drop, 0x799329..0x799336). [V, corrected 2026-10-29]
 
 **`sub_798A00` (propose `FFX_Btl_BankKillAp`)**, per unit 0..17: [V]
 
@@ -785,7 +786,7 @@ These are appended as dated notes to the four docs.
 | 0x7AEEC0 | FFX_Btl_RestorePushedPartyOrder | `FFX_Btl_RestorePushedPartyOrder` | undoes `FFX_Btl_BeginSummon` before the commit |
 | 0x78E0A0 | sub_78E0A0 | `FFX_Btl_StartAeonRecovery` | HP 0, countdown = ply_rom +43 + 1 [I] meaning |
 | 0x7B1540 | sub_7B1540 | `FFX_Btl_ApplyVictorOverdrive` | mode 11 counter and +20 gauge [I] mode name |
-| 0x78A780 | sub_78A780 | `FFX_Btl_RollEscape` | kind 0 draw < 191 |
+| 0x78A780 | sub_78A780 | `FFX_Btl_RollEscape` | kind 0 draw < 191. The draw (0x78A796) comes before the mode 1 and HitMiss refusals, so a refused escape still moves the stream |
 | 0x78DE40 | sub_78DE40 | `FFX_Btl_SetUnitLeftBattle` | +0xDCD and +0xDC8 |
 | 0x78DE80 | sub_78DE80 | `FFX_Btl_PartyLeftBattle` | the same for 0..17 |
 | 0x7AE0A0 | sub_7AE0A0 | `FFX_Btl_RemoveUnitFromField` | +0xDC8 = 0, queue cleanup |

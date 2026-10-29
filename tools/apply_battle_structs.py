@@ -41,6 +41,14 @@ EXTERNAL = ["CHR"]
 PLACEHOLDER = re.compile(r"^(m_[bwif][0-9A-Fa-f]+|_unk_[0-9A-Fa-f]+|field_[0-9A-Fa-f]+|gap[0-9A-Fa-f]+|var_[0-9A-Fa-f]+)$")
 CMT_MAX = 1000  # IDA caps a comment at 1024, keep clear of it
 
+# Member comments in the IDB whose wording changed only because a function they mention was renamed
+# after the last apply. Reviewed by hand, (struct, offset) -> why. A stale sub_XXXXXX reference needs no
+# row, the comment check maps it to the function's current name first.
+COMMENT_RENAMED = {
+    ("BTLCHR", 0x37): "FFX_Ch_SetB181 was renamed FFX_Ch_SetUpdateWhileHidden",
+    ("BTLUNIT", 0x3A0): "FFX_Btl_GetUnitPosRaw 0x795720 was renamed FFX_Btl_GetUnitScale",
+}
+
 
 def read_header():
     with open(HEADER, "r", encoding="ascii") as f:
@@ -87,6 +95,16 @@ def members(tif):
 
 def norm(s):
     return re.sub(r"\s+", " ", s or "").strip()
+
+
+def canon(s):
+    """norm(), with every sub_XXXXXX replaced by the current IDB name at that address. A comment written
+    before a function got its name says the same thing as the header line that uses the name."""
+    import idc
+
+    def rep(m):
+        return idc.get_name(int(m.group(1), 16)) or m.group(0)
+    return norm(re.sub(r"\bsub_([0-9A-Fa-f]{5,8})\b", rep, s or ""))
 
 
 def main(dry_run=DRY_RUN, verbose=VERBOSE):
@@ -142,7 +160,7 @@ def main(dry_run=DRY_RUN, verbose=VERBOSE):
                     problems.append("%s: member %s at 0x%X (%s) would be dropped" % (n, name, off, ty))
                 elif new_names[name] != off:
                     problems.append("%s: member %s moves from 0x%X to 0x%X" % (n, name, off, new_names[name]))
-            if cmt and norm(cmt) not in norm(new_cmt.get(off, "")):
+            if cmt and canon(cmt) not in canon(new_cmt.get(off, "")) and (n, off) not in COMMENT_RENAMED:
                 problems.append("%s: comment on 0x%X %s would be lost: %r" % (n, off, name, cmt[:120]))
     if problems:
         print("REFUSING, %d problem(s):" % len(problems))

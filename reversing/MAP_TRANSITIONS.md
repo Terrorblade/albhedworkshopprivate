@@ -194,7 +194,7 @@ The big block only runs when context 0 is active (`sub_86AFC0(0)`, ctx byte 0 bi
 | 4 | `sub_886DD0(1)`, `sub_887780`, `FFX_Voice_RequestRefresh` x2, `sub_887B60` x2 | sound: `byte_1330091 = 1`, `dword_132FF1C = 0`, FMOD command 10, voice loader request flags `dword_13301E4/E8/EC` [I for the sound meaning] |
 | 5 | `FFX_Btl_CancelPendingBattle` | `g_ffxBattlePendingKind = 0` unless the debug auto execute toggle |
 | 6 | `sub_860F50` | `dword_1326B94..BD4` (16 dwords) zeroed, `dword_1326B94` recomputed as their OR |
-| 7 | `sub_870130(-1)` | `g_ffxAtelSceneIdOverride 0xC5273C = -1` |
+| 7 | `FFX_Atel_SetSceneIdOverride(-1)` | `g_ffxAtelSceneIdOverride 0xC5273C = -1` |
 | 8 | `FFX_AlBhed_StagePrimerGrantMask(0, 0)` | `dword_1325B90`, `dword_1325B94` |
 | 9 | `sub_86FC20(0,0,0)`, `sub_86CFF0` | `dword_1326B50 = dword_1326B54 = 0`, `g_ffxFieldBootMode 0x1326B48 = 0x10001` |
 | 10 | `sub_870280(-1,-1,-1,-1)` | `dword_1326CF0..CFC = -1` |
@@ -278,7 +278,7 @@ releases both render instances and the cloned ClassCharacter. [V]
 | 6 | magic check | `if (image[0] != 'E' || image[1] != 'V') while (1);` the unrecoverable hang for a missing id (`CHEAT_WARP.md` 2.5) |
 | 7 | | old `g_ffxEvPackageBase` freed (already NULL after 2.2), new image installed |
 | 8 | `FFX_Atel_GetResFlags`, `FFX_Atel_GetEntryMapNo(atel, 0)` | the background map number from doorway record 0 |
-| 9 | `sub_781C50(entryMapNo)` | **per map encounter state**: `g_ffxStrollDistAccum 0x112A9E8 = 0`, `g_ffxStrollDistStep 0x112A9EC = 3.0`, `sub_788BE0` (`byte_1133364`, `dword_1133360`, `dword_113336C` = 0), **`FFX_Field_ResetEncounterAccum(1)`** (`word_112A9D4 = 0`, `g_ffxEncDistRemain 0x112A9D8 = 0`, `g_ffxEncDistTotal 0x112A9DC = 0`, `g_ffxEncNoBattleProd 0x112A9E0 = 1.0`, `g_ffxEncProbScale 0x112A9E4 = 1.0`), `sub_7828A0(map, 0)` which rewrites every encounter zone record's weight byte high nibble from its low nibble and recomputes the record total (so script adjusted encounter weights reset per map) |
+| 9 | `sub_781C50(entryMapNo)` | **per map encounter state**: `g_ffxStrollDistAccum 0x112A9E8 = 0`, `g_ffxStrollDistStep 0x112A9EC = 3.0`, `sub_788BE0` (`byte_1133364`, `dword_1133360`, `dword_113336C` = 0), **`FFX_Field_ResetEncounterAccum(1)`** (`g_ffxBtlReturnTasks = 0`, `g_ffxEncDistRemain 0x112A9D8 = 0`, `g_ffxEncDistTotal 0x112A9DC = 0`, `g_ffxEncNoBattleProd 0x112A9E0 = 1.0`, `g_ffxEncProbScale 0x112A9E4 = 1.0`), `sub_7828A0(map, 0)` which rewrites every encounter zone record's weight byte high nibble from its low nibble and recomputes the record total (so script adjusted encounter weights reset per map) |
 | 10 | `FFX_Atel_CalcActorPoolSize`, `sub_88E650` | **actor pool** reallocated into `g_ffxAtelActorPool` |
 | 11 | `FFX_LoadLocalizedBin`, `FFX_LoadLocalizedFtc` | `dword_1327128` (bin), `dword_132712C` and `dword_1327120` (ftc), `g_ffxEvBuiltinMsgTable 0x23CBD60`, `sub_8AC130` writes `dword_1841DA4..DF4`, `sub_642300(0, ...)` |
 | 12 | title front end | map 23: `sub_642300(7, 0, 0)`. Otherwise `sub_642390(7)` if `g_ffxTitleScreenActive 0x25D5EBC`, then it is cleared |
@@ -438,7 +438,7 @@ CHRs live in the lower half. [V release, I that battle never allocates past `g_f
 
 `FFX_Btl_MainStep` on battle end (`word_112A8E3` 5 or 6, or sub phase 33):
 `FFX_Btl_CommitActorsToSave`, `FFX_Btl_Shutdown`, then
-**`maybe_FFX_Field_QueueBootTasks(word_112A9D4 & 0xFF, packed, battleMap, result)`**. It writes the
+**`maybe_FFX_Field_QueueBootTasks(g_ffxBtlReturnTasks & 0xFF, packed, battleMap, result)`**. It writes the
 result to **save `+0xD0`**, and unless the result is 6 (black fade, load hold 3) or a defeat that
 returns to the title, pushes `CAMERA`, optionally `MOVIE`, `SNDCLR`, `SNDREG`, **`CHRREG`**,
 optionally `EFFDONE`, `DONE` and `DONE2`. The queue runs from `FFX_Atel_ContextStepCallback3x`

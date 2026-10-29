@@ -83,7 +83,7 @@ makes about 120 movie:3 reads.
   to call it `FFX_AtelSys_Movie_136_resf`) stores that address into `dword_C416D0` at 0x770540, and
   `sub_774860` indexes it as a flat array of 4 byte function pointers by the high word of its argument.
 - The targets past 0xC40F30 have one argument, non ATEL signatures, for example
-  `FFX_SaveData_GetGil`, `maybe_FFX_SaveData_TestEventFlag(a1, 12288 + k)` and
+  `FFX_SaveData_GetGil`, `FFX_SaveData_TestCharAbilityBit(a1, 12288 + k)` and
   `FFX_SaveData_GetCaptureCount`. 0x772790, once the IDB's "Movie_019_start", is a jmp thunk to
   `FFX_SaveData_GetCaptureCount`.
 - 0xC416A8..0xC416B8 are jump targets of the menu glue (`sub_8BF050`, `sub_8BEF50`, `sub_8BEFF0`,
@@ -431,7 +431,7 @@ test22 does it.
 
 ### 2.6 Open
 
-- What `sub_81EAB0` (save:24, dev gated) and `sub_67A060` (save:38) do in the sound code. Both rows
+- What `FFX_SndIop_SendSoundRoot` (save:24, dev gated) and `sub_67A060` (save:38) do in the sound code. Both rows
   are dead or gated.
 - Which of the sound kind tables behind `sub_8866B0` is which (music, jingle, ambient). All dead rows.
 - Option bit 0x20. `FFX_MesWin_SetTextSource` copies it into window +0x22 together with
@@ -470,7 +470,7 @@ Columns as section 1.8.
 | 21 | 0 | 0 |  |  | pathVar:int | int 1 | no | dead `FFX_AtelSys_Save_021_DevLoadFileToSound_resi` | dev gated: FFX_IsDevHarness 0x887D10 returns 0 in retail, so the body never runs. Reads the host0 file named by a script variable into an actor pool block and hands it to sub_886EE0 | disk dev | V |
 | 22 | 0 | 0 |  |  | seId:int | int 1 | no | dead `FFX_AtelSys_Save_022_PlaySe_resi` | sub_886E80(seId), the core:223 SE start |  | I |
 | 23 | 0 | 0 |  |  | seId:int | int 1 | no | dead `FFX_AtelSys_Save_023_StopSe_resi` | sub_886EB0(seId), the core:224 SE stop |  | I |
-| 24 | 1 | 1 | e | 58 | var:int | int 1 | no | `FFX_AtelSys_Save_024_DevSoundFromVar_resi` | dev gated: FFX_IsDevHarness 0x887D10 returns 0 in retail, so the body never runs. sub_81EAB0(address of var) | dev | V |
+| 24 | 1 | 1 | e | 58 | var:int | int 1 | no | `FFX_AtelSys_Save_024_DevSoundFromVar_resi` | dev gated: FFX_IsDevHarness 0x887D10 returns 0 in retail, so the body never runs. FFX_SndIop_SendSoundRoot(address of var) | dev | V |
 | 25 | 0 | 0 |  |  | sceneId:int | int 0 | no | dead `FFX_AtelSys_Save_025_LoadSceneBackground_resi` | FFX_Ev_LoadSceneBackground 0x86DD30, the plain form of save:3, a synchronous load | stall | V |
 | 26 | 0 | 0 |  |  | slot:int, b:int, c:int | int 1 | no | dead `FFX_AtelSys_Save_026_PlayKindSe1_resi` | sub_8866B0(1, slot, b, c): plays the SE that sound kind table 1 holds for slot 0..15 |  | I |
 | 27 | 0 | 0 |  |  | slot:int, b:int, c:int | int 1 | no | dead `FFX_AtelSys_Save_027_PlayKindSe0_resi` | sub_8866B0(0, slot, b, c) |  | I |
@@ -630,7 +630,7 @@ so the module matters to co-op as a menu, not as a syscall library. [V]
 
 ### 5.2 The getter families, not named one by one
 
-- 239 getters are `maybe_FFX_SaveData_TestEventFlag(a1, n)` with n from 0x3000 to 0x3120.
+- 239 getters are `FFX_SaveData_TestCharAbilityBit(a1, n)` with n from 0x3000 to 0x3120.
 - 170 read a field of record a1 in `dword_112A034` (472 byte records, loaded from menu file 0 by
   `sa_menu_start`). 10 of them turn a u16 field into an item name through `sub_7767A0`
   (`FFX_Btl_GetItemRow`), 113 into a text through `sub_774720` (`sub_8C19A0`), the rest return the raw

@@ -35,7 +35,7 @@ system. It is not the PC settings overlay.
 |----|------|-----|
 | 0x186A44C | `g_ffxMenuConfigRows` | pointer to an array of row-object pointers |
 | 0x186A448 | `g_ffxMenuConfigRowCount` | plain int, how many of them |
-| 0x186A440 | `g_ffxMenuConfigCursorRow` | the highlighted row, read as a **signed char** |
+| 0x186A444 | `g_ffxMenuConfigCursorRow` | the highlighted row, read as a **signed char** |
 | 0x186A438 | `g_ffxMenuConfigEditingRow` | permanently 0, see correction 5 |
 
 Both of the first two are in the zero-filled tail of `.data`, so both are RW and both are 0

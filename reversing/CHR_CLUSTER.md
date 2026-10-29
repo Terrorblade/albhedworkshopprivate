@@ -216,6 +216,10 @@ manager's +160 cluster), CharacterAmbientLight bound for effects with USE_CHARAC
 `inst->m_materialSet` = the copy, LgtMatClr and LgtMatVec zeroed, and a {instance, 0.0, 2} row in
 the 100 row table at `dword_CCCA88`+248. `FFX_ChrLight_WriteLightMatParams 0x6AABF0` later writes
 LgtMatClr and LgtMatVec per material. `dword_CCCA88` (0xFC bytes, +0 enable) is not named yet.
+2026-10-28: it is `g_characterLightingTweakUtil`, the CharacterLighting debug page object
+(`BOOT_SEQUENCE.md` step 47). +0 is not a lighting enable, it is the page's labels ready byte,
+set to 1 at 0x6A93AB on every retail boot because `FFX_DebugText_LoadFont` always returns 0
+(0x6F63AB). So the 100 row table is filled in retail too. [V]
 
 So a lit character's mesh instance does not draw with mesh+48, it draws with a private material
 copy whose light parameters FFX writes per instance.

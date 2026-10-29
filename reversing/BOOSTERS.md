@@ -177,7 +177,7 @@ draws no RNG itself [V for the refill body, I for `sub_7AB360`'s motion queue].
 
 What the reader does, in order [V]:
 
-- The debug R1 path (`dword_112CA24` with `g_ffxInputPadR1HeldAtPoll`) runs first and is not affected.
+- The debug R1 path (`g_ffxEncForcedHook` with `g_ffxInputPadR1HeldAtPoll`) runs first and is not affected.
 - **2 (Frequent):** the walked distance `a3` is multiplied by 10.0, and the local enable `v3` keeps its
   initial 1, so `g_ffxEncountersEnabled` (the No Encounters armour ability) is **ignored**.
 - **1 (Normal):** `v3 = g_ffxEncountersEnabled`.

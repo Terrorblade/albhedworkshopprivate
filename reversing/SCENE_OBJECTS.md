@@ -117,6 +117,16 @@ walks every PCamera of the cluster and multiplies floats 8, 9, 10 of its m_local
 translation) by 10. `ApplyMapLoadTransform` reproduces both. bsil03 mesh instance 46 ends at
 `[-2.5 0 0 0 | 0 -2.5 0 0 | 0 0 1 0 | 650.789062 562.490601 -21.1114998 1]`.
 
+Correction 2026-10-28: "field" and "battle" here are the wrong labels. The branch is chosen by the flag
+`FFX_Map_LoadPhyreScenesForMapOut 0x908000` passes to `FFX_Gfx_FieldMapLoad 0x640210`: 0 for mapout
+section 0, the rcBg 2d layer cluster (after `FFX_Gfx_SetMapExpectsBgScene`), 1 for section 1, the 3D scene
+(after `FFX_Gfx_SetMapExpects3dScene`). `FFX_Gfx_OnMapClusterLoaded 0x666630` passes `rec+0x18 != 0` as
+AdoptMapCluster's 7th argument (`setnz` at 0x666656, pushed first), and nonzero jumps to the x10 branch at
+0x65B24D. So the -2.5 transform is for the 2d background pages and every 3D field map gets x10, the same
+as a battle map. The task argument to `rec+0x18` link is inferred, but the walkmesh of bsil01 only lands on
+its floor under x10 (render position = CHR position with X and Y negated, depth under the feet matches to
+0.03), checked by `tests/gfx/FieldSceneDrawTest.cpp` in projectzanarkand.
+
 ## 6. Where a live read finds it
 
 Not done, the kit was not available. The path, verified static:

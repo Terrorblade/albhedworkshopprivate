@@ -119,7 +119,7 @@ and `FFX_SaveData_ResetPremovieState`. The "current" column is the old name:
 
 Comment corrections, no rename, applied to the live IDB on 2026-10-26: core:25's first pushed argument is the channel mask, not a speed. core:93
 calls only `FFX_Atel_BindPlayerChr`, not unbind then bind. core:215's comment calls it VoiceStatus, but
-core:216 is the one that prints VoiceStatusStart. The callee `maybe_FFX_SaveData_TestEventFlag` used by
+core:216 is the one that prints VoiceStatusStart. The callee `FFX_SaveData_TestCharAbilityBit` used by
 core:510 tests per character ability bits (`word_113209A` is the char records +0x3E at a 74 word
 stride).
 
@@ -500,7 +500,7 @@ for the rows named today, `dead` with the role for an unused row), meaning, lock
 | 93 | 4614 | 333 | e |  | int 1 | no | kept `FFX_AtelOp_PlayerControlOn` | calls FFX_Atel_BindPlayerChr, which binds the CHR of the actor whose id is ctx+10 as the pad-driven player |  | V |
 | 94 | 4597 | 331 | e |  | int 0 | no | kept `FFX_AtelOp_PlayerControlOff` | calls FFX_Atel_UnbindPlayerChr |  | V |
 | 95 | 14636 | 1555 | embs |  | never completes | yes | kept `FFX_AtelOp_WaitForever_poll` | poll always returns 0, the parked-thread idiom of entry 1 |  | V |
-| 96 | 3004 | 331 | e | on:int | int new state of the bit (0/1) | no | `FFX_AtelSys_Core_096_SetActorControllable_resi` | sets or clears own +0x34 bit 0x200 (the bit BindPlayerChr requires), then sub_86A0E0 unbinds and rebinds the player CHR |  | V |
+| 96 | 3004 | 331 | e | on:int | int new state of the bit (0/1) | no | `FFX_AtelSys_Core_096_SetActorControllable_resi` | sets or clears own +0x34 bit 0x200 (the bit BindPlayerChr requires), then FFX_Atel_RebindPlayerChr unbinds and rebinds the player CHR |  | V |
 | 97 | 1197 | 397 | e | value:float | float value truncated to int | no | `FFX_AtelSys_Core_097_SetActorMotionField40_resf` | own motion state +0x40 = (float)(int)value, sets +0x36 bit 1, returns it |  | V |
 | 98 | 421 | 395 | e | value:float | float value truncated to int | no | `FFX_AtelSys_Core_098_SetActorMotionField44_resf` | own motion state +0x44 = (float)(int)value, sets +0x36 bit 1, returns it |  | V |
 | 99 | 512 | 395 | e | value:float | float value | no | `FFX_AtelSys_Core_099_SetActorMotionField3C_resf` | own motion state +0x3C = value, sets +0x36 bit 1, returns it |  | V |
@@ -806,7 +806,7 @@ for the rows named today, `dead` with the role for an unused row), meaning, lock
 | 399 | 1 | 1 | e | frames:int, level:int | int 0 | no | `FFX_AtelSys_Core_399_FadeVoiceVolume_resi` | byte_1327134 = level, driver sub_67A7D0(frames, level or 0 when sub_872340() is 0), FMOD command 13, `FmodVoice__beginVolumeFade` with the frames halved. Role should be `FadeVoiceVolume` |  | V |
 | 400 | 0 | 0 |  | level:int | int 0 | no | dead `SetSoundLevel135` | byte_1327135 = level (map reset 63), driver sub_67A6D0(level), FMOD command 12, an empty stub on PC. 63 is the centre the voice start passes as its first argument, so probably the voice pan |  | I |
 | 401 | 0 | 0 |  | frames:int, level:int | int 0 | no | dead `FadeSoundLevel135` | byte_1327135 = level, driver sub_67A6F0(frames, level), FMOD command 11, an empty stub on PC |  | I |
-| 402 | 28 | 10 | e | v:float | float v | no | `FFX_AtelSys_Core_402_SetContextFloat1F0_resf` | writes the current ATEL context float +0x1F0 (reset to 0.0) and returns it |  | V |
+| 402 | 28 | 10 | e | v:float | float v | no | `FFX_AtelSys_Core_402_SetPlayerReach_resf` | writes the current ATEL context float +0x1F0 (reset to 0.0) and returns it |  | V |
 | 403 | 20 | 6 | e | seId:int | int seId | no | `FFX_AtelSys_Core_403_PlaySe_resi` | if the SE is not playing starts it (pan 63, vol 127), else unless its table flag 0x40 ramps its volume to 127 (63 when save +0x28) |  | I |
 | 404 | 37 | 8 | e | on:int | int on | no | `FFX_AtelSys_Core_404_SetRikkuAltOutfit_resi` | save byte +0xD1 = on != 0, which makes Rikku's chr id 41 instead of 7 |  | V |
 | 405 | 26 | 16 | e |  | int 0 | yes | `FFX_AtelSys_Core_405_WaitAtelBusyClear_poll` | poll only, returns 0 while dword_1326B58 != 0, else 5 |  | I |
@@ -914,7 +914,7 @@ for the rows named today, `dead` with the role for an unused row), meaning, lock
 | 507 | 31 | 17 | e |  | int dword_186A228 | no | `FFX_AtelSys_Core_507_GetSaveLoadMenuResultRaw_resi` | jmp 0x8BEEF0 = mov eax, dword_186A228, the word FFX_SaveLoadMenu_SetResult writes. Not a function in the IDB |  | V |
 | 508 | 48 | 4 | e | charIdx:int, abilityId:int | int ? | no | `FFX_AtelSys_Core_508_SetCharAbilityFlag_resi` | sub_874200(charIdx, abilityId) -> FFX_SaveData_SetCharAbilityFlag(charIdx, abilityId & 0xFFF OR 0x3000, a3) |  | V |
 | 509 | 0 | 0 |  | charIdx:int, abilityId:int | int ? | no | dead `SetCharAbilityFlag` | identical body to core:508 |  | V |
-| 510 | 0 | 0 |  | charIdx:int, abilityId:int | int bool | no | dead `TestCharAbilityFlag` | maybe_FFX_SaveData_TestEventFlag(charIdx, abilityId): bit of record +0x3E words for 0x3000 ids, 0x3060 and up a shared bitmap |  | V |
+| 510 | 0 | 0 |  | charIdx:int, abilityId:int | int bool | no | dead `TestCharAbilityFlag` | FFX_SaveData_TestCharAbilityBit(charIdx, abilityId): bit of record +0x3E words for 0x3000 ids, 0x3060 and up a shared bitmap |  | V |
 | 511 | 0 | 0 |  |  | int 1 | no | dead `SetSelfSoundMaskBits` | if actor +0x40 != -1 sets bit (actor +0x40) in dword_132FF34 and dword_132FF3C (sub_887100/sub_887130) |  | I |
 | 512 | 10 | 4 | e | idx:int | int 1 | no | `FFX_AtelSys_Core_512_SetSoundMaskBits_resi` | sets bit idx in dword_132FF34 and dword_132FF3C |  | I |
 | 513 | 10 | 5 | e |  | int 1 | no | `FFX_AtelSys_Core_513_ClearSelfSoundMaskBits_resi` | if actor +0x40 != -1 clears bit (actor +0x40) in dword_132FF34 and dword_132FF3C |  | I |
@@ -947,8 +947,8 @@ for the rows named today, `dead` with the role for an unused row), meaning, lock
 | 540 | 0 | 0 |  | minCount:int | int count of species | no | dead `CountAllSpeciesAtLeast` | FFX_Arena_CountSpeciesWithAtLeast(2, 0, minCount): every species captured at least minCount times |  | V |
 | 541 | 2 | 2 | e |  | int 1 if one was equipped, else 0 | no | `FFX_AtelSys_Core_541_EquipFlaggedWeaponOnChar0_resi` | Lists char 0 weapons (sub_7ABD10(0,0,0)), equips any with equip entry +3 bit 0x08 into char 0 weapon slot, recomputes derived stats |  | V |
 | 542 | 35 | 5 | e |  | int 1 | no | `FFX_AtelSys_Core_542_RunMapWorkOp913F50_resi` | Calls sub_90A420 -> sub_913F50(&g_ffxMapWork), an unread operation on the map work block |  | I |
-| 543 | 0 | 0 |  | bit:int | int bit | no | dead `ClearFieldMaskBit` | Clears bit (when < 8) of dword_1326B90 via sub_870250(bit, 0) |  | V |
-| 544 | 30 | 20 | e | bit:int | int bit | no | `FFX_AtelSys_Core_544_SetFieldMaskBit_resi` | Sets bit (when < 8) of dword_1326B90 via sub_870250(bit, 1) |  | V |
+| 543 | 0 | 0 |  | bit:int | int bit | no | dead, `FFX_AtelSys_Core_543_ClearTalkBonusSuppress_resi` | Clears bit (when < 8) of g_ffxAtelTalkBonusSuppressMask via FFX_Atel_SetTalkBonusSuppressed(bit, 0) |  | V |
+| 544 | 30 | 20 | e | bit:int | int bit | no | `FFX_AtelSys_Core_544_SetTalkBonusSuppress_resi` | Sets bit (when < 8) of g_ffxAtelTalkBonusSuppressMask via FFX_Atel_SetTalkBonusSuppressed(bit, 1) |  | V |
 | 545 | 60 | 17 | e | index:int | int pointer off_C86E28[index] | no | `FFX_AtelSys_Core_545_GetTablePtrC86E28_resi` | Returns entry index of the pointer table off_C86E28 unchecked, as an int |  | V |
 | 546 | 0 | 0 |  | index:int | int pointer off_C8756C[index] | no | dead `GetTablePtrC8756C` | Returns entry index of the pointer table off_C8756C unchecked, as an int |  | V |
 | 547 | 0 | 0 |  | on:int | int on (0/1) | no | dead `SetOptionBit4AndApplyPad` | Sets option flags (saveData+0x3D0C) bit 0x10 then sub_872480 pushes it to the pad layer via sub_8894D0(0,0,bit) |  | V |

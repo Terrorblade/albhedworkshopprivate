@@ -334,7 +334,7 @@ row-for-row 148-byte template of this record (`FFX_InitNewSaveData` does a liter
 | 0x4A | 2 | bitfield | **auto-ability flags word 0.** CLEARED and rebuilt by every recompute from the equipped weapon's and armour's four auto-abilities. `a_ability` row `+98` is the source | DERIVED, do not write |
 | 0x4C | 2 | bitfield | **auto-ability flags word 1.** Same. **Bit 0x200 is Break HP Limit and bit 0x400 is Break MP Limit**, and they are what pick the 99999 / 9999 clamps | DERIVED |
 | 0x4E | 2 | bitfield | **auto-ability flags word 2.** Same. Bit 1 is No Encounters, which `RecomputeCharDerived` ANDs into the global `EncountersEnabled` for party members | DERIVED |
-| 0x50, 0x54, 0x58, 0x5C | 4 dwords | signed int | per-character battle counters, clamped to 999,999,999 by `FFX_SaveData_BumpCharBattleCounter 0x385A00` | state |
+| 0x50, 0x54, 0x58, 0x5C | 4 dwords | signed int | per-character battle counters, clamped to 999,999,999 by `FFX_SaveData_BumpCharBattleCounter 0x785A00` (no effect for a record index of 18 or more, or in battle script mode 2) | state |
 | 0x60..0x81 | 17 words | - | per-character, non-zero for 0..6 and 0xFFFF for the aeons. Tidus is 150, 300, 0, 80, 75, 100, 250, 100, 100, 50, 120, 120, 600, 600, 120, 170, 60. **No reader identified.** The shape and the per-character spread look like Overdrive-mode learn thresholds, which is a guess, not a finding | - |
 | 0x82..0x93 | 18 | - | mostly 0xFF for 0x82..0x87 on the playable characters and 0xFF across 0x60..0x85 for the aeons. **No reader identified** | - |
 

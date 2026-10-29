@@ -141,7 +141,7 @@ by hand in that one overlay.
 `FFX_AtelSys_Core_465_poll 0x45FF70`:
 
 ```
-0045FF73  cmp     ds:byte_B5EC4F, 0     ; 0x75EC4F, const 1 in .rdata, a build switch
+0045FF73  cmp     ds:maybe_g_ffxHostFileModeConst, 0     ; 0x75EC4F, const 1 in .rdata, a build switch
 0045FF7A  jz      short loc_45FF96      ; -> return 5, done immediately
 0045FF7C  cmp     byte_133C913, 0       ; 0xF3C913, .data
 0045FF83  jnz     short loc_45FF96      ; -> return 5, done immediately
@@ -933,7 +933,7 @@ RVA = IDA VA minus 0x400000. Types: `fn` function, `glob` global, `tbl` table, `
 | 0x45C4E0 | fn | `FFX_AtelOp_WaitFrames_start` | `core:0` start. 122,690 shipped call sites in 391 packages |
 | 0x45C6B0 | fn | `FFX_AtelOp_WaitFrames_poll` | `core:0` poll. `dec esi` per poll. The FMV branch at `0x45C6C3` is the one non-step path in the game |
 | 0x45C420 | fn | `FFX_AtelOp_WaitForever_poll` | `core:95`, released by another script |
-| 0x45FF70 | fn | `FFX_AtelSys_Core_465_poll` | second `WaitFrames`, gated on `byte_B5EC4F` and `byte_133C913` |
+| 0x45FF70 | fn | `FFX_AtelSys_Core_465_poll` | second `WaitFrames`, gated on `maybe_g_ffxHostFileModeConst` and `byte_133C913` |
 | 0x457DF0 | fn | `FFX_AtelSys_Core_246_start` | wait for an actor task queue to drain |
 | 0x457FF0 | fn | `FFX_AtelSys_Core_246_poll` | predicate only, no counter |
 | 0x463520 | fn | `FFX_Atel_ActorHasTaskAtLevel` | walks `Actor+0x80`, `node[0x0F]==3` means done, `node[0x0E]&0x0F` is the level |
@@ -941,7 +941,7 @@ RVA = IDA VA minus 0x400000. Types: `fn` function, `glob` global, `tbl` table, `
 | 0x245D90 | fn | `FFX_Fmv_FramesSinceMark` | `FmvMgr[0x6D8] - FmvMgr[0x6E0]`, sole caller is the WaitFrames FMV branch |
 | 0x36EFC0 | fn | `FFX_Fmv_CurrentMovieNeedsCameraRestore` | gates that branch |
 | 0xD2A008 | glob | `g_ffxFmvScriptRunning` | the other gate on that branch |
-| 0x75EC4F | glob | `byte_B5EC4F` | const 1 in `.rdata`, build switch, also read 3x in `FFX_Btl_MainStep` |
+| 0x75EC4F | glob | `maybe_g_ffxHostFileModeConst` | const 1 in `.rdata`, build switch, also read 3x in `FFX_Btl_MainStep` |
 | 0xF3C913 | glob | `byte_133C913` | media-busy flag, gates `core:465`, **hash this**, init 0xFF |
 
 ### The syscall tables

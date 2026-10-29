@@ -24,7 +24,7 @@ has the proof and section 7 lists every doc I corrected.
 
 | System | State | Logic | Clock | RNG | Verdict |
 |---|---|---|---|---|---|
-| Al Bhed primers | `+0x3D10`, 26 bits, plus key items `0xA004..0xA01D` | 38 script `core:269` sites, one C writer | none | none | **replicates, except the primer import, which reads the local disk** |
+| Al Bhed primers | `+0x3D10`, 26 bits, plus key items `0xA004..0xA01D` | 38 script `core:269` sites, one C writer | none | none | **replicates, except the primer import, which reads the local disk, so the host relays it (2.4, decided 2026-10-29)** |
 | Sphere grid | `+0x21EC..+0x3105` node array, links, current nodes, grid id. S.Lv in each character record | menu module 19, C code at `0xA44000..0xA5D000` | menu frames at 59.94 Hz, frame counted animations | **none** | **replicates if the grid's input or its results are host-ordered, plus one derived cache to rebuild** |
 | Celestial weapons | `+0xC39` found bits, `+0xC6C` crest bits, `+0xC6D` sigil bits, the weapon's equipment entry, crest and sigil key items | script `core:347` and `core:533`, one C table writer | none | the battle damage roll, unit stream | **replicates for free** |
 
@@ -49,8 +49,9 @@ Five things matter more than the rest.
 
 What the mod still has to do:
 
-- **Host-relay or suppress the primer import.** `core:453`, `core:565` and the `FFX_MainStep` scan
-  block at `0x820C2D` all depend on the local disk. Section 2.4.
+- **Relay the primer import from the host (decided 2026-10-29).** `core:453`, `core:565` and the
+  `FFX_MainStep` scan block at `0x820C2D` all depend on the local disk. The host imports and every
+  client applies the host's mask on the host's step, never reading its own files. Section 2.4.
 - **Decide how the sphere grid travels.** It is a single-instance menu working on `g_ffxMenuWork`.
   Either replicate its input frame by frame, or replicate the committed results. Section 3.6 has
   the commit points, which are few.
@@ -179,6 +180,17 @@ get different masks, different `core:565` results, and so different script branc
 has to run the import on the host only and relay the resulting grant**, or disable it in a
 session. The staged words are outside the save block, so a block hash will not see the difference
 until the commit lands.
+
+**Decided 2026-10-29 (the user): sync the import to the clients.** The host runs the import against
+its own save files as the game does. What it produced travels to every client as one host ordered
+event, the two mask words (`dword_1325AC4` and `dword_1325B8C`) and the step the host's scan
+finished on. A client never reads its own disk for this. On that step it writes the two words and
+reports the scan as done, so its `FFX_MainStep` block at 0x820C2D stages the same grant and its
+`core:565` reads return the same mask. Then the `core:564` commit lands identically everywhere and
+the save block hash agrees. The client side therefore has to suppress `FFX_SaveFile_ImportPrimerFromSlot
+0x6EFD10` (and the dead copy at 0x647976 needs nothing). Still to work out when it is built: the save
+UI states 21..27 that `core:453` waits on have to finish on the client on the host's step, so the
+script that started the import resumes on the same step on every peer.
 
 ### 2.5 What the mask changes in the renderer [V, one I]
 

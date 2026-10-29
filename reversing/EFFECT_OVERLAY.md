@@ -343,7 +343,7 @@ Beyond the host table, slot 3 and slot 4 write [V] [M]:
 The two waits slot 3 uses most are deterministic per step: host 313 `sub_7E46D0` polls the 64 entry
 texture upload ring at `dword_11A03A0`, which the resident slot 4 drains through `sub_7E4720` at
 0x100000 bytes per effects pass. Host 549 `sub_8000F0` polls a PS2 era stream request, and on PC
-`sub_A44770` returns -1 so it clears after one resident slot 4 pass. [V]
+`SG_Dev_SifDma_STUB_retm1` returns -1 so it clears after one resident slot 4 pass. [V]
 
 ## 6. The table is mutable
 
@@ -390,6 +390,9 @@ Yes. In order of weight [V] [M]:
 4. **The draw enables** toggled by the Oef2 sync op cases 7 and 8 (map, characters, message windows) and
    `g_ffxInMagicOverlayCall`, which draw functions read (`sub_71E610` special cases eleven magic ids, and
    `sub_6604D0`, `sub_661C80`, `sub_713790` and others). These are presentation.
+5. **One direct unit write (added 2026-10-28).** magic 0515, 0611, 0667 and 0668 take a raw unit pointer
+   from host 925 `FFX_Battle_GetActor` and set the Slow counter +0x614 to 0 at their own effect frame 30.
+   It is the only raw BTLUNIT write in the 581 DLLs, see BATTLE_ACTOR.md 9.4.
 
 What is presentation only: the effect unit draw, particle and prim lists, the cosmetic RNG
 (`g_ffxEffectRandState`, hosts 314 and 404), and CRT `rand` (hosts 452, 153, 191, 613, per thread). Six

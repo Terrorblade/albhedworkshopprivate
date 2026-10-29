@@ -471,6 +471,13 @@ The seed itself is weak and clock-derived: `GetSystemTime`, with second, minute,
 the low byte of year all xored together into effectively one byte. That does not matter, because a
 single 272-byte copy pins both instances to the same stream.
 
+Correction 2026-10-28: "once per process launch" is the boot path only. `FFX_InitNewSaveData` also
+runs on the ATEL new game syscall Core 573, so a New Game reseeds, which is why the hook below is
+needed. And the xor also takes two bytes of the 8 byte buffer that `FFX_Time_ReadSystemTimeFields`
+never writes, uninitialised stack, so two machines seeding at the same second still need not agree.
+Copy the state, never rely on reseeding in step. The full arithmetic is in
+`reversing/THREADS_AND_CLOCKS.md` 2.7 (R1 in full).
+
 **What to do:** at session start, copy `g_ffxRandStreamState 0x1135EE0` (272 bytes) and
 `g_ffxBattleRandState 0xC42200` (4 bytes) from host to client. Also hook `0x798890`, because the ATEL
 save-RAM-clear syscall (`library 0 function 573`) can reseed mid-session and a New Game probably issues
@@ -587,6 +594,14 @@ part 2, every caller of every clock classified with a port decision. The count i
 functions at 65 sites. The simulation side is the play time counter (written into the save block
 from the vsync emulation thread), the battle menu page open timers that gate input acceptance, and
 the fury minigame window. Part 1 of the same doc is the thread census.
+
+2026-10-28: every row now has a decision. The last ones that matter for co-op: the hair and cloth
+sway gust (`rand() % 1000` in `FFX_Ch_StepSecondaryPhysics`) only moves the sway particles, which
+no joint, CHR field or step reader takes, so it is cosmetic and stays out of the hash. It runs on
+whichever of the four job workers pops the shared queue, so its draw order differs between peers
+and that is fine. And the boot `srand` inside `FFX_MainInit` seeds the boot worker's CRT stream,
+not the step thread's, because `FFX_MainInit` is a posted job. The step thread's CRT stream starts
+at the default seed 1 on every machine.
 
 The real problems:
 
@@ -806,11 +821,14 @@ The real problems:
   Map particles (`reversing/MAP_PARTICLES.md`) step on the step thread every sub-step, catch-up
   included, but how many random draws they make follows the camera: group 0 records pause when
   frustum culled, and rain drops respawn when they leave a cube around the camera. With two bodies
-  each peer's camera follows its own player, so the effect RNG state diverges. Worse, `pppRandFV` and
-  `pppRandIV` reseed CRT `srand` from that state on the step thread, and THREADS R5 says the
-  simulation reads that CRT stream. Whether R5's reader reaches hashed state is still open. If it
-  does, either the particle step must run against a camera both peers agree on, or the reseed has to
-  be isolated from the stream the simulation reads.
+  each peer's camera follows its own player, so the effect RNG state diverges. `pppRandFV` and
+  `pppRandIV` then reseed CRT `srand` from that state on the step thread. Corrected 2026-10-28: the
+  per CHR `rand() % 1000` (THREADS R5) runs in a worker job with the worker's own seed, so it never
+  sees that stream. The one step thread reader that can reach the simulation is the rcBg scene
+  shake (R14, 0x921172), which only draws during a MapFx 038 shake with a random range and moves
+  the scene camera the stick is read against [I]. So a peer camera difference can only leak into
+  the simulation on maps that run such a shake, and the fix there is to give the shake its own
+  stream or drive it from the host.
   Achievements (`reversing/STEAM_ACHIEVEMENTS.md`) unlock on each machine's own Steam account from
   that machine's simulation, so a joiner earns the boss kills, steal counts and scenario milestones of
   the host's world. That is probably what players want, but it is a choice to make on purpose. Rows
@@ -854,9 +872,14 @@ The real problems:
   The Al Bhed primer import (`reversing/MINIGAMES_PROGRESSION.md`) reads primer masks out of other
   save files on that machine's disk (`core:453`, `core:565` and the `FFX_MainStep` scan block at
   0x820C2D) and stages them in globals outside the save block, so the block hash cannot see the
-  difference until `FFX_AlBhed_CommitStagedPrimerGrants` writes it. In a session it has to run on the
-  host only with the grant relayed, or be disabled. The primer mask itself is simulation visible
-  (`core:270` branches on it), so a joiner's stray import is a real desync.
+  difference until `FFX_AlBhed_CommitStagedPrimerGrants` writes it. Decided 2026-10-29 (the user):
+  sync the import to the clients. The host imports from its own files, and the two mask words
+  (`dword_1325AC4`, `dword_1325B8C`) go to every client as a host ordered event with the step the
+  host's scan finished on. A client writes them and reports the scan done on that step, and never
+  reads its own disk for it (`FFX_SaveFile_ImportPrimerFromSlot 0x6EFD10` suppressed on clients). The
+  primer mask itself is simulation visible (`core:270` branches on it), so a joiner's stray import
+  would be a real desync. Still open for the build: the save UI states 21..27 that `core:453` waits
+  on must finish on the client on the host's step. Details in MINIGAMES_PROGRESSION.md 2.4.
   The sphere grid works on a copy of the board in menu work and commits it with MenuToSave 0xA5BB70
   at every activation, at frame 20 of a node kind change and at quit, so `SpendSphereLevels` is not
   the only commit point the menu note below lists. A hash taken mid grid sees half finished state,

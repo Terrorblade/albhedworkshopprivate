@@ -447,7 +447,7 @@ positions) stays on the CPU.
 | 0x659860 | FFX_GfxCtx_AllocMaterialArray | 8 byte pool of 3000 |
 | 0x659910 | FFX_GfxCtx_AllocMaterialSet | 56 byte pool, `sub_433700` |
 | 0x6599C0 | FFX_GfxCtx_AllocMeshInstance | 132 byte PMeshInstance plus world matrix |
-| 0x63FF50 | FFX_DynGeoMem_GetCurrentSet | returns `dword_CDEDF0`->+4 |
+| 0x63FF50 | FFX_DynGeoMem_GetCurrentSet | returns +4 of the current set (`g_ffxDynGeoMem`->+0), the segment index, or -1 with no set (`sub_6DE9F0`). Corrected 2026-10-28, was "`dword_CDEDF0`->+4", which is the set 0 pointer |
 | 0x69E0C0 | ClassDynamicGeometry__ctor | vtable 0xB47E14 |
 | 0x69E2B0 | GuildMapDynamicGeometry__ctor | vtable 0xB47E70, +60 = -1 |
 | 0x69E320 | MenuDynamicGeometry__ctor | vtable 0xB47E9C |

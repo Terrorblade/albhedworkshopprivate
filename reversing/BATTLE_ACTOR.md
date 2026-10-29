@@ -93,6 +93,7 @@ was one unknown run of its full size.
 | BTLHIT | 0x2C | not known | 13 | 13 | 0 | 1 (1 byte) | 0 |
 | BTLHITLOG | 0x2D8 | not known | 14 | 14 | 0 | 2 (6 bytes) | 0 |
 | BTLUNIT | 0xF90 | 1 run, 3984 bytes | 427 | 210 | 217 | 26 (100 bytes) | 1, 0x568..0x58F (40 bytes) |
+| BTLUNIT, 2026-10-28 | 0xF90 | | 428 | 211 | 222 by the regex m_[bwif]+hex (217 in the first count) | 25 (60 bytes, largest 16) | 0, 0x568..0x58F is `m_battleNameSpare[40]`, section 9.1 |
 
 The one remaining run over 32 bytes, `BTLUNIT` 0x568..0x58F, has no reader or writer in the walk. It is
 inside the 492 byte stat block that `FFX_Btl_LoadUnitParams` 0x79B4F0 zeroes, right after the 40 byte
@@ -118,7 +119,7 @@ The header file has a comment on every field. The regions:
 | 0xD40..0xDBF | target order lists, Wakka's reel strips | `FFX_Btl_BuildTargetOrder` 0x7B7090, `sub_7B6FB0` 0x7B6FB0, `sub_7B1B50` 0x7B1B50 |
 | 0xDC0..0xE2F | battle state bytes: target masks, present, KO, capture, CTB flags, queue indices, action state | BATTLE_COMMAND.md, BATTLE_CTB_AND_STATUS.md |
 | 0xE30..0xEAB | status effect handles | `sub_79EF40` 0x79EF40, `FFX_Btl_StopStatusFx` 0x79F110, `sub_79ED40`, `sub_79EA90` |
-| 0xEAC..0xF2E | 32 handles from the unit's data file, probably sound [I], and their load counters | `sub_7A01B0` 0x7A01B0, `sub_7A0400` 0x7A0400, `sub_7A0540` 0x7A0540, Btl 108 |
+| 0xEAC..0xF2E | 32 handles from the unit's data file, probably sound [I], and their load counters | `FFX_Btl_QueueSoundSections` 0x7A01B0, `sub_7A0400` 0x7A0400, `FFX_Btl_ServiceSoundQueue` 0x7A0540, Btl 108 |
 | 0xF34..0xF77 | late per unit values, overkill accumulator | `FFX_Btl_ApplyPendingEffects` 0x78F368 |
 | 0xF78..0xF8F | monster archive sections and the reward record | `FFX_Btl_BindMonsterArchiveSections` 0x783B32, `Btl_RegisterMonsterMotions` 0x7840BB |
 
@@ -174,11 +175,160 @@ GetActor comment no longer calls 31..92 monsters. The table keeps the old names 
   move and placement state bytes, separate fields and not an array, they have different readers),
   0x504..0x50F (AI properties 26, 31, 85, 86, 95..97, 343), 0x5C0..0x5C3, 0x6CA..0x6E1, 0x700..0x729,
   0xDF8..0xE2C and the dwords 0xF34..0xF58.
-- 0x568..0x58F, see section 3.
-- The weapon record reading at `sub_795B40` (magic host API 219) indexes `v2[1088]` on a side record,
+- 0x568..0x58F, see section 3. Closed 2026-10-28, section 9.1.
+- (Answered 2026-10-28, section 9.2: a shipped mistyped read.) The weapon record reading at `sub_795B40` (magic host API 219) indexes `v2[1088]` on a side record,
   beyond its 912 bytes. Either a quirk or a misread of which record it gets, not checked at runtime.
 - The magic DLLs reach units through the host API table and were not walked, so "No reader found"
-  does not cover them.
+  does not cover them. (Walked 2026-10-28, section 9.4.)
+- 2026-10-28: units 18 and 19 answered in 9.3. The placeholder meanings are still open, the field
+  naming workers had not reported when this pass was handed back.
+
+## 9. Second pass, 2026-10-28
+
+Tags: [V] read in the binary at the address given, [M] measured by a scan, [I] inferred.
+
+### 9.1 BTLUNIT 0x568..0x58F is a spare tail of the name buffer that nothing addresses
+
+Now `m_battleNameSpare[40]`. Every channel checked:
+
+- **Displacement scan, whole FFX.exe [M].** Every instruction in every code segment with a memory
+  operand displacement in 0x568..0x58F, or an `add`/`lea`/`sub` immediate in that range: 126 hits.
+  None has a BTLUNIT base. In the battle range they are `sub_7803F0` and `sub_7807C0` (a 0x5D8 byte
+  "tex anim set" block from `FFX_MemAlloc`), `FFX_Came_StartTrapezoidMove`, `sub_7BDE50` and
+  `sub_7C0790` (camera records). Outside it they are CHR (`FFX_Ch_UpdateRenderJob` 0x833629, CHR is
+  0x880), the ATEL actor float getters at 0x86A217..0x86A707 (base `FFX_Atel_GetActor`), Bullet
+  constraints, movie and sound code.
+- **Sub-pointer scan [M].** For every function that calls a unit getter (`FFX_Battle_GetActor`,
+  `FFX_Btl_GetEnemyUnit`, `FFX_Btl_GetSideRecord`, `FFX_Btl_GetWeaponStandInUnit`,
+  `FFX_Btl_GetUnitBattleName`) plus every function in 0x770000..0x8C0000 (7250 functions): track a
+  register loaded with base + K (K in 0x300..0x567, by `lea` or `add`) and report any later [reg + D]
+  with K + D in the run. 5 hits, all the ATEL actor at K = 0x558 (`FFX_Atel_PushActorPosToChr`,
+  `FFX_Atel_SetActorPos`). The stat block base `ebx = unit + 0x540` in `FFX_Btl_LoadUnitParams`
+  (0x79B509) is never used with a displacement 0x28..0x4F.
+- **The Hex-Rays provenance walk of the first pass** (4488 rows, sub-pointer getters included) has no
+  row in the run and no variable index row whose base is 0x540 beyond the copy loops below.
+- **Bulk writers [V].** Only the zeroing: `FFX_Btl_ZeroBytes(unit + 0x540, 0x1EC)` at 0x79B504..0x79B513
+  in `FFX_Btl_LoadUnitParams`, and `FFX_Btl_ZeroBytes(rec, 3984)` in `FFX_Btl_AllocActorArrays`. No
+  `push`/`mov` of 0x1EC, 0x7B, 0xF90 or 0x3E4 in the battle range copies a stat block or a unit (the
+  0x1EC, 0x390 and 0xF90 pushes at 0x78170F..0x781719 in `FFX_Btl_Init` are printf arguments).
+- **Name writers [V].** All four bound their copy at 40 bytes or less: the monster copy (`mov edi,
+  28h` at 0x79B78D, from `m_name`), the character copy (20 bytes from `g_ffxCharNames`, `cmp ecx, 14h`
+  at 0x79B55B), Btl 220 `FFX_AtelSys_Btl_220_SetBattleNameFromMsg_resi` (`cmp eax, 28h` at 0x7A7A7B)
+  and Btl 145 `FFX_AtelSys_Btl_145_CopyBattleName_resi` (`mov esi, 28h` at 0x7A7820).
+- **Name readers [V].** `FFX_Btl_GetUnitBattleName` (was `sub_79AF10`) returns unit + 0x540, and its
+  users hand it to the text draws (`sub_905930` -> `FFX_Text_DrawStringScaled`, `sub_9016B0`,
+  `FFX_MesWin_MeasureTokenRun` in `sub_89BF70` 0x89BF95, the message slot setter `sub_8B57F0` in
+  `sub_892870`). Those read to the zero terminator. `FFX_Btl_LoadMonsterData` stores up to 63 bytes
+  of the monster name (`cmp ecx, 3Fh` at 0x7837EC), so a monster name of 40 bytes or more is cut at
+  40 and its terminator is byte 0x568, which the stat block memset left at zero. That byte is the only
+  part of the run any reader can reach, and only as a terminator [V for the code, I that a shipped
+  name is that long].
+- **Magic DLLs [M].** See 9.4. The one raw unit pointer a DLL dereferences is written at +0x614, and
+  the list pointers are read at +0xD40, +0xD60 and +0xD80. Nothing in 0x568..0x58F.
+
+Verdict: written only by the two bulk zeroings, read at most as the terminator of a full 40 byte name.
+The field is named and typed `unsigned __int8 m_battleNameSpare[40]`.
+
+### 9.2 `FFX_Btl_GetUnitSideChr` (host API 219) reads a BTLUNIT field through a side record
+
+`FFX_Btl_GetUnitSideChr` 0x795B40 [V]:
+
+```
+0x795B52 call FFX_Btl_GetSideRecord      ; eax = g_ffxBattleSideRecords + 912 * (unit or unit + 31)
+0x795B5F mov  ebx, [eax]                 ; side record m_chr
+0x795B63 jnz  return ebx                 ; has a CHR -> return it
+0x795B65 cmp  [eax+440h], bl             ; bl is 0 here
+0x795B6B jz   return ebx                 ; -> return 0
+         loop units 0..30: [unit+43Fh] == a1 -> ebx = unit CHR, count, stop after the a2-th
+```
+
++0x440 is `BTLUNIT.m_hasAttachedUnits` and +0x43F `m_attachParentUnit`, so the loop is written for
+a BTLUNIT, but the test reads offset 0x440 off the 912 byte side record. 0x440 - 0x390 = 0xB0, so for
+side records 0..60 it reads byte 0xB0 of the next side record, which is inside that record's
+`m_description` text (0x090..0x18F). Side records never write past 0x047 (section 1.1) and
+`FFX_Btl_AllocActorArrays` zeroes all 912 bytes, so the byte is 0 and the fallback loop never runs
+from those records [V for the read, I for the value]. For the last side record (unit 30, side 1,
+record 61) the read is 0xB0 bytes past the end of the 0xDCE0 byte heap block, whatever the heap holds
+there. The intended test was almost certainly `FFX_Battle_GetActor(a1)->m_hasAttachedUnits` [I]. In
+practice: a unit with no weapon CHR returns 0 even when it carries attached units. 149 DLLs call
+this slot, so the recreation should copy the behaviour (return the side record CHR, else 0) and not
+the intent.
+
+### 9.3 Units 18 and 19 are an unused gap
+
+Units 0..17 are the 18 character records (0..6 party, 7 Seymour, 8..17 the aeons), and 20..27 the
+enemy slots. Nothing fills 18 and 19 [V]:
+
+- `FFX_Btl_SetupUnitRoster` 0x79C110 gives units 0..30 the per record defaults, then loops the
+  characters with `cmp edi, 12h` (0x79C45A) and `cmp ebx, 12h` (0x79C4AF), so only 0..17 get a type
+  id, `FFX_Btl_LoadUnitParams` and side record models. `m_exists` (+0x10) has three writers, all in
+  that function (0x79C39A party, 0x79C43C characters 0..17, 0x79C5A3 enemies), so 18 and 19 never
+  exist in a battle.
+- Every character loop in the battle code stops at 18: the CHR load phases in `FFX_Btl_StepSubPhase`
+  (0x7832F3, 0x78334F, 0x783378, 0x783518), `FFX_Btl_BuildUnitListByKind` (0x7B6C9B, 0x7B6CBE,
+  0x7B6D6B), `FFX_Btl_InitCtbCounters` (0x78DFBC), `FFX_Btl_CommitActorsToSave` (0x78609A),
+  `FFX_Btl_PayKillRewards` (0x799155). There are 53 compares against 0x12 in 0x770000..0x7F0000, most of them character loops like these [M].
+- `FFX_Btl_IsEnemySlot` 0x79AEF0 is `unit - 20 <= 7` and `FFX_Btl_AveragePresentPlacementPos` is
+  called as (0, 18) and (20, 8) in `sub_793BA0` (0x793BB5).
+- No caller passes 18 or 19 as a constant unit index: no `push 12h` / `push 13h` feeds a unit
+  function in 0x770000..0x7F0000 [M] (the hits are battle event 18 at 0x7ADAC4 and 0x7ADC0A, RNG
+  streams 18 and 19, a trophy id and debug widgets).
+
+The few `< 20` tests (`FFX_Btl_LoadUnitParams` name loop, `sub_79FE80` 0x79FE97 which picks a
+sound table for 8..19 and 28..30) treat 18 and 19 as ally side padding. The enemy block starts at 20
+so that the eight enemy slots line up, and the two records in between are allocated and never used
+[I for the why]. An AI script could still name 18 or 19 through `FFX_BtlAi_SetProperty` (it writes
++0xDC8 on any unit), no shipped use is known.
+
+### 9.4 What the magic DLLs touch
+
+Measured over all 581 FFX DLLs in memory with `magicdll.HostCallScan` and capstone (scratch script,
+the install is read only) [M].
+
+**Raw pointers.** Only six host slots hand a DLL a pointer into a unit: 925 `FFX_Battle_GetActor`
+(the unit), 218 `FFX_Btl_BuildTargetOrder` and 645 `FFX_BtlOd_WakkaReels_GetStrip` (+0xD40), 407
+`FFX_Btl_SortTargetOrderAcrossLine` (+0xD40 through BuildTargetOrder), 368
+`FFX_Btl_BuildTargetOrderWithAttached` (+0xD60), 617 `FFX_Btl_GetHitTargetList` and 412
+`FFX_Btl_BuildHitTargetList` (+0xD80). A few others leave a unit pointer in eax as a side effect
+(226, 433, 528, 688, 808), no DLL uses it (0 dereferences at their 470 call sites). A forward taint
+walk from every call site (eax and its register and `[ebp+x]` copies, 120 instructions):
+
+| slot | call sites | dereferenced | offsets |
+|---|---|---|---|
+| 925 | 4 (magic 0515, 0611, 0667, 0668) | 4 | **write byte +0x614 = 0** |
+| 218 | 399 | 21 | read +0xD40 (17 DLLs), indexed +0xD40 (4), 202 sites pass the list on |
+| 368 | 3 | 2 | indexed read +0xD60 |
+| 407 | 3 | 1 | indexed read +0xD40 |
+| 645 | 10 | 10 | `lea` +0xD40 |
+| 617, 412 | 9 | 0 | |
+
+So the DLLs never read or write a unit field through a raw pointer, with one exception: magic 0515,
+0611, 0667 and 0668 each run `if (FFX_Btl_IsAllyUnit(u)) FFX_Battle_GetActor(u)[0x614] = 0` when
+their own frame counter reaches 30 (magic_0515 at 0x100085C5..0x10008605, the counter word
+0x10344358 advances only while `g_ffxVfxTimeFrozen` is clear, 0x10008351). +0x614 is
+`m_statusCount[12]`, the Slow counter. That is a simulation write from effect code, timed by effect
+frames. These are also the four DLLs that read the catch-up flag, but in magic_0515 the catch-up test
+(0x1000420D) gates only a trail mesh build, not this counter [V in the DLL bytes].
+
+**Through host functions.** Everything else a DLL does to a unit goes through an exe function that
+takes a unit index. 132 slots reach BTLUNIT fields within three call levels (joined with the first
+pass's access rows). Directly in the slot body: 94 offsets read and 77 written. Within three levels:
+428 read and 186 written. The heavy simulation writers are 239 `FFX_Btl_ApplyPendingHits` (275 DLLs:
+HP, MP, CTB, status words and counters, KO and present bytes, the hit logs) and 446
+`FFX_Yanagi_ApplyPendingHits` (36), 226 `FFX_Btl_EffectSetReady` and 433 (451 DLLs: +0x731, +0xDF2,
++0xDFB, +0xDFE, +0xE0D), 808 `MsSetReel` (10: the reel hits, +0x774, +0xD24..+0xD3C, +0xD80), 388
+`FFX_Btl_PlayUnitReaction` (20) and the motion and move setters 228, 213, 530, 537, 598, 701. Side
+records: slot 219 reads +0x000 and +0x440 (9.2) and slot 541 writes +0x040. None of the offsets reached
+falls in 0x568..0x58F. Per slot rows are in the scratch output, not kept in the repo.
+
+### 9.5 Tooling
+
+`tools/apply_battle_structs.py` refused every apply before this pass: 57 member comments in the IDB
+still named functions as `sub_XXXXXX` that the header had since renamed. The comment check now maps
+`sub_XXXXXX` to the current IDB name before comparing, and two hand reviewed renames sit in
+`COMMENT_RENAMED`. `tools/apply_battle_actor_names.py` (framework copied from apply_rcflex_names.py)
+names six helpers. Rehearsed on a copy: names dry run 6, applied 6 with comments, second dry run 0.
+Structs: diff clean, applied, second dry run clean. Nothing saved.
 
 ## 8. Applying to the IDB
 

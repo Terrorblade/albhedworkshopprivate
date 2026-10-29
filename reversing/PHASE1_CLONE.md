@@ -287,7 +287,8 @@ Ev, `0x02` Eff, `0x08` **Disp**, `0x10` **Btl**, `0x20` Z, with `0x04` unlabelle
   natural network id.
 - `FFX_Ch_MoveChrMemory 0x826FA0` does **not** move CHRs. It compacts the heap blocks a CHR points at
   (`m_joints`, `m_collisionVolumes`, `m_parts`, `m_channels`, the motion pointers and the per-part
-  blocks). So any pointer read *out of* a CHR must be re-read each frame rather than cached.
+  blocks). It never runs in this build (`MEMORY_ARENAS.md` 4.3), so a pointer read *out of* a CHR
+  stays valid until the CHR or its model is disposed.
 
 ## Pool capacity
 

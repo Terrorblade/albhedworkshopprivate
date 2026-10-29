@@ -208,8 +208,10 @@ and that is where the game-logic data lives.
 | `MAP_PARTICLES.md` | `mapparticle.py`, `apply_mapparticle_names.py` | MAP1 section 10, the field placed particle set: format, the ppp program VM, the per-frame update, its RNG and what the step reads, and the Thunder Plains rain port spec | 317/317 sets to the last byte, 0 unclaimed |
 | `MENU_SCRIPT.md` | `menuscript.py`, `apply_menuscript_names.py` | `menu_script.bin`, `system_script.bin` and `battle_script.bin`: the value and scene format, the loader and lookup, how a menu screen is built, and which parts reach the simulation | 6/6 copies parse to the last byte, renders a screen's rectangles to SVG |
 | `SOUND_FORMATS.md` | `fsb.py`, `fev.py` | the FMOD sound banks and event projects, and how SE, BGM and voice ids reach them | 1,260/1,260 banks and projects parse, FMOD Core agrees with the header parse on all 33,362 subsounds |
+| `WAVE_DICTIONARIES.md` | `wd.py` | the 865 PS2 `.wd` wave banks: format, the sector index, the FMOD id overlap, and the proof that the PC never opens them | dead, 864/864 numbered banks parse with 0 non-ADPCM frames, the only live read is the 4 byte header of 833 embedded copies |
 | `SAVE_FILE.md` | `savefile.py` | the PC save file: path, header, the quirked CRC-16, the writers, the autosave and the load checks | 12/12 real saves round-trip byte for byte, the CRC reproduces on all 12 |
 | `FFX_GAME_NOTES.md` | `magicdll.py` | the shipped magic-DLL plugin system | ABI and host API table mapped |
+| `MAGIC_HOST_API.md` | `magicdll.py`, `apply_host_api_names.py` | every slot of the 947-slot magic host API table: target, name, which DLLs reach it, evidence | 0 placeholders left, 895 named and 51 `maybe_` guesses, 1 null slot. 59 slots are never reached by a DLL. Rehearsed on an IDB copy 2026-10-28 |
 | `../COOP_DESIGN.md` | `pcmodels.py` | which character models are spawnable, and the co-op design that needs them | 25 of 35 `c`-series models have field locomotion |
 
 Each format doc marks every field as confirmed or inferred, and ends with explicit known unknowns and

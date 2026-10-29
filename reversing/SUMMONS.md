@@ -336,7 +336,7 @@ So the entrance plays as soon as Yuna's turn ends, and the aeon's first real tur
 is menu driven (`+0xDF3 = 0`), so that turn waits for input. [V]
 
 - No RNG draw in `FFX_Btl_BeginSummon`, the swap, `FFX_Btl_QueueAeonTransition` or either queue insert. [V]
-- The 0x3100 row has hit type 0, so `sub_78A890` returns before its stream draw. [V]
+- The 0x3100 row has hit type 0, so `FFX_Btl_RollHit` returns before its stream draw. [V]
 - Off field units do not tick (`FFX_Btl_CtbTick` skips `+0xDC8 == 0`), so the party's counters freeze
   for the whole summon. The returning party gets no turn insert (Swap with a1 = 255), so they pick
   up where they were. [V]
@@ -393,7 +393,7 @@ FilterAndPickTarget draws only when more than one candidate survives the filter.
 ### 7.2 Aeon KO
 
 - `FFX_Btl_OnUnitDefeated` sets `+0x702` death kind (1 HP, 2 status) and `+0xDEE = killer`. [V]
-- `FFX_Btl_EndPhaseStep 0x7917D0` case 2, when `0x112C9E8 != 0`, `BYTE2(dword_112CA0F) == 0`
+- `FFX_Btl_EndPhaseStep 0x7917D0` case 2, when `0x112C9E8 != 0`, `byte_112CA11 == 0` (was `BYTE2(dword_112CA0F)`, the dword is split into four bytes since 2026-10-28)
   (written only by Btl 280, a script guard, open) and `FFX_Btl_TestBattleOver(0)` gives 1 or 3: [V]
   1. lead = `FFX_Btl_AeonLeadUnit(E8)`
   2. `FFX_Btl_StartAeonRecovery 0x78E0A0`: for every unit in the party order, HP = 0 and
@@ -422,7 +422,7 @@ Whether the aeon's CHR is freed on recall (`sub_793410` / `sub_796DC0` mode 7) i
 ### 7.4 What locks an aeon in the menu
 
 `FFX_Btl_IsCommandLocked 0x79A5B0` -> `FFX_Btl_IsUnitUnsummonable` [FFX_Btl_IsUnitUnsummonable]: an aeon is locked
-when HP <= 0, `+0xDD4 == 0`, petrified (`+0xDCD`), or the countdown `+0x6D8 != 0`. 0x30FF is locked if
+when HP <= 0, `+0xDD4 == 0`, left the battle (`+0xDCD`, written by `FFX_Btl_SetUnitLeftBattle` 0x78DE4C, corrected 2026-10-28, it is not petrified), or the countdown `+0x6D8 != 0`. 0x30FF is locked if
 any one sister is locked. [V]
 
 `sub_79BB50` builds the command lists, and special cases the sisters (15..17) and Yojimbo (14)
@@ -571,7 +571,7 @@ Also worth a comment on `0xC42200` (the `FFX_Btl_Rand` state): seeded only by
 - Where an aeon's equipment entries 12..33 and the Break HP / MP Limit bits (record `+0x4C`) get set.
 - Exact step counts per entrance, dismiss and KO effect, full and short. Needs a runtime probe.
 - Whether the aeon CHR is freed on recall (`sub_793410` / `sub_796DC0` mode 7).
-- The `BYTE2(dword_112CA0F)` guard on the KO path (only Btl 280 writes it).
+- The `byte_112CA11` guard on the KO path (only Btl 280 writes it).
 - What `sub_7A0090(101, 30)` / `(127, 30)` does around a flagged entrance.
 - The `sub_791630(1)` gate in post kind 1.
 - The a5 / a6 arguments of `FFX_Btl_GainOverdriveOnHit`.

@@ -265,8 +265,8 @@ False paths, checked at the call site:
   `FFX_Btl_ComputeOverdriveRefDamage 0x78D790`, which passes the random flag 0 in both calls (0x78D79C,
   0x78D7B7). btl:214 passes 0 too.
 - **btl:164 and the clock.** `sub_79CCA0` frees the system motion group, and the free can reach
-  `FFX_Arena_InitCookieFromTickCount 0x6EA050`, which seeds the arena header cookie from
-  `GetTickCount` only while the cookie is still 0. Not a simulation value. The same path as the Ch
+  `FFX_Dl_InitMparams 0x6EA050` (dlmalloc `init_mparams`), which seeds the mspace magic from
+  `GetTickCount` only while it is still 0 (`MEMORY_ARENAS.md` 2.4). Not a simulation value. The same path as the Ch
   library's ch:61.
 
 ### 5.2 Input: the message waits [V]
@@ -566,9 +566,9 @@ row), meaning, lockstep, mark.
 | 135 | 8 | 6 | m | sel:int, id:int, param:int | int | no | `FFX_AtelSys_Btl_135_PlayStatusSe_resi` | sub_79FCF0 -> sub_79FE80 / sub_7A08A0 |  | V |
 | 136 | 19 | 7 | mbs | sel:int, id:int | int | no | `FFX_AtelSys_Btl_136_PlayUnitSeOnce_resi` | sub_7A0100: plays id OR 0x80000000 unless it is dword_112C8E4, the last one | global | V |
 | 137 | 0 | 0 |  | sel:int, id:int, param:int | int | no | dead `FFX_AtelSys_Btl_137_PlayRawSe_resi` | sub_7A00D0 -> sub_7A08A0(id OR 0x80000000) |  | V |
-| 138 | 1 | 1 | e | battleId:int | int 0 | no | `FFX_AtelSys_Btl_138_ResetZoneWeights_resi` | sub_782B40 -> FFX_Btl_ResetEncounterZoneWeights. Only camtest0 calls it |  | V |
-| 139 | 1 | 1 | e | battleId:int | int | no | `FFX_AtelSys_Btl_139_GetZoneNibble_resi` | sub_782940 |  | I |
-| 140 | 34 | 6 | e | battleId:int, v:int | int | no | `FFX_AtelSys_Btl_140_SetZoneNibble_resi` | sub_782BA0: sets the zone nibble and resets the weights. Event packages call it |  | I |
+| 138 | 1 | 1 | e | battleId:int | int 0 | no | `FFX_AtelSys_Btl_138_ResetZoneWeights_resi` | FFX_Btl_ResetBattleMapWeights -> FFX_Btl_ResetEncounterZoneWeights. Only camtest0 calls it |  | V |
+| 139 | 1 | 1 | e | battleId:int | int | no | `FFX_AtelSys_Btl_139_GetZoneNibble_resi` | FFX_Btl_GetBattleLiveWeight |  | I |
+| 140 | 34 | 6 | e | battleId:int, v:int | int | no | `FFX_AtelSys_Btl_140_SetZoneNibble_resi` | FFX_Btl_SetBattleLiveWeight: sets the zone nibble and resets the weights. Event packages call it |  | I |
 | 141 | 1075 | 536 | bs |  | int | no | `FFX_AtelSys_Btl_141_GetWordC9E2Low_resi` | low byte of word_112C9E2 |  | V |
 | 142 | 36 | 32 | ms |  | int m_b508 | no | `FFX_AtelSys_Btl_142_TestGroundHold_resi` | sub_7AA100 recomputes m_b508, with status 0 and m_b505 it forces ground mode 1 and +0x4F0 = 10 around the call |  | V |
 | 143 | 36 | 32 | ms | sectors:int | int | no | `FFX_AtelSys_Btl_143_GetHomeDirSector_resi` | sub_7A8720(self, sectors, 1): the home facing delta quantised |  | V |
@@ -588,13 +588,13 @@ row), meaning, lockstep, mark.
 | 157 | 6 | 5 | ms |  | none | yes | `FFX_AtelSys_Btl_157_WaitSavedPosCleared_poll` | poll only, waits while self m_savedPosValid |  | V |
 | 158 | 100 | 19 | ms | sel:int, bit:int, unused:int | int 0 | no | `FFX_AtelSys_Btl_158_FireMotionEvent_resi` | FFX_Btl_OnMotionEvent(unit, bit): sets the event bit and runs the hit, the effect or the reaction that bit stands for | rng 9*, rng 10-13*, local*, booster* | V |
 | 159 | 12 | 3 | bs | sel:int | float degrees | no | `FFX_AtelSys_Btl_159_GetHomeFacingDelta_resf` | the home facing minus the current rotation |  | V |
-| 160 | 193 | 4 | bs | on:int | int old | no | `FFX_AtelSys_Btl_160_SetByteC9FC_resi` | byte 0 of dword_112C9FC = on & 1 |  | V |
+| 160 | 193 | 4 | bs | on:int | int old | no | `FFX_AtelSys_Btl_160_SetByteC9FC_resi` | byte_112C9FC (byte 0 of the four bytes at 0x112C9FC, split 2026-10-29) = on & 1 |  | V |
 | 161 | 625 | 161 | mbs | sel:int | int | no | `FFX_AtelSys_Btl_161_GetUnitOrderCode_resi` | an enemy's m_unitIndex, or -6 - its index in g_ffxBattlePartyOrder, 255 none |  | V |
 | 162 | 193 | 118 | e | unused:int | int | yes | `FFX_AtelSys_Btl_162_LoadSystemMgrp_start`, `FFX_AtelSys_Btl_162_LoadSystemMgrp_poll` | start sub_79CCF0 starts the read of the system motion group through the asset loader, the poll waits for byte_112C9CF | load | V |
 | 163 | 2 | 1 | s | motion:int | int | no | `FFX_AtelSys_Btl_163_PlayMotionForced_resi` | btl:7 with m_chrReady forced on for the call, then m_b3F3 = 1 when it played |  | V |
 | 164 | 13 | 12 | e |  | int 0 | no | `FFX_AtelSys_Btl_164_ReleaseSystemMgrp_resi` | sub_79CCA0 frees the block. The clock hit is the allocator's one time heap cookie |  | V |
 | 165 | 70 | 56 | mb | x:float, y:float, z:float | int 0 | no | `FFX_AtelSys_Btl_165_SetBtlPoint_resi` | qword_112A8D0 xyz, w 1.0, byte 1 of dword_112C9FC = 1 |  | V |
-| 166 | 7 | 7 | b | mode:int | int | no | `FFX_AtelSys_Btl_166_SetEscapeMode_resi` | byte 3 of dword_112C9FC: 0 roll, 1 never, 2 always (BATTLE_START_AND_END.md) |  | V |
+| 166 | 7 | 7 | b | mode:int | int | no | `FFX_AtelSys_Btl_166_SetEscapeMode_resi` | g_ffxBtlEscapeMode 0x112C9FF: 0 roll, 1 never, 2 always (BATTLE_START_AND_END.md) |  | V |
 | 167 | 0 | 0 |  | sel:int, index:int | float | no | dead `FFX_AtelSys_Btl_167_GetMoveParamOf_resf` | sub_7B2C90: attack start distance, offset, back jump, the run speeds, weight, attack height |  | V |
 | 168 | 116 | 25 | m | sel:int, index:int, v:float | int 0 | no | `FFX_AtelSys_Btl_168_SetUnitFloatOf_resi` | FFX_BtlAi_SetUnitFloat on another unit |  | V |
 | 169 | 836 | 76 | b | window:int | int | yes | `FFX_AtelSys_Btl_169_WaitMessageOrVoice_start`, `FFX_AtelSys_Btl_169_WaitMessageOrVoice_poll` | start clamps the window. The poll closes it on a confirm press, or by itself once the text phase is 3 and sub_8864B0 says no voice is busy | input, sound | V |
@@ -686,15 +686,15 @@ row), meaning, lockstep, mark.
 | 255 | 3 | 1 | s |  | int mask | no | `FFX_AtelSys_Btl_255_PublishTargetMask_resi` | dword_112C8D0 = self m_targetMask | global | V |
 | 256 | 2 | 1 | s | sel:int | int | no | `FFX_AtelSys_Btl_256_AnyUnitBusy_resi` | sub_7A8BE0: any unit in the mask with m_b432 |  | V |
 | 257 | 3 | 1 | s |  | int | no | `FFX_AtelSys_Btl_257_GetDbgFullSet_resi` | g_ffxBtlDbgFullSet | debug | V |
-| 258 | 18 | 6 | b | sel:int, otherSel:int | int unit | no | `FFX_AtelSys_Btl_258_SetLinkTarget_resi` | +0x439 = 1, +0x438 = the other unit or -1 |  | V |
+| 258 | 18 | 6 | b | sel:int, otherSel:int | int unit | no | `FFX_AtelSys_Btl_258_SetNeckTarget_resi` | neck look-at (was SetLinkTarget): `m_neckAimDelay` +0x439 = 1, `m_neckTarget` +0x438 = the other unit or -1 |  | V |
 | 259 | 1 | 1 | b | sel:int, x:float, y:float, z:float | int 0 | no | `FFX_AtelSys_Btl_259_UnitLookAtPoint_resi` | sub_8350A0: CHR look at kind 3 on the point, look at on (the Ch library's ch:123) |  | V |
 | 260 | 71 | 32 | mb | a:int, b:int, c:int | int | no | `FFX_AtelSys_Btl_260_PushTripleQueue_resi` | sub_79D2A0, an 8 entry queue at word_1136074 |  | I |
 | 261 | 2 | 1 | s |  | none | yes | `FFX_AtelSys_Btl_261_WaitByteE17_poll` | poll only, waits for self m_bE17 != 0 |  | V |
-| 262 | 9 | 3 | m | sel:int, flag:int | int | no | `FFX_AtelSys_Btl_262_TestCharEventFlag_resi` | maybe_FFX_SaveData_TestEventFlag(unit, flag) |  | V |
+| 262 | 9 | 3 | m | sel:int, flag:int | int | no | `FFX_AtelSys_Btl_262_TestCharEventFlag_resi` | FFX_SaveData_TestCharAbilityBit(unit, flag) |  | V |
 | 263 | 36 | 32 | ms | scale:int | int | no | `FFX_AtelSys_Btl_263_GetFacingStep_resi` | (home facing - m_facing) / pi * scale |  | V |
 | 264 | 36 | 32 | ms | rampFrames:int, holdFrames:int | int 0 | no | `FFX_AtelSys_Btl_264_StartTurnKind1AltIfFx_resi` | btl:6 with a3 = 1 |  | V |
 | 265 | 7 | 7 | m | sel:int, noGround:int, base:float | int count | no | `FFX_AtelSys_Btl_265_SetAirborneMask_resi` | per unit m_b407 = 1, ground mode 0 when noGround, m_b505 = 1, m_b50C = 0, m_yOffsetBase = base |  | V |
-| 266 | 1 | 1 | s |  | int old | no | `FFX_AtelSys_Btl_266_TestAndSetGate_resi` | byte 1 of dword_112CA0F, set to 1, returns the old value |  | V |
+| 266 | 1 | 1 | s |  | int old | no | `FFX_AtelSys_Btl_266_TestAndSetGate_resi` | byte_112CA10 (byte 1 of the four flag bytes at 0x112CA0F, split from one dword 2026-10-28), set to 1, returns the old value |  | V |
 | 267 | 1 | 1 | s |  | none | yes | `FFX_AtelSys_Btl_267_WaitGate_poll` | poll only, waits for that byte != 0 |  | V |
 | 268 | 1 | 1 | s |  | int | no | `FFX_AtelSys_Btl_268_DecCounterCA0D_resi` | high byte of dword_112CA0A, decremented while positive |  | V |
 | 269 | 2 | 1 | s |  | int 0 | no | `FFX_AtelSys_Btl_269_ClearByte411_resi` | self m_b411 = 0 |  | V |
@@ -708,8 +708,8 @@ row), meaning, lockstep, mark.
 | 277 | 4 | 2 | ms |  | int | no | `FFX_AtelSys_Btl_277_CancelTurn_resi` | sub_795E70: with a turn running, m_b42B = 12 |  | V |
 | 278 | 1 | 1 | s |  | int 0 | no | `FFX_AtelSys_Btl_278_PlayStatusLoopFx_resi` | sub_79E510: the Sleep or Silence style loop by status-2 bits 0x40 and 0x2000 |  | V |
 | 279 | 20 | 20 | m | sel:int, ability:int | int 1 | no | kept `FFX_AtelSys_Btl_279_AiAddCommandPrio64_resi` | AddCommandEntry with noReorder 1 and prio 64, after sub_7AA100 when m_b3F9 |  | V |
-| 280 | 1 | 1 | m | v:int | int | no | `FFX_AtelSys_Btl_280_SetGuardByteCA11_resi` | byte 2 of dword_112CA0F, the KO path guard SUMMONS.md left open |  | V |
-| 281 | 11 | 11 | b | v:int | int | no | `FFX_AtelSys_Btl_281_SetByteCA12_resi` | byte 3 of dword_112CA0F |  | V |
+| 280 | 1 | 1 | m | v:int | int | no | `FFX_AtelSys_Btl_280_SetGuardByteCA11_resi` | byte_112CA11, the KO path guard SUMMONS.md left open |  | V |
+| 281 | 11 | 11 | b | v:int | int | no | `FFX_AtelSys_Btl_281_SetCountersAllowed_resi` | `g_ffxBtlCountersAllowed 0x112CA12`, 1 at every battle start (`FFX_Btl_BeginBattle` writes 0x01000000 over the four bytes at 0x781312), read only by `FFX_Btl_CheckCounter` at 0x78C1FA, 0 refuses every counter. Renamed from SetByteCA12 2026-10-28, `tools/apply_btl_counter_names.py` |  | V |
 | 282 | 1 | 1 | b | sel:int, x:float, y:float, z:float | int 0 | no | `FFX_AtelSys_Btl_282_SetChrVec804_resi` | sub_824C90: CHR +0x804..+0x80C, then sub_824CC0(chr, 1) |  | I |
 | 283 | 0 | 0 |  | on:int | int | no | dead `FFX_AtelSys_Btl_283_SetByteCA13_resi` | byte 0 of dword_112CA13 |  | V |
 | 284 | 1 | 1 | m | v:int | int | no | `FFX_AtelSys_Btl_284_SetWordC94E_resi` | word_112C94E, read by FFX_Btl_EndPhaseStep |  | V |

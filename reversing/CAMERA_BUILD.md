@@ -134,13 +134,13 @@ sub-block `B`:
 
 | Offset | What |
 |---|---|
-| `B+2`, `B+4`, `B+5` | mode bytes (B+2 is the mode the shake gate reads) |
+| `B+2`, `B+4`, `B+5` | mode bytes. 2026-10-28, from the field camera port (Project Zanarkand `src/engine/came/CameraStep`): the shake and commit gate reads the active priority record's mode byte (record +2), not B+2. Not rechecked by the coordinator |
 | `B+16` | live position (committed + shake), what the view is built from |
 | `B+32` | committed position |
 | `B+64` | velocity limit |
 | `B+80` | pending position |
 | `B+96..104` | theta, phi, length |
-| `B+112..136` | tween rates |
+| `B+112..136` | tween rates. 2026-10-28, from the field camera port: the tween code reads this span as the per channel move state. Not rechecked by the coordinator |
 | `B+140` | pointer to the other sub-block's position |
 | `B+144` | shake out, 3 floats |
 | `B+160` | shake phase, 3 floats |
@@ -158,7 +158,7 @@ So REF live is `S+0x40`, REF committed `S+0x50`, CAM live `S+0x65C`, CAM committ
 | `S+0xC94` | roll target |
 | `S+0xC9C` | ScrDpt, copied to screen +0x1C by StepAll |
 | `S+3209` | per StepAll dirty byte |
-| `S+3210` | scale about pivot flag (`sub_7C4D40`), written at `0x7BEE9A` |
+| `S+3210` | scale about pivot flag (`FFX_Came_ScaleAboutPivot 0x7C4D40`), written only at `0x7BEE9A`, inside the orphan `FFX_Came_ClearScaleAboutPivot 0x7BEE50` (no xrefs), and only ever to 0. So the scale about pivot never runs in retail (checked 2026-10-28) |
 | `S+3212` | last priority |
 | `S+0xCA8..0xCB4` | depth of field: +0xCA8 dirty, +0xCAC mode (came:126), +0xCB0/+0xCB4 the two depths (came:127), sent through `FFX_Gfx_SetDofDepth 0x82CE20` and `FFX_Gfx_SetDofEnabled 0x82CB60` on activate. Earlier called lighting ids, which was wrong (VISUAL_CENSUS.md, ATEL_MISC_LIBRARIES.md) |
 

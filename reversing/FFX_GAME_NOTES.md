@@ -89,8 +89,9 @@ Three corrections to earlier passes, each re-verified against the binary:
 Two things a mod has to respect:
 
 1. `FFX_Ch_MoveChrMemory 0x826FA0` does **not** relocate CHRs - it compacts the heap blocks a CHR
-   points at (`m_joints`, `m_collisionVolumes`, `m_parts`, `m_channels`, the motion pointers). So a
-   `CHR *` is stable for the life of the pool, but any pointer read *out of* a CHR must be re-read.
+   points at (`m_joints`, `m_collisionVolumes`, `m_parts`, `m_channels`, the motion pointers). It never
+   runs in this build (`MEMORY_ARENAS.md` 4.3), so a `CHR *` is stable for the life of the pool and so
+   is any pointer read *out of* a CHR, until the CHR or its model is disposed.
    The pool itself is freed and reallocated on every map transition, so nothing survives that.
 2. `FFX_Ch_AllocChrArray 0x825670` allocates `2 * count * 0x880`. The upper half is **not** spare
    capacity - it is the shadow area `FFX_Ch_CopyToScratchSlot 0x828B30` uses for map save and

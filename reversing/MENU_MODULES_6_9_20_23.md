@@ -162,7 +162,7 @@ The five panels are five lists built by `FFX_Menu_StatusBuildAbilityList 0x8D2E1
 `a1 == 0` branch and lists the equipped weapon's and armour's auto-abilities. Panels 1 to 4 with codes
 0x40, 0x41, 0x45, 0x44 land in the 64..71 range, take the `FFX_SaveData__getCharRecord` branch and
 list the entries of the table from `sub_790200(0, ...)` whose first two key bytes match
-`(code, 0)` and that `maybe_FFX_SaveData_TestEventFlag(char, id)` says this character has.
+`(code, 0)` and that `FFX_SaveData_TestCharAbilityBit(char, id)` says this character has.
 So: auto-abilities, then four per-character ability or command lists.
 
 The slide animation is integer only. `g_ffxMenuStatusSlideVel 0x186A9FC` is a velocity of +-341 and
@@ -904,7 +904,7 @@ Listed with file, the line as it reads, and the correction. I have not edited an
 
 2. **What the four Status page codes 0x40, 0x41, 0x44 and 0x45 name.** I know the mechanism
    (`FFX_Menu_StatusBuildAbilityList` filters the `sub_790200(0, ...)` table on those as the first key
-   byte and tests `maybe_FFX_SaveData_TestEventFlag(char, id)` per entry) and I know panel 0 is the
+   byte and tests `FFX_SaveData_TestCharAbilityBit(char, id)` per entry) and I know panel 0 is the
    equipment auto-abilities. I did not identify which ability class each of the four is, so I cannot
    say "panel 2 is White Magic". That needs the `sub_790200` table dumped at runtime or the matching
    kernel file parsed.

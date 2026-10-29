@@ -28,7 +28,7 @@ That document's "Game state globals" table was the starting point. Scoring it:
 - `party_data` block +0x3D0C 0x1C bytes, kernel table 31 at +0x3D28, `conf` block +0x3D48 0x84 bytes.
   Note the bucket covering this range was called "Config" and is now `PartyGilFlags`, because `conf`
   is only 0x84 of its 448 bytes. The rest is `g_ffxGil` (+0x3D48), the party arrays
-  (`g_ffxFieldPartyChars01` +0x3D58, `g_ffxPartyMemberIds` +0x3D8C, `g_ffxPartyMemberFlags` +0x3D9C)
+  (`g_ffxFieldPartyChars01` +0x3D58, `g_ffxStartItemIds` +0x3D8C, `g_ffxStartItemCounts` +0x3D9C, renamed 2026-10-29)
   and **256 bytes of world event flags**: `g_ffxWorldFlagBits3DCC` and `g_ffxWorldFlagBits3E4C`, two
   1,024-bit arrays. The first is the most script-written region in the save block. The second is dead
   in this build, its only accessor `sub_785260` has zero callers. So a divergence reported in this
@@ -36,7 +36,7 @@ That document's "Game state globals" table was the starting point. Scoring it:
 
 **Corrected.**
 
-- **`g_ffxPartyMemberIds 0x113081C` and `g_ffxPartyMemberFlags 0x113082C` are not the party.** They
+- **`g_ffxStartItemIds 0x113081C` and `g_ffxStartItemCounts 0x113082C` (were g_ffxPartyMemberIds and g_ffxPartyMemberFlags) are not the party.** They
   are the new-game **starting item ids (WORD[8]) and counts (BYTE[8])**, and they live inside the
   `conf` block (+0x3D48 .. +0x3DCC, so +0x3D8C and +0x3D9C are inside it). `FFX_InitNewSaveData`
   copies them pairwise into the item id and item count arrays. The name is actively misleading and I
@@ -220,7 +220,7 @@ default whenever it is non zero. `MENU_SYSTEM.md` third pass.
 | 0x3B | byte | **available sphere levels (S.Lv)**, 0..99 | `0x7853E0` reads, `0x786EF0` spends, `0x784610` earns |
 | 0x3C | byte | spent sphere levels, 0..101 | `0x786EF0`, and `0x784E90` uses 0x3B + 0x3C as the total |
 | 0x3D | byte | revive / death countdown carried out of battle | `FFX_Btl_CommitActorsToSave` |
-| 0x3E..0x49 | 6 words | per-character ability flags for ability ids 0x3000..0x305F | `maybe_FFX_SaveData_TestEventFlag 0x785020`, stride 74 words = 148 bytes |
+| 0x3E..0x49 | 6 words | per-character ability flags for ability ids 0x3000..0x305F | `FFX_SaveData_TestCharAbilityBit 0x785020`, stride 74 words = 148 bytes |
 | 0x4E | byte | bit 1 polled across the party by `FFX_SaveData_AllPartyMembersOk 0x785B10` | |
 | 0x50, 0x54, 0x58, 0x5C | 4 dwords | per-character battle counters, clamped 999999999 | `FFX_SaveData_BumpCharBattleCounter 0x785A00` |
 
@@ -250,7 +250,7 @@ not establish - most likely one is "learned on the sphere grid" and the other "c
 but I am not claiming which.
 
 Ability ids 0x3060 and above are not per-character at all, they live in a shared 32-byte bitmap at
-`saveData+0x3D6C`, which is `maybe_FFX_SaveData_TestEventFlag`'s other branch.
+`saveData+0x3D6C`, which is `FFX_SaveData_TestCharAbilityBit`'s other branch.
 
 ## 4. Inventory and gil
 

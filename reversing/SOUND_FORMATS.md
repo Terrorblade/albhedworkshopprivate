@@ -169,7 +169,7 @@ once, looping or not", and nothing more.
   `SFX/US|JP/%04d.fev` (format strings at 0xB4FB60 and 0xB4FB70). Four step side callers [V]:
   - `sub_887240` loads up to 16 resident projects from its argument or from the list at 0xC54DB0,
     which ships as 0, 1, 2005 (0x887240..0x88726E).
-  - `maybe_FFX_Se_LoadProjectFromWdChunk 0x81CF90` loads `a1[1]` from a `'WD'` chunk.
+  - `FFX_Se_LoadProjectFromWdChunk 0x81CF90` loads `a1[1]` from a `'WD'` chunk.
   - `sub_81E3B0` loads the int16 at +8 of a header whose +12 size is 1..0x10000.
   - `sub_81E600` walks `"SeSep   "` records and loads each distinct u16 at +17.
 - **The side tables.** `SfxProject__ctor 0x70F760` loads the `.fev`, then

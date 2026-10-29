@@ -285,7 +285,7 @@ sees N-1, N-2, ... 0 and can only finish on the last two steps of the frame. [V]
 - poll, kind 2 armed: count down, done at zero.
 - poll, not armed: wait while bit 0x10000 of `dword_12F4E80` is set or `sub_76F060()`. `dword_12F4E80`
   is the receive buffer of an emulated IOP sound RPC whose bind and call functions are stubs
-  (`sub_A44740` returns 0, `sub_A44770` returns -1, `SG_Dev_RemoteRead_STUB_ret0`), and nothing writes
+  (`SG_Dev_SifBindRpc_STUB_ret0` returns 0, `SG_Dev_SifDma_STUB_retm1` returns -1, `SG_Dev_RemoteRead_STUB_ret0`), and nothing writes
   it, so neither holds on PC. Then count the work word down. In retail this poll finishes on its
   first pass. [V]
 - getter 0x85DE80 (not a function in the IDB): `sub_887690(byte_1327135, byte_1327134)` **starts the

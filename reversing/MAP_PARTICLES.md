@@ -39,8 +39,9 @@ rows), `THREADS_AND_CLOCKS.md` R3, R4 and R5 (the effect RNG and the CRT stream)
   camera). [V] Section 6.
 - **It feeds the step, a little.** ATEL waits on group state (MapFx 4, 5), rcBg FP objects read group
   work, the point light commit writes every live CHR's +0x188, and through `srand` the camera
-  dependent draw count sets where the step thread's CRT stream stands, which `THREADS_AND_CLOCKS.md`
-  R5 says the simulation reads. [V chain, I that it matters] Section 7.
+  dependent draw count sets where the step thread's CRT stream stands, and the one step thread
+  reader that can reach the simulation is the rcBg scene shake (R14). [V chain, I that it matters]
+  Section 7. (Corrected 2026-10-28: R5 runs on a worker with its own seed, see item 4.)
 - **Thunder Plains rain is the ppp operator `pppDrawRain` (op 97)** in kami00, kami00_a, kami03 and
   kami04, 7 entries. It is a camera centred cube of line streaks, world space, 500 to 2000 drops, no
   texture, not culled. kami01 and kami02 have no rain operator. [V, M] Section 9 has the port spec.
@@ -333,10 +334,13 @@ drops the submit. [V]
    effects re-add them. [V for the order, I for what reaches the screen, see open item 2]. CHR +0x188
    is render input, nothing in the step was found reading it [I].
 4. **The CRT stream.** Section 6. The R4 `srand` calls set the step thread's CRT state from an
-   effect state whose draw count depends on the camera. R5 (`sub_822DE0`, per CHR per step) reads
-   `rand()` on that thread. For co-op lockstep this means two peers with different cameras can drift
-   apart through map particles, not only through magic. [V for each link, I that R5's consumer
-   reaches simulated state, which `THREADS_AND_CLOCKS.md` still lists as unresolved]
+   effect state whose draw count depends on the camera. Corrected 2026-10-28: R5
+   (`sub_822DE0`) does NOT read that stream. It runs in `FFX_Ch_JointOverrideJob`, posted to a
+   worker through `JobSchedule__postJob2OnWorker` (0xA44B56), and MSVCR110 keeps the seed per
+   thread. The step thread reader left is the rcBg scene shake at 0x921172 (R14), which only draws
+   during a MapFx 038 shake with a random range. So peers with different cameras drift through map
+   particles only on maps that run such a shake. [V for each link, I that the shake reaches the
+   stick direction]
 5. **Group save and restore.** `FFX_MapFx_SaveGroupStates 0x72A180` (from
    `maybe_FFX_Atel_ReleaseAllActorChrs` 0x865E04, into `dword_1326BE0`) and
    `FFX_MapFx_RestoreGroupStates 0x729A10` (from `FFX_Field_MapRegLoadTask` 0x86171E and `sub_8615B0`)

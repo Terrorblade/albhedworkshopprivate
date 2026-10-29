@@ -717,5 +717,7 @@ changes the format notes above.
 - A map's model cluster is changed after load by `FFX_Gfx_AdoptMapCluster 0x65AF60`: every mesh
   instance world is multiplied by diag(-2.5, -2.5, 1) then translate(-256, -224, 0) on a field map, or
   by diag(10, 10, 10) on a battle map, where the battle path also scales camera translations by 10.
+  Correction 2026-10-28: the -2.5 branch is the mapout section 0 rcBg 2d layer cluster, and 3D field
+  maps (section 1) take the x10 branch like battle maps, see `SCENE_OBJECTS.md` section 5.
 - The one PBitmapFont (tuffy.fgen.phyre) is the debug text font. The menu font is FFX's font 0x3C00,
   DXT5 page textures under menu_us/base_ftc (menu/base_ftc for Japanese text) plus an FTCX width table.

@@ -628,7 +628,7 @@ itself is correct in both places.
 
 Also confirmed correct, because it looks like a typo and is not: `g_ffxGameSettings` really
 is at **0x22FB504**. It sits in the big uninitialised tail of `.data`, which runs
-0xC0A000..0x25D7000, so `is_loaded` reports false for it and it is easy to mistake for a bad
+0xC8B600..0x25D7000 (DATA_MAP.md), so `is_loaded` reports false for it and it is easy to mistake for a bad
 address.
 
 ## 11. The IggyValue, settled

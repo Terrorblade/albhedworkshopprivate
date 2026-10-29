@@ -72,7 +72,7 @@ There are exactly three instructions in the whole binary that store to it.
    ```asm
    0x887C80  push ebp
    0x887C81  mov  ebp, esp
-   0x887C83  cmp  ds:byte_B5EC4F, 0
+   0x887C83  cmp  ds:maybe_g_ffxHostFileModeConst, 0
    0x887C8A  jz   short 0x887C9D        ; refuse, do nothing
    0x887C8C  mov  eax, [ebp+8]          ; arg
    0x887C8F  test eax, eax
@@ -83,7 +83,7 @@ There are exactly three instructions in the whole binary that store to it.
    0x887C9E  retn
    ```
 
-   Nothing in the binary calls it. `byte_B5EC4F` is 1 in the loaded image, so its gate is open,
+   Nothing in the binary calls it. `maybe_g_ffxHostFileModeConst` is 1 in the loaded image, so its gate is open,
    but with no caller the function is only useful to a plugin.
 
 **No config key, no ini read, no environment variable anywhere on the write path.** The plugin
@@ -238,7 +238,7 @@ the developers saw on screen.
 
 | mode | page object | getter | enable fn | title drawn | per-frame draw | input handler |
 |------|-------------|--------|-----------|-------------|----------------|---------------|
-| 0 | via 0x6A6E40 | 0x6A6E40 | 0x6AA5F0 | not settled | - | - |
+| 0 | 0xCCCA88 | 0x6A6E40 | 0x6AA5F0 | CharacterLighting: %.2f fps (2026-10-28, `BOOT_SEQUENCE.md` step 47) | 0x6A9F00 | - |
 | 1 | - | - | 0x6984F0 | not settled | - | - |
 | 2 | - | - | 0x6BB670 | not settled | - | - |
 | 3 | - | - | 0x6BB880 | not settled | - | - |
@@ -758,7 +758,7 @@ RVA. Kind is fn, global or table. Everything below was read out of the IDB in th
 | 0x487C50 | fn | IsDebugModeDup | `int __cdecl(void)` | second copy, 25 callers |
 | 0x487C80 | fn | SetDebugModeOrphan | `void __cdecl(int on)` | the only setter, zero callers |
 | 0x422490 | fn | ParseCommandLineAndInitDebug | `int __cdecl(int argc, char** argv)` | argv[1] == "debug" or "DEBUG" |
-| 0x75EC4F | global | DebugSetterGate | BYTE | `byte_B5EC4F`, 1 in the image, gates the setter |
+| 0x75EC4F | global | DebugSetterGate | BYTE | `maybe_g_ffxHostFileModeConst`, 1 in the image, gates the setter |
 | 0x8CCAB0 | global | DebugMenuManagerSingleton | void* | created by FFX_GraphicInitialize |
 | 0x2B4900 | fn | DebugMenuManagerCtor | `void* __thiscall(void*)` | mode starts at 10, off |
 | 0x2B4950 | fn | DebugMenuManagerCreateSingleton | `void __cdecl(void)` | called at 0x241A80 |

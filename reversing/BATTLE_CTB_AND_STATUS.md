@@ -402,7 +402,7 @@ writes the status counters (2.3). The counter changes from the next delay on. [V
 |---|---|---|
 | `FFX_Btl_ApplyCtbDelay` 0x78E1E0 | `+0x65C = clamp(+0x65C + delta, 0, 255)`, from `FFX_Btl_ApplyPendingEffects` slot 2. Not gated by invincibility | [V] |
 | `sub_78E0F0` (propose `FFX_Btl_AddDelayAttack`) | ability dword +28 bit 0x4000 (Delay Buster) adds `2*3*tick/2`, bit 0x2000 (Delay Attack) adds `1*3*tick/2`, evaluated left to right in int, **target's** agility. Delay Attack is `floor(3*tick/2)`, Delay Buster `3*tick` | [V], names [D] |
-| `sub_78BD50` | a target with status-1 Threaten (0x800) gets the CTB slot zeroed, delays do not land on it | [V] |
+| `FFX_Btl_RefuseCtbOnThreatened` | a target with status-1 Threaten (0x800) gets the CTB slot zeroed, delays do not land on it | [V] |
 | `sub_78AE00` Threaten | CTB delta = `attacker.ctb + delay(attacker, attacker.rank) - target.ctb`, so the target lands exactly on the attacker's next turn | [V] |
 | `FFX_Btl_DamageFormula` kind 4 | formulas that damage the CTB read `+0x6EC` as current and `+0x65D` as max (cases 5, 8, 11, 13) | [V] |
 | `sub_7B1AA0` (post-action kind 8) | the acting unit's counter = 0, and each other unit in `g_ffxBattlePartyOrder` gets `+0x65C = delay(own tick, acting unit's rank)` (assignment, not add). Kind 8 comes from command record +6 via `FFX_Btl_ExecCommand`. Which command uses it is not known | [V] / [I] |
@@ -505,7 +505,7 @@ abilities and items that carry exactly one bit, the behaviour from the code: [D]
 | 0x0008 | Distill Speed | "Speed Distiller" [D] |
 | 0x0010 | (unused) | no shipped carrier found, in the same exclusive group as the distills [V] |
 | 0x0020 | Distill Ability | "Ability Distiller" [D]. Bits 0x02..0x20 are mutually exclusive on apply [V] |
-| 0x0040 | Shield | "Shield" [D]. Damage taken / 4 (`sub_78C530`) [V]. Cleared at own turn start |
+| 0x0040 | Shield | "Shield" [D]. Damage taken / 4 (`FFX_Btl_ApplyShieldAndBoost`) [V]. Cleared at own turn start |
 | 0x0080 | Boost | "Boost" [D]. Damage taken * 3 / 2 [V]. Cleared at own turn start |
 | 0x0100 | Eject | Bribe success and petrify shatter set it [V], `FFX_Btl_OnUnitDefeated` treats it as a non-HP death cause [V], applying it clears Threaten [V] |
 | 0x0200 | Auto-Life | "Auto-Life" [D]. `+0x5CA` armed flag [V] |
@@ -526,7 +526,7 @@ abilities and items that carry exactly one bit, the behaviour from the code: [D]
 | +0x5C6 | u8 | threaten target unit (on the threatener) | `sub_78E460` [V] |
 | +0x5C8 | u8 | doom count, live. Script property 160 | `sub_799CD0` [V] |
 | +0x5C9 | u8 | doom start count, copied to +0x5C8 on apply. Script property 159 | `sub_78B4E0` [V] |
-| +0x5CA | u8 | Auto-Life armed | `sub_78B4E0`, `sub_78C580` [V], meaning [I] |
+| +0x5CA | u8 | Auto-Life armed | `sub_78B4E0`, `FFX_Btl_ScaleMagicBooster` [V], meaning [I] |
 | +0x5DE | u8[25] | weapon-borne status chances (the touch and strike auto-abilities) | `sub_78AE00` with ability dword +28 bit 0x40000 [V] |
 | +0x5F7 | u8[13] | weapon-borne durations | same [V] |
 | +0x606 | u16 | status-1 word | [V] [D] |
@@ -550,6 +550,28 @@ Statuses are not written to the actor when an action resolves. `FFX_Btl_ComputeE
 status-2) and `FFX_Btl_ApplyPendingEffects` 0x78F060 later copies the whole lot over `+0x606`,
 `+0x608..0x614` and `+0x616` in one go, after the HP, MP and CTB slots. If regen went from 0 to non
 zero in that copy, `+0x6D2` is reset to 0. [V]
+
+**Read from the 13.7 port (2026-10-29, Project Zanarkand `src/ffx/btl/Status`), missing below:**
+
+- The draw comes before every test. The only path without a draw is a removal ability (0x78AE8D,
+  0x78AE9B). Immune, petrified, already held and Haste against Slow are all tested after it. [V]
+- "Already holds it" reads the LIVE target (0x78B03C `+0x606`, 0x78B337 `+0x608+k`, 0x78B5E6
+  `+0x616`), the Petrify tests read the STAGED hit (0x78B02D, 0x78B2C9). [V per the port, the
+  coordinator checked the draw order and not each read]
+- A Haste or Slow that fails or is refused zeroes the staged CTB amount: `var_14 & 0x1800` at
+  0x78B49E, then the store of 0 at 0x78B4B3. [V]
+- Threaten needs `permStatus1 & 0xF00 == 0` and staged Haste and Slow not 0xFF (0x78B12E). It sets
+  the threaten-landed local (0x78B15D) and flags |= 4 (0x78B1A1). Its CTB uses
+  `FFX_Btl_CtbDelayForRank` with the attacker's `+0xDE8` rank. [V per the port]
+- Petrify on a monster, or on anyone while `g_ffxBtlFieldAirborne` is set, adds KO and Eject
+  (0x78B256..0x78B280, the airborne compare at 0x78B267) after masking status 2 with 0x813F at
+  0x78B24D. So party members shatter in an airborne fight too. [V]
+- The HitMiss debug byte also fails removals (0x78AF6F) and every status 2 bit (0x78B560). [V per
+  the port]
+- `FFX_Btl_ApplyStatus2` returns its arg_20 flags unchanged (0x78B752), and arms Auto-Life through
+  `FFX_Btl_ScaleMagicBooster(attacker, ability, 0, 0)` at 0x78B6EF. [V]
+- In the 2.4 regen formula the `(maxHp * +0x6D2) >> 8 != -100` guard is an unsigned compare, so it is
+  always true. [per the port]
 
 **`sub_78AE00`, per status index k = 0..24**, `chance = rec[46+k]`, raised to the attacker's
 `+0x5DE+k` when the ability has dword +28 bit 0x40000: [V]
@@ -653,7 +675,13 @@ at 0x112C9E4, -1 idle) which closes the CTB gate. `FFX_Btl_FinishActions` calls 
 (propose `FFX_Btl_ApplyPoisonDamage`): `dmg = maxHP(u32) * +0x5BA / 100` unsigned, applied as HP
 damage, then AI event 8, then the KO test. [V]
 
-**NulTide..NulFrost** never count down by turns (flags 0). How a hit consumes them is not traced. Open.
+**NulTide..NulFrost** never count down by turns (flags 0). A hit consumes them in `FFX_Btl_ConsumeNulElements`
+(proposed `FFX_Btl_ConsumeNulElements`), called first in `FFX_Btl_ComputeEffectForTarget`, on the
+staged hit's counters: fire pairs with NulBlaze (entry +0x0E), thunder with NulShock (+0x0F), ice
+with NulFrost (+0x10), water with NulTide (+0x0D). The hit is nulled only when every one of those
+four element bits the attack carries is held, so fire plus ice on a NulBlaze target goes through,
+while fire plus holy is nulled whole (the other bits are not counted). A nulled hit decrements each
+held counter that is below 254, draws nothing, sets entry +0x03 to 2 and the number kind to 2. [V]
 
 ### 2.5 Which statuses change the CTB
 
@@ -684,7 +712,7 @@ and 0xC42318 (68 words), state at 0x1135EE0. [V]
 ```c
 int s = (kind == 1) ? 16 : (kind == 2) ? 32 : 0;
 if (unit - 20 <= 7u)        return s + unit + 8;    // monster slot 20..27 -> 28..35 (+16, +32)
-if (actor(unit)[0x590] & 4) return s + 27;          // maybe_FFX_Btl_IsSummonUnit
+if (actor(unit)[0x590] & 4) return s + 27;          // FFX_Btl_IsSummonUnit
 return s + unit + 20;                                // characters 0..6 -> 20..26
 ```
 
@@ -708,15 +736,25 @@ is not checked. Open.
 | 4 | same call, right after | `sub_78DED0` 0x78DF3E | party kind 0: 20..26 for slots 0..6, then 27 for slots 7..17 (11 draws) | 18, normal start only | `% (range + 1)` |
 | 5 | same | `sub_78DED0` 0x78DFE7 | 28..35 | 8, normal start only | `% 11` |
 | 6 | each turn start of unit 14 that reaches the menu or AI decision | `FFX_Btl_IsActorAiControlled` 0x792137 | **17** | 1 | `& 0xFF` vs Yojimbo's motivation / 4 |
-| 7 | each action, per target, damage part | `sub_78A890` (kind 1), `FFX_Btl_DamageFormula` (kind 0, once per HP / MP / CTB formula with the random flag on), `sub_789690` (kind 0) | attacker | see 13.6 | hit, variance, crit |
+| 7 | each action, per target, damage part | `FFX_Btl_RollHit` 0x78A942 (kind 1), `FFX_Btl_DamageFormula` 0x789C9E (kind 0), `FFX_Btl_RollCritical` 0x7896B3 (kind 0) | attacker | per staged hit, in this order: the hit roll `% 101`, then the HP variance, the crit `% 101` (HP part, ability +0x20 bit 4), the MP variance, the CTB variance. The hit roll is skipped for hit kind 0, a staged sleep counter or Petrify, an ability with +0x1C bit 0x800000 on a live target (no effect), a fully nulled element and the HitMiss debug byte. It is drawn before the Evade and Counter test, so that miss still draws. Each variance is drawn when its part bit is set and power != 0, BEFORE the formula switch, so the fixed and fraction formulas draw too. A miss or no effect draws only the hit roll | hit, variance, crit |
 | 8 | each action, per target, after the damage | `sub_78AE00` 0x78AEBE / 0x78AEF9 | attacker kind 2 | 1 per status index with chance != 0, index order, not for removal abilities | `% 101`, Threaten `% 100` |
-| 9 | right after | `sub_78B4E0` 0x78B4FD | attacker kind 2 | 1 if the staged target is petrified | `% 101 < rec[44]` shatter |
-| 10 | right after | `sub_78BDD0` 0x78BE1E | attacker kind 2 | 1 for a bribe (ability dword +28 bit 31) | `& 0xFF` vs gil ratio |
+| 9 | right after | `FFX_Btl_ApplyStatus2` 0x78B4FD | attacker kind 2 | 1 if the STAGED status 1 holds Petrify after row 8 (test at 0x78B4EC), so a hit that lands Petrify also draws it | `% 101 < rec[44]` shatter |
+| 10 | right after | `FFX_Btl_RollBribe` 0x78BE1E | **target** kind 2 (corrected 2026-10-29: 0x78EBF5 pushes the target index as arg_0, and 0x78BE04 passes arg_0 to the stream pick) | 1 for a bribe (ability dword +28 bit 31), drawn before the bribe immunity and Sleep tests | `& 0xFF` vs gil ratio |
 | 11 | `FFX_Btl_ApplyPendingEffects` | 0x78F65C / 0x78F681 | **9** | 0 or 1, only when the reaction kind is 5, 6 or 8 and flag 0x20 is set | reaction animation pick |
 
 None in: `FFX_Btl_CtbTick`, `FFX_Btl_BuildCtbPreview` (its damage formula call passes random 0),
 `sub_7AF4F0` (regen), `sub_7AF390`, `sub_7AFAB0` (poison), `sub_799CD0` (doom), the haste and slow
-maths, `FFX_Btl_PlayTurnStartVoice`, `sub_797A40`. [V]
+maths, `FFX_Btl_PlayTurnStartVoice`, `sub_797A40`. [V] Caveat found by the 13.7 port (2026-10-29): that
+holds for the regen and poison bodies only. A zombie regen victim and a poison victim that die go
+through `FFX_Btl_OnUnitDefeated(i, i, 0, 1)`, which with a3 = 0 reaches `FFX_Btl_PayKillRewards` at
+0x78C952 and `FFX_Btl_RunAiAndCommit(victim, killer, 4)`. The reward draws are at 0x799178, 0x7991DF,
+0x799282, 0x7992B2, 0x79936B and in the equipment drop at 0x798C76, 0x798CB4, 0x798CF3, 0x798D00 and
+0x798DBA. Answered by the 13.13 port (2026-10-29, checked in IDA): such a kill pays and draws. The
+turn start tick (0x7AF5CC), the poison tick (0x7AFB3C) and `FFX_BtlAi_SetProperty` (0x7B6072) all
+pass a3 = 0, the test at 0x78C935 then reaches the call at 0x78C952, and PayKillRewards' only gate
+is the record pointer at 0x7990DA. A monster self kill pays its full record. A party self kill banks
+0 AP and 0 gil but still draws stream 10 three times (0x799282 twice, 0x79936B). A normal hit's
+`FFX_Btl_ApplyPendingHits` passes a3 = 1 and does not pay there.
 
 Two lockstep consequences:
 
@@ -786,12 +824,12 @@ RNG, it appends a name to a small per-kind table.
 | 0x78D210 | sub_78D210 | `FFX_Btl_RandStreamForUnit` | unit + kind -> stream 20..67 |
 | 0x7895B0 | sub_7895B0 | `FFX_Btl_GetCommandRank` | ability record +36, default 3 |
 | 0x78E0F0 | sub_78E0F0 | `FFX_Btl_AddDelayAttackCtb` | record dword +28 bits 0x2000 / 0x4000 |
-| 0x78BD50 | sub_78BD50 | `FFX_Btl_ThreatenBlocksCtbDelta` | zeroes the CTB slot on a threatened target |
+| 0x78BD50 | FFX_Btl_RefuseCtbOnThreatened | `FFX_Btl_ThreatenBlocksCtbDelta` | zeroes the CTB slot on a threatened target |
 | 0x78AE00 | sub_78AE00 | `FFX_Btl_RollStatus1AndCounters` | the 25 status loop, kind 2 draws |
 | 0x78B4E0 | sub_78B4E0 | `FFX_Btl_ApplyStatus2` | 16 bit loop over `+0x616`, the shatter roll |
 | 0x78BDD0 | sub_78BDD0 | `FFX_Btl_RollBribe` | gil ratio vs a kind 2 draw, sets Eject |
-| 0x789290 | sub_789290 | `FFX_Btl_ApplyBreakHalving` | status-1 0x10 / 0x20 halve by damage class |
-| 0x78C530 | sub_78C530 | `FFX_Btl_ApplyShieldBoost` | status-2 0x40 `/4`, 0x80 `*3/2` |
+| 0x789290 | FFX_Btl_ApplyBreaks | `FFX_Btl_ApplyBreakHalving` | status-1 0x10 / 0x20 halve by damage class |
+| 0x78C530 | FFX_Btl_ApplyShieldAndBoost | `FFX_Btl_ApplyShieldBoost` | status-2 0x40 `/4`, 0x80 `*3/2` |
 | 0x7AF4F0 | sub_7AF4F0 | `FFX_Btl_TurnStartStatusTick` | regen for all, flag 0x1 countdown, one-turn clears |
 | 0x7AF390 | sub_7AF390 | `FFX_Btl_TurnEndStatusTick` | flag 0x4 countdown, wake event |
 | 0x7AF770 | sub_7AF770 | `FFX_Btl_RegenPendingKind` | 2 zombie regen, 1 regen, 0 none |
@@ -850,7 +888,6 @@ engine port.
   counter was already 0, so the tick never reset the rank). If that turn performs no action the
   delay uses whatever the byte held, 0 behaving as rank 1.
 - The summon flag on aeon slots 8..17 at battle start (stream aliasing, 3.1).
-- How NulTide..NulFrost are consumed by a hit.
 - What post-action kind 8 is (which command sets record +6 = 8).
 - Status table flag bits 0x10..0x80, and status-2 bits 0x0010 and 0x8000.
 - Whether shipped scripts that set the forced advantage (`Btl 125` case 25) always reset it.

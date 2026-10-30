@@ -443,6 +443,12 @@ Proof, each independent of the others:
   `FFX_Btl_PlayTurnStartVoice 0x3B13C0` (0xD,0xE,0xF,0x10), `0x3B1540` (0xB). Together they account
   for 0..0x10 plus 0x13. The constant 20 appears four separate times, so **the mode count is 20,
   ids 0..19**, and I am confident in that.
+  Correction 2026-10-29 (the Project Zanarkand port, PROGRESS 13.9): `0x3B13C0` plays no voice. It is
+  `FFX_Btl_ChargeTurnOverdriveModes`, called by `FFX_Btl_CtbTick` after a turn is pushed, and the modes
+  it serves are the four turn modes 0xD Ally, 0xE Sufferer, 0xF Daredevil and 0x10 Loner. The others got
+  names too: `0x3B0F80` `FFX_Btl_ChargeOverdriveOnKill`, `0x3B1090` `FFX_Btl_ChargeEscapeOverdrive`,
+  `0x3B12C0` `FFX_Btl_CountHitOverdriveModes`, `0x3B1540` `FFX_Btl_ApplyVictorOverdrive`
+  (tools/apply_overdrive_names.py).
 
 The counter path caps `modeId` at 0x10 while the grant path walks to 19, so the top three modes
 (0x11, 0x12, 0x13) have no use counter path in the executable. Either they are unlocked from the

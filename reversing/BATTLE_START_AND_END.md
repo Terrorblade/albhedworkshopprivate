@@ -63,7 +63,7 @@ Read with: `BATTLE_CTB_AND_STATUS.md` (CTB init, the per-unit stream map), `RAND
 | 0x112C9F2 | `word_112C9F1` high byte | victory pose wanted | [V] |
 | 0x112C9F4 | `dword_112C9F4` byte 0 | game over sequence running | [V] |
 | 0x112C9F5 | `dword_112C9F4` byte 1 | party fled (Flee, or the recall in `sub_7AEF20`) | [V] |
-| 0x112C9EC | `word_112C9EC` | two frame counters. `FFX_Btl_EndPhaseStep` only runs on a step where the low byte read 0 | [V] |
+| 0x112C9EC | `word_112C9EC` | two frame counters. `FFX_Btl_EndPhaseStep` only runs on a step where the low byte read 0. Clarified 2026-10-29: the value tested is the one this step's count down left (0x790D2D..0x790D61, `cl` after the `dec`), so a count of 1 runs it on this step | [V] |
 | 0x112C9EB | `g_ffxBtlMonstersKilledThisBattle` | ++ per enemy death, picks result 2 over 4 | [V] |
 | 0x112C9DC | (`dword_112C9DB` byte 1) | the advantage, 0 normal, 1 pre-emptive, 2 ambush | [V] |
 | 0x112C9FF | `g_ffxBtlEscapeMode` (was `dword_112C9FC` byte 3, the dword is four bytes since 2026-10-29) | escape mode. 0 roll, 1 never, 2 always. `Btl 166` writes it, begin resets it to 0 | [V] |
@@ -270,6 +270,30 @@ sub_79A0E0()                        clamp HP and MP of every present unit
 When the monster files complete through the asset loader, this runs inside
 `FFX_AsyncLoad_DispatchCompletions` at the head of `FFX_MainStep`, not inside
 `FFX_Btl_MainStep`. With no monster to load it runs straight from phase 12. [V]
+
+**Additions from the Project Zanarkand battle loop port (2026-10-29), checked in IDA.**
+
+- Phase 7 with `FFX_Btl_SetupFieldPointers` returning 10 (the battle map is the field's own scene)
+  jumps to phase 10's body (LABEL_25) and runs 10, 11 and 12 in the same call. Any other return goes
+  to phase 8's body. [V]
+- `sub_783000` (proposed `FFX_Btl_ResetLoadCounters`) zeroes `g_ffxBtlMonsterBindCounter`, the word at
+  0x112A929 (the next weapon model unit and the next monster file slot) and `dword_112CA60`.
+  `sub_7A2730` (proposed `FFX_Btl_ResetDefeatQueue`) zeroes all of `dword_112CA0A`, so byte 0 (between
+  commands, 1 after every `FFX_Btl_FinishActions`) is 0 from the start until the first action ends,
+  and `dword_112C90C`. `sub_79CDD0` zeroes `dword_112C910` and `dword_112C944`. [V]
+- Phase 14 tests the type id (+0x0E) and +0x24, which the roster sets to 1 for every unit, so only the
+  type id filters. The phase 22 actor test is `sub_784220` (proposed `FFX_Btl_AnyUnitReactionBusy`),
+  which also writes the unit and 0xD0 to `word_112CA08`. [V]
+- `sub_7AC680`, right after the roster in `FFX_Btl_SetupFieldPointers` (0x783F06), runs `sub_7AC650`
+  for units 0..30, which copies the position key +0x4FC..+0x4FE into the second key +0x509..+0x50B.
+  `sub_7AC600` copies it back, and `sub_7AF4B0` runs that for every unit at each turn retirement, so a
+  port that skips `sub_7AC680` sends every party and monster slot to 0 after the first turn. The
+  other writers of +0x509..+0x50B are `FFX_Btl_SetUnitPlaceLayout` (+0x509), `FFX_BtlAi_SetProperty`
+  cases 85 and 86, the summon swaps and the flee. [V]
+- The ported start, driven over the install from a pending bsil03 zone 0 formation 0 request with
+  every load finishing between steps, ends its steps at sub phases 6, 9, 13, 13, 15, 17, 18, 18 and
+  then 1, the first turn pushed on that last step. [V] by the port's test, the order from the
+  disassembly.
 
 **First menu.** Phase 22 sets phase 1 inside `FFX_Btl_StepSubPhase`, which is the first call in
 `FFX_Btl_MainStep`. The same `FFX_Btl_MainStep` then runs `FFX_Btl_CtbTick` and
@@ -523,6 +547,15 @@ the end filter (4.4) takes it back. The auto-ability bits are [D] from `a_abilit
 Overdrive -> AP feeds the same accumulator: `FFX_Btl_AddOverdrive` with `+0x6BE & 8` calls
 `sub_798A00(unit, actor, gain * ApNeededForNextLevel / gaugeMax * actor.f32[0x70C], 0)` and
 multiplies `+0x70C` by 0.9 each time. [V]
+
+Correction 2026-10-29 (the Project Zanarkand port, PROGRESS 13.9), the order of that arithmetic from
+0x7B165E..0x7B16AB: the AP need is multiplied by the scaled gain in 32 bit integers (`imul`), divided by
+the gauge max with a signed `idiv`, and only that integer quotient goes to the FPU. `fild`, rounded to a
+float, times the float at +0x70C, rounded to a float again, then `__ftol2_sse` truncates. So
+`int(float(float(need * v / max) * ratio))`, not a float product throughout. The 0.9 is a double constant
+(0x749958), the product rounded to the float at +0x70C. The gain banked is the scaled one, after Triple,
+Double, the derived x1.5 and x2, Shield and Boost, and the gauge gets nothing. No writer of +0x70C by
+offset was found, so its first value comes from a block copy that is not traced.
 
 **`sub_798AC0` (propose `FFX_Spoils_AddItem`)**: id 0 or quantity <= 0 is ignored, an id already
 staged adds (clamp 0..99), else a new kind while fewer than 8. A ninth kind is silently lost. [V]
@@ -844,7 +877,14 @@ Not modelled: steal, the results screen chunking, and which units count as havin
 ## 12. Still open
 
 - What `rec+6` is (not read by the payout). A guess is Kimahri's Ronso Rage, not checked. [I]
+  2026-10-29: confirmed. `FFX_Btl_ApplyPendingEffects` reads the u16 at `rec+6` of the Lancet
+  target and teaches it to Kimahri (BATTLE_COMMAND.md, correction 2026-10-29). [V]
 - The steal fields (+10, +36..+41) are placed by position only. `sub_78B760` was not read.
+  2026-10-29: read (`FFX_Btl_ApplySteal` 0x78B760). +10 the steal chance, halved on a success
+  (50 * chance / 100, at least 1), +36 and +38 the common and rare item, +40 and +41 their
+  counts. Stream 10 % 255 below the chance steals, then stream 11 & 0xFF below 32 (128 with
+  Pickpocket, always with the master flag) takes the rare one when it is set. +275 is the gil
+  steal factor `sub_78B920` reads. [V]
 - Which shipped battles set boot mode 0x200 (losable), 0x100, or return mode 1 (no results screen,
   spoils carried over to the next battle, 4.1).
 - Result 4 and result 6 in shipped content. 6 has no PC trigger left besides `Btl 052`.

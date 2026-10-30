@@ -25,8 +25,10 @@ calls sit), `RENDER_PASSES.md` (what the gfx side does with the pushed fov and m
   its two screen shake channels, and writes `g_ffxCameProjMatrix 0x2311480` (a PS2 GS style projection
   from the screen) and `g_ffxCameViewMatrix 0x2311440` (a VU0 style look-at from the slot the screen
   shows). [V]
-- ActivateScreen runs about three times per main step, not per sub-step, and its screen shake steps on
-  every call. So screen shake consumes stream 9 at the activate cadence, not the sub-step cadence. [V]
+- ActivateScreen runs 9 times per main step, not per sub-step: FFX_MainStep walks screens 0 to 3 twice
+  and then activates `g_ffxMainScreenIndex` once (`PROBE_FIXTURES.md` section 3, corrected 2026-10-29 from
+  "about three"). Its screen shake steps on every call of an enabled screen, so screen 0's shake steps
+  three times a step and consumes stream 9 at the activate cadence, not the sub-step cadence. [V]
 - Everything is x87 at PC_53 through the PS2 VU0 scratch block at `0xC8F7D0..0xC8F85C`. Every scratch
   write is a float store, so the port rounds to float at each one. Section 9 has the operation order.
 - The PC renderer does not use the camera's projection for drawing. It hands the fov and aspect to the

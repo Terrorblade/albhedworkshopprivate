@@ -774,3 +774,18 @@ Found while writing MENU_DRAW_PATH.md. Checked in the binary.
   as a pointer. So the append time clip never turns on in retail and `sub_644320` always passes.
   The clipping the menus do see is the scissor of `sub_8F9230` (`FFX_Menu_SetClipRect`), applied
   by the rect helpers before Sprite2D. MENU_DRAW_PATH.md 5.6.
+
+## Correction 2026-10-29 (texture animation port, PROGRESS 6.3.8)
+
+Found while porting the map half of TextureAnimationManager to src/engine/texanim. Checked in the binary.
+
+- **Finding 7, section 12 and the section 6 rows "map texture animation frame" and "texture animation
+  autoplay frame".** Per present, but not in every present. `FFX_Frame_UpdateBoostersAndOverlays` is
+  reached only through `FFX_GameTick 0x639300`, called at 0x42F5C5 inside the hold byte branch of
+  `FFXApplication__animate`, so the Esc menu hold (FFXApplication+0x3AD) freezes the texture
+  animation tick and apply along with the step. gfx+4501 skips it too. `FFX_GameTick` passes
+  g_ffxGfxCtx as this, so the IDB comment on 0x657140 that says the FFX application is this is wrong.
+- **Section 6 row "texture animation autoplay frame", "drive it from the step clock or the snapshot
+  time".** The port drives it from the presented frame's delta with the original's accumulator, which
+  is what picks the original's frame on the same presented frame. TEXTURE_ANIMATION_AND_POST_TWEAKS.md
+  sections 5 and 9.

@@ -184,6 +184,16 @@ evaluates it each step into the pending point. [V]
   through `sub_7BAD10` and `sub_7BADB0` to `FFX_Came_SetBattleTarget`. They take two battle target
   ids, a height offset and, for the polar kinds, two angles and a length, offsets and length divided
   by 100.
+  Correction 2026-10-29 (the 13.12 battle camera port, Project Zanarkand `src/engine/came/BattleCamera`
+  and `src/ffx/btl/BattleCameraSyscalls`). The handle is not always the battle one. Both bodies take the
+  calling actor's cached handle at actor +0x3C and only fall back to `FFX_Came_GetHandleForClass(5, 2, 0)`,
+  caching it there, when that is 0. `FFX_Came_SetBattleTarget` resolves the two targets through
+  `FFX_BtlAi_ResolveTargetSelector(self, target, 1, 1)` only for a class 5 handle. Under any other class
+  it stores them raw and `FFX_Came_ModeBattle_Step` reads them as ATEL actor ids through `sub_7975C0`
+  (-2 the player, -5 and -21 every actor `sub_86D950` passes). The targets are the `cam_chr_*` selectors
+  of `g_ffxCameChrTargetNames` (name index -selector - 1) or a unit index. The angles go in as degrees,
+  theta = aDeg and phi = bDeg in radians. Every row returns int 0. Nothing in the rows or the modes draws
+  RNG. [V]
 
 ### 4.3 Moving between points
 
@@ -357,12 +367,23 @@ This is the co-op question, since the camera is meant to be per player.
   `FFX_Btl_SetUnitShowVote 0x79714F`, and cleared by the battle target fixup at level 8207 under magic
   251, which also flushes a deferred hide queue through `FFX_Ch_SetHideBit10`. A camera row changing
   CHR visibility. [V]
+  Correction 2026-10-29: the flush is `sub_7BADB0` at 0x7BAED4. It counts `dword_11334D0` down over
+  `chr[count]` to `chr[1]`, setting hide bit 10 on each, and then writes `dword_1136B58` 0. It is not
+  "queued by `dword_1136B58`". It runs only for battle 0xD40000 at level 8207 under magic 251 when
+  zOfs * 100 is exactly 88.99999237060547, which never holds on PC (above), so on PC came:64 to 77 never
+  change CHR visibility. [V]
 - `dword_2311424`, the priority lock that came:101 obeys. [V]
 - `sub_7BB6A0` (came:2, 32) patches by level 1761 at story 260 and an exact position (calls
   `sub_79E2A0`), and by scene 248 in battle 0x1390000 (patches x to -68.056053). `sub_7BADB0`
   patches the battle target arguments for magic ids 88, 146, 163, 201, 704, 705 and 76 or 311 with chr
   model 4289, and for battle ids 0xD40000, 0x1A30004, 0x1F60004, 0x25C0013, 0x1590000 and 0x1AE000A.
   All of these key on simulation values, so they agree across peers, but a port has to carry them. [V]
+  Correction 2026-10-29: three of the battle id cases can never fire on PC. They compare len * 100
+  against 228.99996948242188 (0x1A30004), and zOfs * 100 against 3.9999990463256836 (0x1F60004) and
+  88.99999237060547 (0xD40000, the hide below) exactly. Those constants are fl(f * 100) for some float f,
+  PS2 single precision arithmetic, and no float f gives f * 100.0 equal to any of them in double, which
+  is what the PC x87 computes at 53 bits. So the 0x1A30004 and 0x1F60004 patches and the 0xD40000 hide
+  are dead in this build. The port keeps the compares as written and its sweep proves they never hold. [V]
 
 ### 5.5 Disk, local and the rest
 
@@ -490,7 +511,7 @@ mark.
 | 61 | 0 | 0 |  | aDeg:float, bDeg:float, c:float, unused:float | int 0 | no | dead `FFX_AtelSys_Came_061_RefSetTargetActorHeight_resi` | came:60 on the look-at point |  | V |
 | 62 | 0 | 0 |  | target0:int, target1:int, zOfs:float | int 0 | no | dead `FFX_AtelSys_Came_062_CamSetBattleBpos_resi` | sub_7BAD10 -> FFX_Came_SetBattleTarget kind 0, mode 11 'bpos', zOfs / 100, battle handle |  | V |
 | 63 | 243 | 95 | e,m,b,s | target0:int, target1:int, zOfs:float | int 0 | no | `FFX_AtelSys_Came_063_RefSetBattleBpos_resi` | came:62 on the look-at point |  | V |
-| 64 | 1928 | 584 | e,m,b,s | target0:int, target1:int, zOfs:float, aDeg:float, bDeg:float, len:float | int 0 | no | `FFX_AtelSys_Came_064_CamSetBattleBpl1_resi` | FFX_Came_SetBattleTarget through sub_7BADB0 with the battle handle (class 5), kind 1, mode 12 'bpl1', on the eye. zOfs and len / 100. sub_7BADB0 patches the arguments for magic ids 88, 146, 163, 201, 704, 705 and 76/311 on some battles (sub_782970), and at level 8207 under magic 251 hides the CHRs queued by dword_1136B58 | global | V |
+| 64 | 1928 | 584 | e,m,b,s | target0:int, target1:int, zOfs:float, aDeg:float, bDeg:float, len:float | int 0 | no | `FFX_AtelSys_Came_064_CamSetBattleBpl1_resi` | FFX_Came_SetBattleTarget through sub_7BADB0 with the battle handle (class 5), kind 1, mode 12 'bpl1', on the eye. zOfs and len / 100. sub_7BADB0 patches the arguments for magic ids 88, 146, 163, 201, 704, 705 and 76/311 on some battles (sub_782970), and at level 8207 under magic 251 hides the CHRs chr[dword_11334D0..1] and clears dword_1136B58 (corrected 2026-10-29, that hide and the 0x1A30004 and 0x1F60004 patches sit behind exact compares that never hold on PC, section 5.4) | global | V |
 | 65 | 105778 | 829 | e,m,b,s | target0:int, target1:int, zOfs:float, aDeg:float, bDeg:float, len:float | int 0 | no | `FFX_AtelSys_Came_065_RefSetBattleBpl1_resi` | came:64 on the look-at point | global | V |
 | 66 | 5 | 3 | e | mask:int | int handle | no | `FFX_AtelSys_Came_066_RefSetMoveMask_resi` | sub_7BDF90: record+7 = ~mask, the axes (1 x, 2 y, 4 z, 8 roll, 0x10 ScrDpt) the next move tweens. Cleared after each move |  | V |
 | 67 | 405 | 27 | e | mask:int | int handle | no | `FFX_AtelSys_Came_067_CamSetMoveMask_resi` | came:66 on the eye |  | V |

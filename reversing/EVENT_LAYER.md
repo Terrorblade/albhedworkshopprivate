@@ -154,7 +154,12 @@ FFX_MainStep 0x820AE0                                   main thread, once per pr
           FFX_Atel_StepFieldFrame                       encounters
           sub_8743E0 twice                              EvTex sprite animation, section 4
           sub_875B40/sub_875E10 -> pad port +255 (I: actuator levels)
+            corrected 2026-10-29: [V] pad vibration, the 8 channels at 0x1328150, levels doubled into
+            port 0 +0xFF and +0xFE (0x872C43, 0x872C52), never sent on PC
           FFX_Field_StepMenuOpenRequest, FFX_MainStep_CheckQuit
+          only while 0x13301EC (set by FFX_Voice_RequestRefresh, every MainStep at 0x821612):
+            0x877380 field sound sources, FFX_Field_StepIndoorState, 0x887D50 clears it  (added 2026-10-29)
+        gate 0x1330848 = 0, nullsub_121, gate = 1, nullsub_120(1)            (added 2026-10-29)
         FFX_Voice_StepLoader
       ... cameras, CHR motion, player camera
   display list half

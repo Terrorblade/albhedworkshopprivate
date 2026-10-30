@@ -593,14 +593,20 @@ match.
 
 `FFX_Btl_CtbTick` (**VA 0x790FB0, RVA 0x390FB0**) is called from `FFX_Btl_MainStep` only when
 `FFX_Btl_IsCtbTickAllowed` (**VA 0x791190**) passes and `g_ffxBtlSubPhase == 1`. It returns
-immediately while `g_ffxBtlDbgCtbPause` is set **or the command queue is non empty**:
+immediately while `g_ffxBtlDbgCtbPause` is set **or the turn queue is non empty**:
 
 ```c
-if (g_ffxBtlDbgCtbPause != 0 || g_ffxBtlCmdQueueCount != 0) return 0;
+if (g_ffxBtlDbgCtbPause != 0 || g_ffxBtlTurnQueueCount != 0) return 0;
 ```
 
+Correction 2026-10-29 (the Project Zanarkand battle loop port): the second clause reads
+`g_ffxBtlTurnQueueCount` 0x112BDE0 (the compare at 0x790FC1), not the command queue count
+0x112BDE1. This section used to say the command queue. The effect is close: a turn stays in the
+turn queue from the CTB push until `FFX_Btl_TurnQueue_RemoveAt` retires it after its last hit, so
+the clock still does not advance while anybody holds a turn.
+
 That second clause is doing a lot of work for you. The turn clock does not advance while
-anybody has a pending command, so the game is already self-serialising around commands.
+anybody holds a turn, so the game is already self-serialising around commands.
 
 Pass one picks who is ready: for units 0..30, an actor with no queued turn
 (`+0xDE6 == 0`), present (`+0xDC8`), not KO (`+0xDCC == 0`), not escaped (`+0x606 & 4`),
@@ -631,13 +637,28 @@ From `FFX_Btl_MainStep` at VA 0x790C10. Only the command-relevant calls. "Frame"
 FFX_Btl_CtbTick          0x790FB0   if FFX_Btl_IsCtbTickAllowed && g_ffxBtlSubPhase == 1
 FFX_Btl_FinishActions    0x7911E0
 sub_791760               0x791760   per actor death / removal pass
-FFX_Btl_EndPhaseStep     0x7917D0   if FFX_Btl_IsCtbTickAllowed
+sub_7A2690               0x7A2690   the queued defeat dispatch
+sub_7AF2B0               0x7AF2B0   into 0x112C9EA, a unit on the field reacting with Regen
+FFX_Btl_EndPhaseStep     0x7917D0   if FFX_Btl_IsCtbTickAllowed and the end wait low byte reads 0
 FFX_Btl_SendMenu         0x792A90   if FFX_Btl_IsCtbTickAllowed && g_ffxBtlSubPhase == 1
 FFX_BtlMenu_Step         0x89AE20   reads the pad, drives the page procs, then
                                     FFX_BtlMenu_BuildStagedCommand rebuilds 0x23CC040,
                                     and a confirm commits from inside here
 FFX_Btl_ExecCommand      0x792210   pops queue slot 0 and runs it
 ```
+
+Addition 2026-10-29 (the Project Zanarkand battle loop port, which runs and tests this order): the
+whole body, from 0x790C10. `FFX_Btl_StepSubPhase` and `sub_7921C0` first, then with
+`FFX_Btl_GetPhase` (the sub phase) at 0 only the pending battle start and `FFX_Magic_FreeGlobalEffect`.
+Otherwise the debug HUD, the pad read into `dword_112C904`, `FFX_Btl_TickSeFollowList`,
+`g_ffxBattleFrameCounter` + 1, the low byte of `dword_112C9D0` counted down and byte 1 counted down with
+`sub_78FA30(0)` when it reaches 0, the game over sequence, `FFX_Btl_ServiceSoundQueue`, then the calls
+above. The end wait test uses the low byte as this step's count down left it (0x790D2D..0x790D61), so
+`FFX_Btl_EndPhaseStep` runs on the step it reaches 0 and every step after. After
+`FFX_Btl_ExecCommand`: `FFX_Btl_GrantUnlockedOverdriveModes`, `sub_79CDF0`, `sub_79F5E0`,
+`sub_7AAB80`, `sub_7AA140`, `FFX_Btl_StepMagicEffectStates`, end result 6 on `sub_872350 &&
+sub_792E80`, the teardown at sub phase 33 or end result 5 or 6, the pad copy to `dword_112C908` and
+`FFX_Magic_FreeGlobalEffect`.
 
 A command confirmed by the menu on frame N therefore executes on frame N, in the same
 `FFX_Btl_MainStep` call. There is no one-frame latency to model. For a replayed network command,
@@ -785,3 +806,44 @@ battle animations and camera keep running while the CTB waits.
   straight to 1, so everyone arrives at 0 together and acts in sort-key order.
 - `sub_78F000` (listed as unknown) is settled: `unit + 0x10000` for monster slots 20..27, else
   `unit + ((255 - agility) << 8)`. No RNG, no non-determinism.
+
+---
+
+## Correction 2026-10-29 (the command execution port, Project Zanarkand src/ffx/btl/Command*.cpp)
+
+- **The commit does not retire the turn.** Section 1 says `FFX_Btl_CommitCommand` "also retires
+  the actor's turn queue entry". It does not on the normal path. `FFX_Btl_CmdQueue_Push` returns
+  -1 when it queued and 0 when the 62 slots are full, so `if (Push(...) != 0) return 0;` is the
+  success branch and `FFX_Btl_TurnQueue_RemoveAt(unit, actor[0xDE4], 0, 0)` runs only when the
+  push failed. CommitCommand returns 0 when it queued and -1 otherwise (null record, unit past
+  30, variant above 1, or a full queue). The turn really retires when the last staged hit of the
+  action lands: `FFX_Btl_FinishActions` loops `FFX_Btl_ApplyPendingHits(unit, -5, 0x400)` and
+  that calls `FFX_Btl_TurnQueue_RemoveAt(unit, actor[0xDE4], 1, 0)`, which adds the rank delay,
+  runs the turn end status tick, spends the MP and overdrive cost and latches poison. The IDB
+  comment on 0x792D60 already says this. `FFX_Btl_CommitCommandPriority` has the same sense.
+- **Action entry `+0x0C` is written.** `FFX_Btl_ApplyActionToTargets` stores the return of
+  `sub_78BA70` (the hit builder, proposed `FFX_Btl_BuildTargetHits`) there, which is the mask of
+  the targets whose hit was reflected. The same call rewrites `+0x08` with the mask the hits
+  really went to (cover and reflect applied). `+0x04` is still unwritten on every path read.
+- **`FFX_Btl_CmdQueue_FindByPriority` 0x7B0770 returns 1 when the entry is ABSENT**, the same
+  sense as `FFX_Btl_CmdQueue_IsVariantAbsent`. It compares the priority class (high nibble of
+  `+0x07`) for equality, not at or below. Proposed rename `FFX_Btl_CmdQueue_IsPriorityAbsent`
+  (tools/apply_battle_exec_names.py).
+- **The post action kind `+0x06` from both commits is always 0.** `FFX_Btl_CommitCommand` passes
+  0 to Push and `FFX_Btl_CommitCommandPriority` passes 0 to `FFX_Btl_CmdQueue_Insert`. So cases
+  1..7 of `FFX_Btl_FinishActions` are reached only by a record whose `+0x06` some other writer
+  sets after the commit. That writer is still not found.
+- **Ronso Rage rides on Lancet 0x3020**, not on a generic drain. `FFX_Btl_ApplyActionToTargets`
+  sets bit 2 of the attacker drain block flags (`+4`) and stores the target as the rage unit
+  (`+23`) only when the command id is 0x3020 and a drain block exists. `FFX_Btl_ApplyPendingEffects`
+  then reads the rage from `+6` of the rage unit reward record and teaches it to Kimahri (party
+  unit 3) when his ability bit is clear (`FFX_SaveData_SetCharAbilityFlag(3, rage, 1)`, message
+  6, full overdrive gauge, trophy 25 when the shared ability bits are complete).
+- **The draw sites of the command path** (call sites, not the modulo):
+  `sub_78BA70` 0x78BAF6 FFX_BtlAi_FilterAndPickTarget on stream 5 (random target per hit) and
+  0x78BD21 on stream 6 (a reflected hit bouncing to its own side). `FFX_Btl_ApplySteal` 0x78B7BA
+  stream 10 and 0x78B838 stream 11. The gil steal `sub_78B920` 0x78B968 and 0x78B992, both
+  stream 10. `FFX_Btl_ApplyPendingEffects` 0x78F65C and 0x78F681 stream 9 (the reaction variant,
+  only with flag 0x20). `FFX_Btl_StartCommandExec` 0x7AEA88 `FFX_Btl_RollEscape`.
+  `FFX_Btl_FinishActions` 0x7912EF `FFX_Btl_ApplyPoisonDamage`. The damage path draws inside
+  `FFX_Btl_StageEffectsForTarget` (0x789464).

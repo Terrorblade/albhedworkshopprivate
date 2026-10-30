@@ -337,6 +337,13 @@ what it expects or whose new name is taken, so a second run is a no-op.
 
 ### battle units (76 slots)
 
+**Correction 2026-10-29 (the Project Zanarkand overdrive port, PROGRESS 13.9).** "Ally slot units only"
+and "an ally slot unit" in the rows below come from the old name of `0x793650`, which was
+`FFX_Btl_IsAllyUnit` and is now `FFX_Btl_IsValidUnitIndex` (tools/apply_monster_ai_names.py). It returns
+unit <= 30, every battle unit with the monsters 20..27 included. So `FFX_Btl_IsUnitKO 0x795780` (slot 640)
+is true for any unit 0..30 whose +0xDCC is set, read at 0x79578E..0x7957AA, and the same widening applies
+to every other row that says ally slot. The IDB comment on 0x795780 still says ally slot.
+
 | slot | target | name | DLLs call / thunk | tag | what it is |
 | --- | --- | --- | --- | --- | --- |
 | 292 | `0x782AE0` | `FFX_Btl_GetBattlePoint` | 9 / 0 | [V] | Writes the battle point vec4 to a1: the script point Btl 165 SetBtlPoint stored at qword_112A8D0 when byte 1 of dword_112C9FC is set (0x7A772D), else sub_9087F0, a scaled field vec4 at flt_18DF02C. Callers FFX_Oef2_Op140 and two others. 9 DLLs call it. |

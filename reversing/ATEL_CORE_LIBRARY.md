@@ -229,6 +229,12 @@ For co-op these are the rows where "who is the player" is decided by script. The
 - 319 GetDicString returns a raw pointer into the dictionary of the current language, and 566 the same
   for a message. A script should only pass these on, never compare them.
 - Text overlays at 0x1328150 (8 slots x 2 layers): 472 to 478, 491 to 495, inferred.
+  Corrected 2026-10-29: these are pad vibration channels, not text overlays. `FFX_Pad_StepVibrationChannels
+  0x875B40` takes the largest level of each layer over the 8 channels and `FFX_Atel_StepFieldAll 0x872BD0`
+  writes them doubled into pad port 0's +0xFF and +0xFE, the rumble bytes (`FFX_Pad_SetVibrationMotor0
+  0x889490`, `Motor1 0x8894B0`). On PC the bytes are never sent, `FFX_Pad__sampleIntoPortState` only calls
+  setRumble when port +0x9D is set. The row names below that say TextOverlay are about rumble.
+  `tools/apply_atel_step_names.py`. [V] the publish, [I] which motor is which
 
 ### 4.8 Sound (50 rows)
 

@@ -49,7 +49,8 @@ VERBOSE = False
 NAMES = {
     0x8863D0: ('FFX_Bgm_GetTrackVolume', 'Returns 0 for track -1, else g_ffxBgmVolumeByTrack[track]. Read by the checkpoint write in FFX_Scene_Init. [V]'),
     0x641400: ('maybe_FFX_Gfx_GetBgMovieWord', 'Returns maybe_g_ffxBgMovieWord 0xC322A8, which the checkpoint write stores + 1 at save +0xAA. [V] behaviour, [I] meaning'),
-    0x877450: ('FFX_Atel_SetScreenFadeRate', 'flt_1328310 = a1. [V]'),
+    # Corrected 2026-10-29: flt_1328310 is the field sound source fade rate, not a screen fade (apply_atel_step_names.py)
+    0x877450: ('FFX_Snd_SetFieldSourceFadeRate', 'flt_1328310 = a1, the field sound source fade rate. Not a screen fade. [V]'),
     0x86E970: ('FFX_Map_SetChangeHook', 'Stores g_ffxMapChangeHook and its argument. Only caller maybe_FFX_TkHarness_Init_DEAD 0x87F0E6, so the hook is null in retail. [V], [I] that the harness is dead'),
     0x88D710: ('maybe_FFX_Tk_BootInit', 'The TK boot: pads reset, FFX_Map_RequestResumeFromCheckpoint, then the boot asset reads. [I]'),
     0x8B9220: ('maybe_FFX_BootScene_StepScriptedText', 'Advances the boot scene message window when the step count reaches the next value of its text table, indexed by g_ffxLiveSceneId - 393, and clears maybe_g_ffxBootSceneTextActive at the table end (0x8B92E0). [I]'),

@@ -111,9 +111,13 @@ so a dismiss or a KO of the Magus Sisters always goes through Cindy. [V]
 4. Every other party member is swapped out with `Swap(member, 255, 0, 0)`: off the field, motion 18,
    `+0x4FD += 3`. No turn insert, so their counters freeze while off field. [V]
 5. The aeon gets `+0x6D1 = summoner`. [V]
-6. Magus path: `Swap(summoner, 15, 1, 0)`, then `byte_112C886[m] = m` for m = 15..17 (aeon order 0..2
-   become 15, 16, 17), and Sandy and Mindy each get `+0x6D1 = summoner` and `Swap(255, m, 1, 0)`. Those
+6. Magus path: `Swap(summoner, 15, 1, 0)`, then `byte_112C886[m] = m` for m = 15..17 (the PARTY order
+   0..2 become 15, 16, 17), and Sandy and Mindy each get `+0x6D1 = summoner` and `Swap(255, m, 1, 0)`. Those
    two get no turn queue insert and no bench write. [V]
+   CORRECTION 2026-10-29: this used to say the aeon order. `byte_112C886 + m` for m 15..17 is
+   0x112C895..0x112C897, `g_ffxBattlePartyOrder` (the store at 0x7AE054). `byte_112C886` is only that
+   computed base, not a variable. The bench order only trades the summoner for Cindy, so after the summon
+   the party order is 15, 16, 17 and the bench holds the summoner where Cindy was.
 7. Normal path: `Swap(summoner, aeon, 1, 0)`. [V]
 8. `sub_793CF0` repositions the enemies. [V]
 9. Returns `FFX_Btl_QueueAeonTransition(aeon, summoner, 0)`, the entrance. [V]
@@ -165,6 +169,14 @@ One function queues all three aeon animations as a fake action by the aeon. [V]
   aeon has never used 0x3100, else the short one. Post-action kind 1. Also calls
   `FFX_Btl_SwapPartyArrangement 0x7ADE10`, which temporarily puts the pre-summon arrangement back for
   the effect.
+  CORRECTION 2026-10-29, what "temporarily" means: after `FFX_Btl_BeginSummon` returns, the live party
+  order, bench order and `+0xDC8` are the PRE-summon ones again and the saved copies hold the summon's.
+  The second swap is in `FFX_Btl_StepMagicEffectStates 0x7884DC`, effect state case 1 with post action
+  kind 1, when `sub_791630(1)` is 0. Anything that reads the party order between the two (the turn
+  insert, the target lists, a co-op snapshot) sees the old party. The flag write is the xor form
+  `d ^= (d ^ (flag << 30)) & 0x40000000`, so only bit 0 of the flag byte matters and bit 30 is cleared for
+  flag 0. A fallen aeon's departure passes the killer read movsx as the summoner, so a killer byte of
+  0xFF shifts by -1 and the target mask is bit 31 (`shl` by cl at 0x791882).
 - mode 1, dismiss: effect +8, post kind 3.
 - mode 2, KO departure: effect +12, post kind 2.
 - It writes the effect into the **shared 0x3100 kernel ability row in place**: `+16` and `+18` =
@@ -418,6 +430,9 @@ FilterAndPickTarget draws only when more than one candidate survives the filter.
 5. `sub_793CF0`, then the E8/E9 word = 0xFF00. [V]
 
 Whether the aeon's CHR is freed on recall (`sub_793410` / `sub_796DC0` mode 7) is open.
+ANSWERED 2026-10-29: yes. `FFX_Btl_RemoveUnitFromField` calls `sub_793410(unit, 7)` (now
+`FFX_Btl_TakeUnitOffStage`) when the unit has a CHR, and `sub_796DC0` drops it for any mode with bit 0
+set. Mode 12 (post kind 6) keeps it and marks the packet purged (bit 3, `+0x3A`).
 
 ### 7.4 What locks an aeon in the menu
 
@@ -564,13 +579,23 @@ battle start).
 Also worth a comment on `0xC42200` (the `FFX_Btl_Rand` state): seeded only by
 `FFX_Rand_SeedAllStreams` at new game, drawn by summon DLLs.
 
+Added 2026-10-29 with the Project Zanarkand port (PROGRESS 13.10): `../tools/apply_summon_menu_names.py`
+names the stage helpers (`FFX_Btl_TakeUnitOffStage 0x793410`, `FFX_Btl_ClearUnitStageFields 0x793570`,
+`FFX_Btl_FaceReturn 0x793260`, `FFX_Btl_SaveAltPlace 0x7AC650`, `FFX_Btl_TurnEnemiesToParty 0x793CF0`),
+`g_ffxBtlDefeatMask 0x112C90C`, `g_ffxBtlDeltaTargetMask 0x112C8D0` and `g_ffxBtlAeonDepartGuard
+0x112CA11`, plus the battle menu rows listed in BATTLE_MENU.md 8. Dry run on a copy: 37 planned, 0
+skipped. Not applied to the live IDB.
+
+Port note 2026-10-29: `g_ffxBtlAeonOut` starts at 0, not 0xFF. `FFX_Btl_BeginBattle 0x7812F8` writes the
+word 0xFF00 over 0x112C9E8 (aeon out 0, summoner 0xFF), the same word `FFX_Btl_RecallParty` writes, and
+RecallParty tests the byte against 0. The port had defaulted it to 0xFF.
+
 ---
 
 ## 13. Open questions
 
 - Where an aeon's equipment entries 12..33 and the Break HP / MP Limit bits (record `+0x4C`) get set.
 - Exact step counts per entrance, dismiss and KO effect, full and short. Needs a runtime probe.
-- Whether the aeon CHR is freed on recall (`sub_793410` / `sub_796DC0` mode 7).
 - The `byte_112CA11` guard on the KO path (only Btl 280 writes it).
 - What `sub_7A0090(101, 30)` / `(127, 30)` does around a flagged entrance.
 - The `sub_791630(1)` gate in post kind 1.

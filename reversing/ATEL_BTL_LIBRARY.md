@@ -246,6 +246,12 @@ Through the hit and kill code:
   `FFX_Btl_OnUnitDefeated` to `FFX_Btl_PayKillRewards 0x7990D0` and its draws (BATTLE_START_AND_END.md
   4.2).
 - **btl:158 FireMotionEvent** calls `FFX_Btl_OnMotionEvent 0x7B74D0`, whose hit bits reach the same two.
+  Note 2026-10-29: only events 0 to 9 run a handler (0 and 9 the hit, 1 the miss, 2 the saved position
+  clear, 3 to 8 the target reactions), and only for an action kind (+0x446) of 1 or 4. Any other event
+  just sets its bit in +0x39C. The Besaid road battle (bsil03_00) fires 13, 14 and 15 from this row, so
+  its hits come from the CHR clip's type 5 event or the finish flush, not from here. The decompiler shows
+  the call with two arguments, the disassembly at 0x7A3021 pushes three (unit, the second pop, the first
+  pop), and the handler reads only the first two.
 - **btl:24 and 171** set properties through `FFX_BtlAi_SetProperty 0x7B4B70`, which BATTLE_START_AND_END.md
   4.2 lists as an `OnUnitDefeated(a3 == 0)` caller, so a script that sets HP to 0 pays the kill.
 
@@ -421,6 +427,12 @@ name is left.
   begin, a peer that missed a btl:125 call keeps the old debug values.
 ## 8. The table
 
+Correction 2026-10-29 (the 13.8 battle field port, MONSTER_AI.md section 12). system_01 is battle field
+kind 14 index 1 (index 0 names output.bin, which does not ship), loaded once by FFX_Btl_Init and kept as
+set 0 of context 2. The wait rows 60, 63 and 151 do not wait for their event thread, their shared poll
+ends at once. btl:105 picks with unit 0 as self and draws stream 7. Rows 1, 141, 153, 160 and 179 have
+new names in tools/apply_party_field_ai_names.py.
+
 Columns: btl index, call sites, files, src (e event packages, m monster AI, b battle field files, s
 system_01), args in push order (the last is the top of the stack), result, blk (yes waits in a poll),
 name (the proposed name per slot, `kept` for a slot that keeps its current name, `dead` for an unused
@@ -429,7 +441,7 @@ row), meaning, lockstep, mark.
 | btl | uses | files | src | args | result | blk | name | meaning | lockstep | mark |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 0 | 394 | 126 | mbs |  | int 0 | no | `FFX_AtelSys_Btl_000_ClearSelfByteDF2_resi` | self m_bDF2 = 0. sub_7AB360 sets m_bDF2 when it starts a unit event with a3 set |  | V |
-| 1 | 807 | 807 | b | on:int | int 0 | no | `FFX_AtelSys_Btl_001_SetBtlByteBDED_resi` | low byte of word_112BDED = on & 1. Reset by FFX_Btl_BeginBattle, no other reader found. 807 calls in 807 battle field files, one each |  | I |
+| 1 | 807 | 807 | b | on:int | int 0 | no | `FFX_AtelSys_Btl_001_SetUnreadScriptFlag_resi` | low byte of word_112BDED = on & 1. Reset by FFX_Btl_BeginBattle, no other reader found (rechecked 2026-10-29, the high byte is SG_DebugWin_BattlePosProc's and sub_7ABF40's). 807 calls in 807 battle field files, one each |  | I |
 | 2 | 493 | 89 | e | battleId:int, returnMode:int | int | no | `FFX_AtelSys_Btl_002_RequestScriptedBattle_start`, `FFX_AtelSys_Btl_002_RequestScriptedBattle_poll` | start calls FFX_Btl_RequestScriptedBattle(battleId, 1, returnMode). The poll returns 1, done without the continue bit, so the next instruction runs on the next step |  | V |
 | 3 | 207 | 62 | ms | rampFrames:int, holdFrames:int | int 0 | no | `FFX_AtelSys_Btl_003_StartTurnKind2_resi` | sub_795EB0(self, 2, 0, -1, ramp, hold): a direction change of kind 2, total m_b42E = hold + 2 * ramp frames. Refused while m_directionFixFlag |  | V |
 | 4 | 0 | 0 |  | v:float | int 0 | no | dead `FFX_AtelSys_Btl_004_SetBtlFloatBDE4_resi` | unk_112BDE4 = v, read by sub_793BA0 |  | V |
@@ -488,10 +500,10 @@ row), meaning, lockstep, mark.
 | 57 | 50 | 44 | ms |  | int 0 | no | `FFX_AtelSys_Btl_057_ResetActionState_resi` | sub_78CCA0 (+0x3F4 = 1, refresh status fx, sub_788E60) and sub_7A8F20, which clears the 9 entry once list btl:123 uses |  | V |
 | 58 | 1 | 1 | m | speed:int | int 0 | no | `FFX_AtelSys_Btl_058_SetMotionSpeed_resi` | self m_motionSpeed |  | V |
 | 59 | 1000 | 137 | mb | sel:int, id:int, on:int | int count | no | `FFX_AtelSys_Btl_059_SetAbilitySealed_resi` | sub_79B470 per unit: id 0x3NNN sets or clears its m_sealedAbilities bit, an id with no top nibble writes m_bDD4 of unit id |  | V |
-| 60 | 170 | 59 | mbs | event:int | int | yes | `FFX_AtelSys_Btl_060_FireHoldEventA_start`, `FFX_AtelSys_Btl_060_FireHoldEventA_poll` | start fires a slot 62/63 battle event through sub_7981E0 and sets the high byte of g_ffxBtlEndResult to 2 (the CTB hold, BATTLE_CTB_AND_STATUS.md). The poll sub_7A8700 waits for the event thread |  | V |
+| 60 | 170 | 59 | mbs | event:int | int | yes | `FFX_AtelSys_Btl_060_FireHoldEventA_start`, `FFX_AtelSys_Btl_060_FireHoldEventA_poll` | start fires a slot 62/63 battle event through FFX_BtlEv_FireHoldEvent 0x7981E0 and sets the high byte of g_ffxBtlEndResult to 2 (the CTB hold, BATTLE_CTB_AND_STATUS.md), keeping it 2 only when the event started. The poll FFX_AtelSys_Btl_StartedEventPoll 0x7A8700 returns 4 * (work == 0) + 1, so it ends at once either way (corrected 2026-10-29, it does not wait for the thread) |  | V |
 | 61 | 398 | 139 | bs |  | int 0 | no | `FFX_AtelSys_Btl_061_ReleaseEventHold_resi` | high byte of g_ffxBtlEndResult = 0 |  | V |
 | 62 | 645 | 137 | bs |  | none | yes | `FFX_AtelSys_Btl_062_WaitBattleIdle_poll` | poll only. 0 while a poison is pending, the command queue is not empty, three phase bytes are set, or any on field unit has m_b508, m_b432 or m_bDFB, or any unit m_b436 or an action state. Writes the culprit to word_112CA08 |  | V |
-| 63 | 4184 | 786 | mbs | group:int, event:int | int | yes | `FFX_AtelSys_Btl_063_FireEventAndWait_start`, `FFX_AtelSys_Btl_063_FireEventAndWait_poll` | start FFX_BtlEv_FireEvent(max(group - 1, 0), 255, event, 0xFFFF, 1, 2, actor), the poll waits for the event thread |  | V |
+| 63 | 4184 | 786 | mbs | group:int, event:int | int | yes | `FFX_AtelSys_Btl_063_FireEventAndWait_start`, `FFX_AtelSys_Btl_063_FireEventAndWait_poll` | start FFX_BtlEv_FireEvent(max(group - 1, 0), 255, event, 0xFFFF, 1, 2, actor), which runs the event at once unless it landed on the caller. The poll is FFX_AtelSys_Btl_StartedEventPoll and ends at once either way (corrected 2026-10-29, it does not wait for the thread) |  | V |
 | 64 | 32 | 7 | ms | mode:int | int | no | `FFX_AtelSys_Btl_064_PlayEntranceEffect_resi` | sub_79E8C0(self, mode): picks effect 32, 33, 52 or 53 by btl:5, m_b505 and m_b5C0 and plays it |  | V |
 | 65 | 54 | 15 | ms |  | int 0 | no | `FFX_AtelSys_Btl_065_Nop_resi` | returns 0 |  | V |
 | 66 | 271 | 66 | b | window:int, msg:int, x:int, y:int, align:int | int 0 | no | `FFX_AtelSys_Btl_066_ShowMessage_resi` | opens a battle message window (clamped 0..6) on the text at dword_112A9B8, entry msg, half picked by FFX_SaveData_GetMapNameAltFlag. sub_89B140 moves one window on event 389 for languages 2..5 | local | V |
@@ -569,7 +581,7 @@ row), meaning, lockstep, mark.
 | 138 | 1 | 1 | e | battleId:int | int 0 | no | `FFX_AtelSys_Btl_138_ResetZoneWeights_resi` | FFX_Btl_ResetBattleMapWeights -> FFX_Btl_ResetEncounterZoneWeights. Only camtest0 calls it |  | V |
 | 139 | 1 | 1 | e | battleId:int | int | no | `FFX_AtelSys_Btl_139_GetZoneNibble_resi` | FFX_Btl_GetBattleLiveWeight |  | I |
 | 140 | 34 | 6 | e | battleId:int, v:int | int | no | `FFX_AtelSys_Btl_140_SetZoneNibble_resi` | FFX_Btl_SetBattleLiveWeight: sets the zone nibble and resets the weights. Event packages call it |  | I |
-| 141 | 1075 | 536 | bs |  | int | no | `FFX_AtelSys_Btl_141_GetWordC9E2Low_resi` | low byte of word_112C9E2 |  | V |
+| 141 | 1075 | 536 | bs |  | int | no | `FFX_AtelSys_Btl_141_GetLastExecActor_resi` | low byte of word_112C9E2 signed, the unit FFX_Btl_ExecCommand last ran (0xFFFF at begin). Named 2026-10-29 |  | V |
 | 142 | 36 | 32 | ms |  | int m_b508 | no | `FFX_AtelSys_Btl_142_TestGroundHold_resi` | sub_7AA100 recomputes m_b508, with status 0 and m_b505 it forces ground mode 1 and +0x4F0 = 10 around the call |  | V |
 | 143 | 36 | 32 | ms | sectors:int | int | no | `FFX_AtelSys_Btl_143_GetHomeDirSector_resi` | sub_7A8720(self, sectors, 1): the home facing delta quantised |  | V |
 | 144 | 0 | 0 |  | unused:int | int 0 | no | dead `FFX_AtelSys_Btl_144_PlayEffect12_resi` | sub_79E590: effect 12 through the dword_112A95C CHR, ++m_wE1E |  | V |
@@ -581,14 +593,14 @@ row), meaning, lockstep, mark.
 | 150 | 281 | 44 | mbs |  | int | no | `FFX_AtelSys_Btl_150_GetByteC9FA_resi` | byte_112C9FA, written by begin and FFX_Btl_FinishActions |  | V |
 | 151 | 237 | 107 | mbs | event:int | int | yes | `FFX_AtelSys_Btl_151_FireHoldEventB_start`, `FFX_AtelSys_Btl_151_FireHoldEventB_poll` | btl:60 with the hold value 1 |  | V |
 | 152 | 2 | 1 | s |  | int | no | `FFX_AtelSys_Btl_152_HasStatusBits616_resi` | sub_7AF2F0: the +0x616 status word has 0x2800 or 0x40 |  | V |
-| 153 | 5976 | 633 | b | v:int | int v & 3 | no | `FFX_AtelSys_Btl_153_SetBtlByteC9CD_resi` | byte_112C9CD = v & 3, reset at begin, read by sub_780CE0 for the menu module 17 call |  | I |
+| 153 | 5976 | 633 | b | v:int | int v & 3 | no | `FFX_AtelSys_Btl_153_SetTargetCursorFacing_resi` | g_ffxBtlTargetCursorFacing 0x112C9CD = v & 3, reset at begin. FFX_BtlMenu_PageProc_Target reads it through FFX_Btl_GetTargetCursorFacing 0x780CE0 to pick which pad bits step its cursor. Named 2026-10-29 |  | V |
 | 154 | 0 | 0 |  |  | int | no | dead `FFX_AtelSys_Btl_154_IsNotPoisonPending_resi` | true when self is not g_ffxBtlPoisonPendingActor |  | V |
 | 155 | 0 | 0 |  | sel:int | float | no | dead `FFX_AtelSys_Btl_155_GetUnitY_resf` | the unit position y |  | V |
 | 156 | 27 | 8 | bs | selA:int, selB:int | float degrees | no | `FFX_AtelSys_Btl_156_GetPitchBetween_resf` | the elevation from one mask's point to the other's |  | V |
 | 157 | 6 | 5 | ms |  | none | yes | `FFX_AtelSys_Btl_157_WaitSavedPosCleared_poll` | poll only, waits while self m_savedPosValid |  | V |
 | 158 | 100 | 19 | ms | sel:int, bit:int, unused:int | int 0 | no | `FFX_AtelSys_Btl_158_FireMotionEvent_resi` | FFX_Btl_OnMotionEvent(unit, bit): sets the event bit and runs the hit, the effect or the reaction that bit stands for | rng 9*, rng 10-13*, local*, booster* | V |
 | 159 | 12 | 3 | bs | sel:int | float degrees | no | `FFX_AtelSys_Btl_159_GetHomeFacingDelta_resf` | the home facing minus the current rotation |  | V |
-| 160 | 193 | 4 | bs | on:int | int old | no | `FFX_AtelSys_Btl_160_SetByteC9FC_resi` | byte_112C9FC (byte 0 of the four bytes at 0x112C9FC, split 2026-10-29) = on & 1 |  | V |
+| 160 | 193 | 4 | bs | on:int | int old | no | `FFX_AtelSys_Btl_160_SetCameraBoneSnap_resi` | byte_112C9FC (byte 0 of the four bytes at 0x112C9FC, split 2026-10-29) = on & 1, returns the old signed byte. It gates FFX_Came_StepBattleBoneSnap 0x79DFE0 in FFX_Came_StepAll. Named 2026-10-29 |  | V |
 | 161 | 625 | 161 | mbs | sel:int | int | no | `FFX_AtelSys_Btl_161_GetUnitOrderCode_resi` | an enemy's m_unitIndex, or -6 - its index in g_ffxBattlePartyOrder, 255 none |  | V |
 | 162 | 193 | 118 | e | unused:int | int | yes | `FFX_AtelSys_Btl_162_LoadSystemMgrp_start`, `FFX_AtelSys_Btl_162_LoadSystemMgrp_poll` | start sub_79CCF0 starts the read of the system motion group through the asset loader, the poll waits for byte_112C9CF | load | V |
 | 163 | 2 | 1 | s | motion:int | int | no | `FFX_AtelSys_Btl_163_PlayMotionForced_resi` | btl:7 with m_chrReady forced on for the call, then m_b3F3 = 1 when it played |  | V |
@@ -607,7 +619,7 @@ row), meaning, lockstep, mark.
 | 176 | 150 | 140 | mbs | sel:int | int | no | `FFX_AtelSys_Btl_176_GetAttackFrames_resi` | the attack motion frame, scaled by the motion speed, plus the run up frames over the approach distance |  | V |
 | 177 | 15 | 3 | mb | v:int | int 0 | no | `FFX_AtelSys_Btl_177_DebugPrintInt2_resi` | pops one value into a stubbed print |  | V |
 | 178 | 2840 | 300 | ms | index:int, v:float | int 0 | no | `FFX_AtelSys_Btl_178_SetSelfFloat_resi` | FFX_BtlAi_SetUnitFloat(self, index, v) |  | V |
-| 179 | 38 | 1 | s | v:int | int | no | `FFX_AtelSys_Btl_179_SetDwordC8F0_resi` | sub_7B2B60: dword_112C8F0 = v |  | V |
+| 179 | 38 | 1 | s | v:int | int | no | `FFX_AtelSys_Btl_179_SetPendingVoice_resi` | FFX_Btl_SetPendingVoice 0x7B2B60: g_ffxBtlPendingVoice 0x112C8F0 = v, the voice FFX_Btl_PrepareVoice and FFX_Btl_StartVoice play. Named 2026-10-29 |  | V |
 | 180 | 1 | 1 | s |  | int 0 | no | `FFX_AtelSys_Btl_180_HideSideChr_resi` | m_bF65 = 8, sub_79EA90, side record CHR alpha 0 |  | V |
 | 181 | 36 | 32 | ms |  | int 0 | no | `FFX_AtelSys_Btl_181_ClearW400_resi` | self m_w400 = -1 |  | V |
 | 182 | 1 | 1 | s | sel:int | int | no | `FFX_AtelSys_Btl_182_GetApproachTime_resi` | sub_7A9FC0(unit, 12) / the self run speed |  | V |

@@ -540,6 +540,11 @@ Open:
   block and context from its arguments, and none of the opcode paths fill those in (stack garbage at the
   call). The port uses the target's channel 0 words, which is what the single block form reads. Only the
   battle contexts are affected.
+  Correction 2026-10-29: the battle event path does fill them. `FFX_BtlEv_StartFirstMatch 0x797D50`
+  builds the thread record with the matched request's context, block (the event map set) and local
+  worker, so the thread runs on set 0's worker with the code of the block that matched. The port's
+  StartFirstMatch now fills the words the same way (MONSTER_AI.md section 12). What stays open is only
+  the opcode paths, which still take the channel 0 words.
 - The private class 3 storage of a multi-block context in the capture recipe (11.12) needs its base,
   presumably the lowest `+0xB8` of the large actors. Not checked in IDA. The rest of the recipe's globals and the `GetActor` arithmetic were rechecked
   read only on a scratch copy of the IDB on 2026-10-13.

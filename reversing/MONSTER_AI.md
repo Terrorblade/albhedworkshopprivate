@@ -222,6 +222,13 @@ clear and this unit has **no** variant 1 entry queued yet, so one counter per un
 (`FFX_Btl_CmdQueue_IsVariantAbsent 0x7B0720` returns 1 for "not found", the inverse of what its name
 suggests.)
 
+Correction 2026-10-29 (the 13.8 port, Project Zanarkand src/ffx/btl/MonsterAi.cpp). The function
+returns `r`, what `FFX_BtlEv_StartFirstMatch` gave: 0 when a context 2 entry started, 1 for context 3,
+2 for context 4, -1 when no request had an entry. So `FFX_BtlAi_FireTargetedEvent 0x7AD0C0`, which
+counts the calls that return 0, counts party (context 2) matches only and never a monster's. And the
+"issuer is gone" test never passes, because `FFX_Battle_GetActor` hands out the spare record at
+0x11334D8 rather than null. [V]
+
 **The request list.** `FFX_BtlEv_PushRequest 0x797B70` [`FFX_BtlEv_PushRequest`] appends `{ctx, unit, slot,
 kind}` to a 16 entry list at `word_1135D70`, `FFX_BtlEv_ClearRequests` [`FFX_BtlEv_ClearRequests`] empties it.
 `FFX_BtlEv_StartFirstMatch 0x797D50` [`FFX_BtlEv_StartFirstMatch`] walks the list in order and takes the first
@@ -317,7 +324,7 @@ A selector is an int popped off the ATEL stack and turned into a 31 bit unit mas
 
 | value | mask |
 |---|---|
-| 0..30 | `1 << value` if `FFX_Btl_IsAllyUnit` |
+| 0..30 | `1 << value` if `FFX_Btl_IsAllyUnit` (see the correction below, any unit <= 30) |
 | 0x1000..0x1FFF | present units whose type id `+0x0E` equals the value (Geneaux uses `0x1067`, his Tentacle) |
 | -2 | the acting unit, while `+0xDF0` |
 | -3 | the acting unit's current command targets, present |
@@ -338,6 +345,13 @@ A selector is an int popped off the ATEL stack and turned into a 31 bit unit mas
 | -24 | every non-enemy non-summon unit |
 | -25 | present party minus two states (`sub_795780` KO `+0xDCC`, `sub_795800` `+0xDCE`) |
 | -26 | self `+0xDC4` |
+
+Correction 2026-10-29. `FFX_Btl_IsAllyUnit 0x793650` is `unit <= 30`, true for the monsters 20..27
+as well, so row 0..30 takes any unit (tools/apply_monster_ai_names.py renames it
+`FFX_Btl_IsValidUnitIndex`). "The acting unit" of -2 and -3 is not the -18 byte: -2 and -3 read
+`byte ptr g_ffxBtlActingActor+1`, 0x112C9E0, the unit `FFX_Btl_ExecCommand 0x7924E7` runs, and give 0
+unless that unit's `+0xDF0` is set. -18 reads 0x112C9DF, which `FFX_Btl_SendMenu` also writes. -3 is
+`entry[cursor].targetMask` of `FFX_Btl_CmdQueue_GetActorCmdOrLast` for that unit, present. [V]
 
 ### 5.3 Properties and target picks
 
@@ -451,6 +465,16 @@ AI scripts keep state in ATEL variables (Geneaux's pattern counter is `var 3`, A
 share one file image the class 2 and class 6 storage, which lives inside the block, would be shared
 between them, while `sub_870870` hands each ATEL actor its own slice of the context's private
 allocation. Which class the AI variables use is not checked. Open.
+
+Settled 2026-10-29. Every monster block sits in context 3, a multi-block context, so class 3
+resolves into the actor's own slice of the private allocation, not into the shared image. Over the
+AI worker entries of the 332 shipped files with a slot 61 (`mon_ai.reachable` from every slot 61
+kind), the variable references are 5883 class 3 (297 files), 709 class 1 (96 files) and 71 class 0
+(6 files), with no class 2 or 6 at all. So two monsters of one type keep separate AI state, and what
+they share is class 1 (the battle work) and class 0 (the save block script work), which every
+monster shares anyway. The 13.8 port runs one block twice for units 20 and 21 and checks the two
+counters apart (BtlMonsterAiRunsASyntheticScriptAndCommits). [V] for the resolver, [D] for the
+census
 
 ---
 
@@ -642,7 +666,7 @@ Still proposed, the meaning is inferred:
 |---|---|---|
 | 0x797CD0 | `FFX_BtlEv_ResetWorker` | `sub_871730`, `sub_869350`, `sub_8653F0` on a slot's worker, no run [I] for the meaning |
 | 0x797490 | `FFX_BtlEv_ClearWorkerRegs` | `sub_86D260` zeroes a slot worker's 4 int and 10 float registers |
-| 0x7947F0 | `FFX_BtlAi_ResolveSelectorToUnit` | the single unit form, used by btl:33, 123, 158, 161 [I] |
+| 0x7947F0 | `FFX_BtlAi_ResolveSelectorToUnit` | the single unit form, used by btl:33, 123, 158, 161. Read whole on 2026-10-29, the lowest set bit below 31 or -1, now a row of tools/apply_monster_ai_names.py [V] |
 
 ---
 
@@ -654,10 +678,104 @@ Still proposed, the meaning is inferred:
   whether the turn is still retired normally (and kind 6 fired) was not traced.
 - The exact interleave of kind 3 and kind 4 draws with the damage draws of the action that caused
   them, inside `FFX_Btl_ApplyPendingEffects`.
-- Which variable storage class AI scripts use, and so whether two same type monsters share AI state
-  through the shared file image (section 7).
-- Context 4's block (`dword_1135DF8`) and the split of context 2 between its two blocks.
-- The meanings of slot 0 event kinds (24, 26, 28, 70 ...) and of slots 4 and 64.
+- (Settled 2026-10-29) which variable storage class AI scripts use: class 3, private per actor in
+  context 3, so two same type monsters do not share AI state (section 7).
+- Context 4's block (`dword_1135DF8`). (Settled 2026-10-29) the split of context 2 between its two
+  blocks: set 0 system_01, set 1 the battle's field file (section 12).
+- The meanings of slot 0 event kinds (26, 28, 70 ...) and of slots 4 and 64. Kind 24 is the battle
+  start event (section 12).
 - Whether field contexts 0 and 1 step during a battle. If they do, their stream 2 draws interleave
   with the AI's inside one `FFX_MainStep` sub step (AI first, then `FFX_Atel_StepOnce`).
 - (Settled 2026-10-13) the inverted lookup at 0x7B0720 is now named `FFX_Btl_CmdQueue_IsVariantAbsent`.
+
+---
+
+## 12. Context 2, the battle field scripts (2026-10-29)
+
+Read for the 13.8 party AI and battle field AI port, Project Zanarkand src/ffx/btl/BattleEvents,
+ForcedActions and BattleFieldSyscalls, and tests/engine/BtlFieldAiTest.cpp. The names are rows of
+tools/apply_party_field_ai_names.py.
+
+**The two blocks.** Correction 2026-10-29: context 2 holds system_01 as set 0 and this battle's field
+file as set 1, for every battle. `FFX_Btl_Init 0x781700` loads system_01 through
+`FFX_Btl_BeginBattle(-1, 0, 0, 1)`, which is battle field kind 14 index 1 (index 0 names output.bin,
+which does not ship). `FFX_Btl_KeepSystemFieldRecord 0x782670` then copies its 32 byte record
+`g_ffxBtlFieldRecord 0x112A9A4` down to `g_ffxBtlFieldRecords 0x112A984`, where it stays for the
+session. Every battle loads its own field into 0x112A9A4. `FFX_BtlEv_FindSlotRecord` indexes the event
+map pointer `g_ffxBtlSystemFieldEventMap 0x112A994` by set * 32, so set 0 reads 0x112A994 and set 1
+reads `g_ffxBtlFieldEventMap 0x112A9B4`. The battle start adds system_01's block first and the field's
+second (0x783049..0x78306A), and the worker base of set 1 is system_01's map byte 0 read signed, 72
+in the shipped data. [V]
+
+The file. `FFX_Btl_SetupFieldPointers 0x783E20` reads a u32 count of 8 then section offsets: +4 the
+ATEL block, +8 the event map, +12 the monster section (byte 0 has monsters, +1 the sound flag, +3
+airborne), +16 the placement. 817 battle field files ship (system_01 and 816 fields), 2 have no ATEL
+block, 2 more carry a block with 0 actors. [D]
+
+**The fire order.** `FFX_BtlEv_FireEvent 0x797BC0` pushes (2, 1, slot, kind), (2, 1, slot, kind2),
+then for an enemy (3, unit, slot, kind) and (3, unit, slot, kind2), then (2, 0, slot, kind) and
+(2, 0, slot, kind2), each kind only when not 0xFFFF, and starts the first with an entry. So it is the
+field file, then the monster's own map, then system_01. `FFX_BtlEv_FireAbilityEvent 0x798000` does
+the same with the ability's class slot first in each group (class 2 -> +68, 3 -> +65, 4 -> +71,
+6 -> +74, the id & 0xFFF as the kind) and context 4's effect map between the monster and system_01.
+The thread always starts on the worker of set 0's record for the slot and runs the code of the block
+that matched (the request words of section 5). Both refuse (-1) while `g_ffxBtlEventsOff 0x112A8FE`
+is set, and with no caller while the script hold (0x112A8E4) is 2 or the explode hold (0x112C9D7) is
+set. The fifth argument calls `FFX_Btl_ShowEveryUnitIfPending 0x795C70`. [V]
+
+**The hold events.** `FFX_BtlEv_FireHoldEvent 0x7981E0`, behind Btl 60 (hold 2) and 151 (hold 1).
+n 0..7 starts (2, 1, 62, n) from set 1 slot 62. n 8..23 asks (2, 1, 63, n) and, when the field has
+monsters and is not airborne, (2, 0, 63, n), started from set 0, otherwise from set 1. The poll the
+Btl wait rows share, `FFX_AtelSys_Btl_StartedEventPoll 0x7A8700`, returns 4 * (work == 0) + 1, so a
+wait row ends at once whether its event landed on the caller or not. [V]
+
+**The unit event lookup** of `FFX_Btl_StartUnitEvent 0x7AB360`: a party unit asks (2, 1, unit + 5),
+(2, 1, 3), (2, 0, unit + 5), (2, 0, 3). An enemy asks (3, unit, 64), (2, 1, s), (3, unit, 4), (2, 0, s)
+with s 4 when its +0x39 is 1, else 3. [V]
+
+**The battle start.** Sub phase 10 of `FFX_Btl_StepSubPhase`: the advantage roll, the blocks, the
+bind, `FFX_Atel_BootAllActors` (the init entries run at once), then sound command 12 with the monster
+section's +1, the battle count, `FireEvent(0, 0xFF, 24, 0xFFFF, 0, 1)`, `g_ffxBtlStartDelay 0x112A919`
+= 60, then units 0..17 shown and given unit event 63 when on the field, and sub phase 11. [V]
+
+Kind 24 at slot 0 is handled by 795 fields. Run through the port on every shipped field: 814 have a
+script with actors, 792 start the event, 791 finish within 600 steps. 3 fields boot a btl:60 whose
+hold event lands on the booting worker itself, so the hold stays 2 and the battle start event is
+refused (the independent model finds 5 such boot holds, 2 of them in fields with no kind 24). One
+field loops on a unit test the bare rig never passes. [D]
+
+**Which Btl rows the fields call.** 202 Btl rows are called across the 817 files, 97680 calls. The
+port registers 27 of them, 81816 of the calls. The rows ported for context 2, calls / files: 1
+807/807, 5 5378/542, 21 20771/562, 34 142/133, 52 33/21, 53 29/18, 60 87/27, 61 398/139, 63 3714/635,
+105 540/536, 141 1075/536, 151 54/35, 153 5976/633, 160 193/4, 165 53/51, 184 39/23, 197 1/1, 216
+33/31, 275 144/144. The unported rows in the most files: 62 (137), 59 (119), 68 (105), 100..104 and
+112..114 (about 78 each), 169 and 222 (76). [D]
+
+**The party AI workers.** 181 workers sit on the AI slots (set 1 slots 41..58, the aeon slots 37..40),
+and the level 0 thread (entry 1) of every one waits forever on core:95. So a bare level 0 End in a
+battle worker is never reached in shipped data. If it were, `FFX_BtlEv_RunWorkerToCompletion` would
+spin, because its loop waits for the level to drop back and an ended level 0 thread never does. The
+port faults Hang there, the same outcome. [V] for the loop, [D] for the census
+
+**The forced turn** of `FFX_Btl_SendMenu`. After the claim and the doom count: Sleep (counter +0x608)
+skips the choice, Provoke goes to `FFX_Btl_CommitProvokedAttack 0x799D50` and falls through to the AI
+or menu when that returns 0, Berserk 0x200 and Confusion 0x100 of status 1 go to
+`FFX_Btl_CommitForcedAttack 0x799AC0` with mode 0 and 1. The pick is `FFX_Btl_PickForcedTargets
+0x7996D0` through `FFX_Btl_FilterTargetableUnits 0x799820`, one unit on stream 4 (0x79976F) or a target
+group on stream 5 (`FFX_Btl_PickTargetGroup 0x799910`, 0x7999A4). `FFX_Btl_IsActorAiControlled
+0x792120` draws stream 17 for unit 14 only (0x792137), the AI takes the turn when Yojimbo's motivation
+/ 4 is above the draw & 0xFF. Auto-Battle is not a branch here, it lives in the battle menu. [V]
+
+**The draws.** At the battle start only stream 2 is drawn, by the scripts (core 166 and 169). Btl 105
+draws stream 7 through `FFX_BtlAi_FilterAndPickTarget` with self 0, at 0x7ACDD6, only when more than
+one unit is kept. The forced turn draws streams 4, 5 and 17 as above. [V]
+
+Still open for context 2:
+
+- A monster's own entry for a battle event runs on a context 2 worker through a context 3 block. The
+  port refuses it (BadContext). How the original's rebind handles the cross context case was not
+  traced.
+- `maybe_FFX_Btl_RepeatCopycatCommand 0x799B40` and `maybe_FFX_Btl_ResolveMixCommand 0x7B0520`,
+  reached from `FFX_Btl_ExecCommand`, are named but not ported.
+- The advantage roll `FFX_Btl_RollPreemptiveOrAmbush 0x78D090` and the angle copy 0x793CB0 of the
+  battle start are not ported.

@@ -506,7 +506,7 @@ Tornado at 3.0 s with a six-button sequence.
 | 0xF3D734 | state word, 1..10 |
 | 0xF3D736 | track left edge, `FFX_UiScaleX(446.0)` |
 | 0xF3D738 | `FFX_UiScaleY(511.0)`, a y coordinate |
-| 0xF3D73A | track width, `FFX_UiScaleX(1032.0)` minus the left edge |
+| 0xF3D73A | track width, `FFX_UiScaleX(1032.0)` stored as is (275), the right edge is left + width |
 | 0xF3D73C / 0xF3D73E | target zone lower and upper bound |
 | 0xF3D740 | zone width (low word), live bar position (high word) |
 | 0xF3D744 | signed bar velocity |
@@ -527,6 +527,18 @@ All 16-bit integer arithmetic. **The only thing stopping this from replicating f
 25-vs-30 divisor.**
 
 State 10 calls `FFX_BtlOd_ReportMinigameResult(0, success, remaining, budget)`.
+
+**Correction 2026-10-29 (the Project Zanarkand port, PROGRESS 13.9).** Three things in this section were
+wrong or missing, read from the disassembly at 0x498180, 0x498CA0 and 0x492320:
+
+- The width at 0xF3D73A is `ftol(FFX_UiScaleX(1032.0))` stored directly, nothing is subtracted. The bar
+  runs from left to left + width and the reflect at 0x49245A tests `pos > left + width`.
+- The geometry is not display dependent. `FFX_UiScaleX 0x2447E0` is `x * 512 / 1920` and `FFX_UiScaleY
+  0x244820` is `y * 416 / 1080`, both constant, so left is 118, y is 196 and width is 275 at every
+  resolution. The zone is `width / 2 -+ zone / 2 + left`, each half truncated toward zero (0x498D1F), for
+  level 1 that is 245..265.
+- A press outside the zone does more than force the velocity positive: at 0x4923FF the cursor goes back
+  to the left edge and then moves by the speed, so it lands on left + speed, moving right.
 
 ### 4.2 Auron, the button sequence
 
@@ -630,6 +642,19 @@ spell family 5 (the 19th spell), magic < 40 : "1357777777777777"
 
 So hit 0 always needs 1 rotation and the later hits need more, and higher magic flattens the curve.
 That matches the known FFX behaviour.
+
+**Correction 2026-10-29 (the Project Zanarkand port, PROGRESS 13.9).** The table is cumulative, which the
+reading above misses. `sub_89A2F0 0x49A2F0` (proposed `FFX_BtlOd_FillLuluThresholds`) stores digit 0 as
+entry 0 and every later entry as the previous entry plus its digit, so `"1122333344444444"` becomes 1, 2,
+4, 6, 9, 12, 15, 18, 22 and so on, and the rotation count is compared against that running total. The
+launcher `0x498BF0` then sets the rotation count to entry 0 and the hit count to 1, so the first cast is
+free and digit i is the rotations the hit after it costs. With every digit 1 each rotation is one hit. A
+spell level past 18 matches no case and leaves the table as the previous Fury left it.
+
+**Correction 2026-10-29.** Lulu's report does not send the time left. Her state 6 calls
+`FFX_BtlOd_ResetSharedTimer` at 0x491FFB before it loads the budget and the remaining time for the report
+at 0x492020, so both always reach `FFX_BtlOd_ReportMinigameResult` as 0. Tidus and Auron report first and
+reset after.
 
 State 10 equivalent is at 0x492020, calling
 `FFX_BtlOd_ReportMinigameResult(5, g_ffxBtlOdLuluHitCount, remaining, budget)`. Note the result here
@@ -774,6 +799,23 @@ effect playback too. Two consequences:
 
 The reels DLLs each have one `FFX_Btl_Rand` site (host 324), which is presumably the reel symbol
 roll. That one is not cosmetic.
+
+**Addition 2026-10-29 (the Project Zanarkand port, PROGRESS 13.9).** The statement above is about the
+module range and stays true, but the result of a minigame does draw, outside that range.
+`FFX_BtlOd_ReportMinigameResult` calls `sub_7AFE00 0x3AFE00` (proposed `FFX_BtlOd_RestageHitsByResult`),
+which re-stages the action's hits by the result:
+
+- Fury (kind 0x25) below the full count, and Tidus's 0x30 or Auron's 0x52 failed, take hits off. When the
+  distribution row has no flag 0x8000 (or is missing) each removal draws stream 16 % the number of units
+  at the most hits (0x3B0013). Otherwise the count comes off every unit with no draw.
+- Every target still hit is staged again with the success or failure ability through
+  `FFX_Btl_StageEffectsForTarget`, so the usual damage draws follow on the attacker's and the target's
+  streams.
+- A drain ability rebuilds its drain hit from a shuffled `FFX_Btl_BuildHitTargetList`: n swaps, each
+  stream 16 % n and, when n > 2, stream 16 % (n - 2) (0x3B7222, 0x3B7236).
+
+All of these are stream draws on constants, so they replicate. The timer's `FFX_Btl_Rand` is still the only
+draw while a minigame is being played.
 
 ## 6. Where the result goes, and whether it is per-character
 
@@ -951,6 +993,15 @@ Mix is command id **0x311E**, name decoded from `command.bin` as "Mix", kind byt
 (ability row byte 23) 0x14. Its 64 recipes are rows 0x308B..0x30CA with kind byte 0x26. It never
 touches `FFX_BtlOd_StartMinigameForActor`, it has no minigame timer and it draws no RNG.
 
+**Correction 2026-10-29 (the Project Zanarkand port, PROGRESS 13.9).** "Draws no RNG" is wrong. Once the
+items are chosen, `maybe_FFX_Btl_ResolveMixCommand 0x3B0520` (proposed `FFX_Btl_ResolveMixCommand`) calls
+`FFX_Btl_PickForcedTargets(unit, result, -1)` at 0x3B065B for the mixed ability's targets, which draws on
+stream 4 for a single target result and stream 5 for a group one (none for a whole side or self). Copycat
+is the same: `FFX_Btl_RepeatCopycatCommand 0x399B40` repicks at 0x399C87, streams 4 or 5, when the copied
+targets are gone. Both streams are constants, so two peers that agree on the state draw the same values.
+The recipe lookup itself is plain data: `prepare.bin` row `max(a, b) & 0xFFF`, u16 `min(a, b) & 0xFFF`,
+so the order the items were picked in does not matter.
+
 One correction to an inference I made earlier in this pass and then disproved: the two-selection
 command that `sub_899870 0x499870` special-cases at 0x4998F0 by setting the required selection count
 to 2 is id **0x3029, which decodes as "Doublecast", not Mix.** The other special case at 0x4998C0,
@@ -1092,6 +1143,12 @@ and that window is wall time.
 This path also scores differently: at 0x491EAF it compares `(rotCount + 1 + 1) / 2` against the
 threshold table, where the pad path at 0x491F1D compares `rotCount` directly. Two key alternations
 per credited rotation.
+
+**Addition 2026-10-29 (the Project Zanarkand port).** The key hit also leaves the two pass loop at once
+(0x491D4D jumps out, the second pass never samples), and the gauge steps twice on that call: once at
+0x491ED6 right after the hit and again at 0x491F67, the step every call ends with. Only the drawn gauge
+moves faster, the hit count is unaffected. And `rotCount` here is the running count that starts at the
+threshold table's entry 0, not 0 (section 4.3).
 
 **So Lulu's Fury is the one input path in the overdrive family that reads a wall clock to make a
 gameplay decision, and only on keyboard.** A slower machine spends more real time per sub-step, so

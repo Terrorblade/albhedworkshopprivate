@@ -88,6 +88,20 @@ for "textureAnimation" (`PAssetHeader__symbol 0x6F4350` is a name to index map).
 and a 2D bundle whose symbols differ (slik00 30 and 38, kino00 30 and 21, genk10 32 and 21). For
 those, one of the two calls likely reads the wrong cluster index.
 
+Correction 2026-10-29 (PROGRESS 6.3.8, the Zanarkand port in src/engine/texanim): there is no quirk.
+Each call asks its own header. The asm at 0x65BC81..0x65BCE4 runs `PAssetHeader__symbol` with ecx =
+gfx+0x10E4 for the 3D call and ecx = gfx+0x1144 for the rcBg call. Hex-Rays drops the second ecx and
+so shows one symbol. An orphan copy of the two calls at 0x6521D0..0x652242 (no function, no xref)
+shows the same two headers plainly. [V]
+
+Also from the port, 2026-10-29 [V]:
+- The material walk takes the materials of each PMeshInstance's material set (+16), which on a map is
+  its mesh's m_defaultMaterials. A PMaterial with an ID that no instance's set holds is not appended.
+  bsil01 has four PMaterials with `12032_20_000_000`, and only #209 and #210 (meshes 60 and 61) are
+  drawn, #84 and #126 are only exports. A material two instances share is appended twice.
+- Texture slots are one per cluster row in `[first, animIndex)`: the row's first PTexture2D, or null
+  for a row without one, so the frame ids index rows, not textures.
+
 ## 3. How m_texAnimID selects an animation
 
 - Map and rcBg: exact `strcmp` of the whole ID against `m_name`. `TextureAnimationManager__findInfo
@@ -116,8 +130,8 @@ carry a bit 31 "not owned" flag, mask with 0x7FFFFFFF. [V]
 | +0 | vtable 0xB48438 (one slot, scalar deleting dtor 0x6AFE30) |
 | +4 | enabled. Set at the end of a load when mgr+124 is not empty, cleared by clearMap. Gates applyFrames |
 | +8 | rcBg layer base, written only by `sub_642D90` (from `sub_9217E0`, the rcBg scene select) |
-| +12 | material base of the latest load in +116, in practice the 3D map material count |
-| +16 | texture base of the latest load in +92 |
+| +12 | material base of the latest load in +116, in practice the 3D map material count. Correction 2026-10-29: set only by a load that appends a material (to the count before it), a load without one leaves it as it was [V] |
+| +16 | texture base of the latest load in +92, set at the load's first texture row [V] |
 | +20 | PSamplerState, 36 bytes: min filter 5, mag 1, wrap 1, 1, 1 |
 | +56 | PSamplerState: 5, 1, wrap 2, 2, 2 (the +48 and +84 bit 0x80 marks created) |
 | +92 / +96 | map textures, count and `PTexture2D**` |
@@ -179,6 +193,18 @@ is skipped while gfx byte +4501 is set. It is not booster scaled (`FFX_Time_Scal
 So map and rcBg autoplay is wall clock driven and keeps running in pause [I, from the missing gate]. Character infos are never
 advanced by time, their frame comes from the step (section 7).
 
+Correction 2026-10-29 (PROGRESS 6.3.8): there is a pause gate. `FFX_Frame_UpdateBoostersAndOverlays`
+has one caller, `FFX_GameTick 0x639300` (ecx = g_ffxGfxCtx, so its +0x1195 test is gfx+4501), and
+`FFX_GameTick` has one, the call at 0x42F5C5 inside `FFXApplication__animate`'s hold byte branch. While
+the Esc menu holds the step (FFXApplication+0x3AD) texture animation neither advances nor applies.
+What does not gate it: FMV, the in game menu, catch up (it runs once per presented frame, not per step)
+and the booster. gfx+4501 holds it from `FFX_Gfx_BeginMapLoad 0x65CE90` (and
+`FFX_Gfx_LoadMapAssetHeader`) to the clear at 0x658C89 in `FFX_Gfx_InstallPendingMapScene`, right
+after the `FFX_Gfx_FinishMapLoad` that loads the manager, so the first advance after a map load sees
+fresh infos. dt is the float `Phyre__PApplication__frameTick 0x627940` writes to app+0x24, `float(t -
+float(app+0x20))` with t the QPC seconds less the origin and app+0x28, or the -timestep= value. The
+x87 add in advance stores a float before the compare, which gives the same bits as a float add. [V]
+
 ## 6. Outputs
 
 `TextureAnimationManager__applyFrames 0x6B44A0`, main thread, per present, only when mgr+4 is set
@@ -193,6 +219,13 @@ advanced by time, their frame comes from the step (section 7).
 
 No UV is written. Single frame rcBg layers are re-bound every present. The material written is the
 cluster's shared one, so all instances of a map material change together.
+
+Correction 2026-10-29: the sampler written into the capture is never used.
+`PShaderProgramD3D11__bindCapturedTextures 0x59B3D0` binds only the texture of a type 66 capture
+(+12), the samplers come from the separate type 71 TextureSamplerState captures. The write lands only
+when the definition type is one `sub_66E4F0` takes (66, 217..220, 18, 67, 68) and `sub_4D57D0` accepts
+the range (offset >= 4, offset + (size & 0x1FFF) <= the buffer size). `sub_59E520` always returns 0,
+so the texture check in `sub_66E4F0` never blocks it. [V]
 
 `setAnimatedMaterialsChar 0x6B3060(G string, Animation string, frame, 4 unused floats, charName,
 instance)`, worker thread, per step [V]:
@@ -274,6 +307,14 @@ Characters [V]:
 - Map autoplay is display only on the wall clock. The recreation can derive the frame from snapshot
   time as `floor(t / interval) mod count`, which differs from the original only by the dropped
   remainder (the original drifts late by up to one present per frame). [I]
+  Correction 2026-10-29: the port keeps the original's accumulator instead (src/engine/texanim
+  `PresentFrame`), so it picks the original's frame on the same presented frame given the same dt. A
+  `floor(t / interval)` frame drifts from it by the dropped remainders, which depend on the frame
+  rate and on how the float dt rounds.
+- Correction 2026-10-29: one step output does depend on the manager. `sub_90BF10` clears a mapWork
+  request's pending bit only when `sub_643A40` finds the material (the `*v7 ^= 1`). That depends on
+  the loaded IDs alone, and the load runs at scene install while gfx+4501 holds the fade, so it is
+  deterministic in step terms. A step side copy needs the material ID table, not the clock.
 - Character frames are step state (the PS2 stream in `dword_2310000`) whose apply writes per
   instance material parameters. The apply is presentation and a GPU candidate (six texture windows
   per material are a natural shader uniform block). The original applies it on a worker job during
@@ -523,7 +564,12 @@ from this repo. PostProcessTweakUtil has no data file, so there is no reader for
 
 ## 17. Open
 
-- The map symbol quirk of section 2 on the 13 maps with a 3D and a 2D bundle, a runtime check.
+- ~~The map symbol quirk of section 2 on the 13 maps with a 3D and a 2D bundle, a runtime check.~~
+  Closed 2026-10-29, there is no quirk (section 2). The base rule of section 4 (+12 kept by a load
+  without materials) would send 3D materials to rcBg textures on a map whose 3D model draws animated
+  materials and whose rcBg model draws none. None of the 13 does (Zanarkand engine test
+  TextureAnimationBothBundleMapsKeepTheirBases): bsil00, luca06, ptkl00, znkd03, znkd04, znkd05 and
+  znkd07 have both, the other six have rcBg materials only.
 - The meaning of mUStart, mVStart against mUEnd, mVEnd (size and origin is inferred from data).
 - Whether a present can observe a half applied character instance (section 9).
 - The direction meaning of the PostProcess page keys.

@@ -1015,7 +1015,7 @@ struct BTLUNIT {
                                                   // params (+72..+76), merged by sub_79B290
   /* 0x636 */ unsigned __int16 m_sosStatus[3];   // the same three masks for the SOS (low HP) auto-statuses, applied while m_sosState is 1 or 2 [I]
   /* 0x63C */ unsigned __int8 m_sosEnabled;   // set by Btl_LoadCharRecordIntoActor, tested by sub_7AF260 0x7AF260
-  /* 0x63D */ unsigned __int8 m_weakPose;   // stance level sub_78D7F0 0x78D8B5 derives from the HP band. 0 normal, 1 for sleep, silence, darkness or airborne, 2 for the worst band. Forced 0 by m_weakPoseSuppressed. Debug label WK. AI property 8 via FFX_Btl_GetUnitAiProp8 [I]
+  /* 0x63D */ unsigned __int8 m_weakPose;   // stance level sub_78D7F0 0x78D8B5 derives from the HP band. 0 normal, 1 for sleep, silence, darkness or airborne, 2 for the worst band. 3 for a KO unit at 0 HP that FFX_Btl_IsUnitSettled calls settled (corrected 2026-10-29). Forced 0 by m_weakPoseSuppressed. Debug label WK. AI property 8 via FFX_Btl_GetUnitAiProp8 [I]
                                             // AI property 8 (set). sub_795840 0x795840 returns it
   /* 0x63E */ unsigned __int8 m_sosState;   // SOS state written by sub_78D7F0 0x78D7F0
   /* 0x63F */ unsigned __int8 m_sosStatePrev;   // compared with m_sosState by sub_7AF260

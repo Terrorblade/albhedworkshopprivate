@@ -321,7 +321,9 @@ unless something between them closed the tick-allowed gate. Inside `FFX_Btl_Send
 queue head that is not yet claimed: [V]
 
 1. `sub_7AF770(actor)` (propose `FFX_Btl_RegenPendingKind`): 2 when any live unit has a regen
-   counter and Zombie, 1 when any has regen, else 0. Kind 2 waits for an empty command queue, kind 1
+   counter and Zombie, 1 when any has regen, else 0. (Corrected 2026-10-29: not only live units. It
+   counts every unit with `+0xDC8` and a regen counter and tests no HP, KO or petrify, and it gives
+   0 when the actor is off the field or `+0x716` is set. See 2.4.1.) Kind 2 waits for an empty command queue, kind 1
    waits for `SBYTE1(dword_112C9D0) == 0`. A wait returns and retries next step.
 2. `sub_7AF4F0(unit, actor)`, the **turn-start status tick** (section 2.4).
 3. Re-reads the head. KO, or `sub_7928D0()` (the battle-over test) non zero -> retire the turn.
@@ -571,7 +573,8 @@ zero in that copy, `+0x6D2` is reset to 0. [V]
 - `FFX_Btl_ApplyStatus2` returns its arg_20 flags unchanged (0x78B752), and arms Auto-Life through
   `FFX_Btl_ScaleMagicBooster(attacker, ability, 0, 0)` at 0x78B6EF. [V]
 - In the 2.4 regen formula the `(maxHp * +0x6D2) >> 8 != -100` guard is an unsigned compare, so it is
-  always true. [per the port]
+  always true. [per the port] (Corrected 2026-10-29: it is a signed test of the whole sum at 0x7AF578,
+  see 2.4.)
 
 **`sub_78AE00`, per status index k = 0..24**, `chance = rec[46+k]`, raised to the attacker's
 `+0x5DE+k` when the ability has dword +28 bit 0x40000: [V]
@@ -639,16 +642,23 @@ tally in `sub_78AE00`, their meaning is not pinned. [I] A count down only happen
 1..253 (`counter - 1 <= 0xFC` unsigned), so 0 stays 0, 254 and 255 are permanent. [V]
 
 **Per CTB tick.** Every pass-2 call of `FFX_Btl_CtbTick` adds 1 (saturating at 0xFF) to `+0x6D2` on
-every live unit. Nothing else ticks per CTB tick. [V]
+every live unit. Nothing else ticks per CTB tick. [V] (Corrected 2026-10-29: the guard at
+0x7910E9..0x79111A is `+0xDE6 == 0` (no turn queue entries), `+0xDC8`, not `+0xDCC` and not
+status-1 Petrify, so a unit holding a queued turn does not count.)
 
 **At the start of the unit's own turn**, `sub_7AF4F0` (propose `FFX_Btl_TurnStartStatusTick`), only
-when `+0xDC8` and `+0x716 == 0`: [V]
+when `+0xDC8` and `+0x716 == 0`: [V] (Corrected 2026-10-29: that guard covers steps 1 and 2 only.
+A failed guard jumps to 0x7AF681, so steps 3 and 4 run on every call, off the field and on a
+reoffered turn too.)
 
 1. Regen for **every** live unit, not just the one whose turn it is: for each unit i in 0..30 with
    regen counter non zero, present, current HP > 0, not KO, not petrified:
    `amount = ((maxHP(+0x594, u32) * +0x6D2) >> 8) + 100` in unsigned 32 bit. Zombie (status-1 0x2)
    takes it as damage and can die of it, otherwise it heals. Then `+0x6D2 = 0`. The guard
-   `amount - 100 != -100` in the code is always true. [V]
+   `amount - 100 != -100` in the code is always true. [V] (Corrected 2026-10-29: the guard is a
+   signed `test eax, eax` / `jle` on the 32 bit sum at 0x7AF578, positive for any real HP. A unit
+   that fails the first gates keeps its `+0x6D2`, only the ones that pass are zeroed, at 0x7AF61A.
+   Both branches zero `+0xDD0` first.)
 2. This unit's counters with flag 0x1 count down (only Regen). [V]
 3. Status-2 Defend 0x800, Guard 0x1000, Sentinel 0x2000, Shield 0x40, Boost 0x80 are cleared unless
    permanent. Defend, Sentinel and Shield also call `sub_7AF840`. [V]
@@ -669,11 +679,21 @@ control flow. Whether a shipped monster script does this is not checked.
 `FFX_Btl_TurnEndStatusTick`), called from `FFX_Btl_TurnQueue_RemoveAt` right after the CTB delay is
 added: counters with flag 0x4 count down. If Sleep went to 0 the wake event fires
 (`sub_7AB360(unit, 27, ...)`), if Silence or Darkness went to 0 `sub_78CA20(unit, 2, 1)`. [V]
+(Corrected 2026-10-29: the whole tick needs `+0xDC8`. The flag 0x8 notify is skipped while `+0xDCB`
+is set. The wake is "was non zero, is 0 now": it writes the word `+0x50E = 1` (so `+0x50F = 0`),
+`+0x433 = 1`, starts event 27 and returns, so the Silence and Darkness test is skipped that turn. That
+test also needs `FFX_Btl_CanPlayStatusReaction(unit, 0)`, which is false while Sleep is still
+counting.)
 
 **Poison** at turn end: `FFX_Btl_TurnQueue_RemoveAt` latches `g_ffxBtlPoisonPendingActor` (a byte
 at 0x112C9E4, -1 idle) which closes the CTB gate. `FFX_Btl_FinishActions` calls `sub_7AFAB0`
 (propose `FFX_Btl_ApplyPoisonDamage`): `dmg = maxHP(u32) * +0x5BA / 100` unsigned, applied as HP
-damage, then AI event 8, then the KO test. [V]
+damage, then AI event 8, then the KO test. [V] (Added 2026-10-29: every call clears `+0xDF8` first,
+for any unit. For the pending unit it then clears `+0xDD0`, cancels the unit's turn
+(`FFX_Btl_CancelUnitTurn` 0x7AB170: `+0x42E = 0` and the word `+0x42B = 0`), sets `+0x41C = 1`,
+applies the damage with number style 0x82, runs `FFX_Btl_RunAiAndCommit(u, u, 8, 0, 1, 0)`, the pose
+and the SOS refresh, sets `+0xDED = u`, then `FFX_Btl_OnUnitDefeated(u, u, 0, 1)` and reaction 8 when
+that gives 0. The pending byte goes back to -1 on every call.)
 
 **NulTide..NulFrost** never count down by turns (flags 0). A hit consumes them in `FFX_Btl_ConsumeNulElements`
 (proposed `FFX_Btl_ConsumeNulElements`), called first in `FFX_Btl_ComputeEffectForTarget`, on the
@@ -682,6 +702,81 @@ with NulFrost (+0x10), water with NulTide (+0x0D). The hit is nulled only when e
 four element bits the attack carries is held, so fire plus ice on a NulBlaze target goes through,
 while fire plus holy is nulled whole (the other bits are not counted). A nulled hit decrements each
 held counter that is below 254, draws nothing, sets entry +0x03 to 2 and the number kind to 2. [V]
+
+### 2.4.1 Corrections and additions from the 13.7 port (2026-10-29)
+
+Written while porting the step to Project Zanarkand (`src/ffx/btl/StatusTick`), checked against the
+idb6 copy. Names are the ones `tools/apply_status_tick_names.py` proposes.
+
+- **The one turn clears.** Defend, Sentinel and Shield call `FFX_Btl_PlayGuardEndEvent` 0x7AF840:
+  when `FFX_Btl_CanPlayStatusReaction(u, 1)` passes it sets `+0x433 = 1` and starts event 54 through
+  `FFX_Btl_StartUnitEvent` 0x7AB360 with a3 = 1. A waited event that starts leaves `+0x432 = 1`, so
+  the next guard end of the same tick passes only in motion 0x28 or 0x29, and the unit's own idle
+  return (kind 0 needs `+0x432 == 0`) does not play. When no event matched, `FFX_Btl_ClearUnitBusy`
+  0x7AB6C0 clears the word `+0x432` (so `+0x433` too), `+0x43E` and the word `+0x404`, and moves
+  `+0xDFB` 2 to 3, so the next one tries again. [V]
+- **The Threaten release** (`FFX_Btl_ReleaseThreaten` 0x78E410) runs for any unit holding status-1
+  0x800, and both ends hold it. It takes `t = +0x5C6`, or the unit itself when that is 0xFF, clears
+  t's 0x800, then the release half of `FFX_Btl_UpdateThreatenLink` 0x78E460 (0x78E522): the other
+  end is `t.+0x5C5`, or `t.+0x5C6` when that is 0xFF. Each end gets `+0x5C5 = +0x5C6 = 0xFF`,
+  `FFX_Btl_PickHomeFacing` 0x796940 and `FFX_Btl_PlayIdleReturnEvent` 0x78F6A0, and the other end
+  loses its 0x800 too. So the threatened unit's own turn start releases the link as well, not only
+  the threatener's. `FFX_Btl_OnUnitDefeated` runs the same release for the victim. [V]
+- `FFX_Btl_PickHomeFacing` writes `+0x511`: 2 with status-1 0x800, 3 when `+0x6D4 != 0xFF`, 1 when
+  `g_ffxBtlSummonPushed`, else 0. The old comment in the IDB (Sleep and the poison byte) was wrong. [V]
+- `FFX_Btl_PlayIdleReturnEvent`: not KO, no Petrify, no Eject, `CanPlayStatusReaction(u, 0)`, then
+  `+0x41C = 1` and event 0 with a3 = 1. [V]
+- `FFX_Btl_CanPlayStatusReaction(u, kind)`: false when `+0x508` or Sleep. Kind 1: `+0x432 == 0` or
+  motion `+0x3F0` 0x28 or 0x29. Kind 2: `+0x432 == 0` and not those motions. Else `+0x432 == 0`. [V]
+- **`FFX_Btl_StartUnitEvent` 0x7AB360** takes 7 arguments, every caller here passes
+  `(u, event, 1, 0, 1, 0, 0)`. A negative event does nothing. Otherwise `+0x3FB = +0x3FA`,
+  `+0x50D`, `+0x448`, `+0x429` to 0, `+0x39C = -1` when `+0x414`, and with a3 `+0xDF2 = a4` and
+  `+0x432 = 1`. Then the BtlEv request queue and `FFX_BtlEv_StartFirstMatch` 0x797D50. No match puts
+  `+0x448` and `+0x50D` back and with a3 clears `+0xDF2` and runs `FFX_Btl_ClearUnitBusy`, giving 0. A
+  match gives 1 and, without a3, clears `+0x432`. [V]
+- **`FFX_Btl_ApplyHpDamage` 0x78E230** has encounter special cases (`FFX_Btl_GetCurrentEncounterKey`):
+  in 0x1590000 unit 20 taking damage sets `dword_C421EC = 1`, unit 23 clears it, and while it is set
+  unit 21 cannot go below 1 HP (the amount becomes hp - 1 when it is >= hp, signed). `dword_C421EC` is
+  1 in the exe image and nothing resets it, so it lives as long as the process. In 0x200001 unit 20
+  cannot go below 1 HP. The number (`FFX_Btl_ShowFloatingNumber`, a6 bit 0) shows the cut amount and
+  comes before the KillAllHp debug byte, which spares chr ids (`+0x004`) 1..7 everything, the normal
+  damage too, and takes 99999 off anyone else. After the damage, in 0x2090000 a unit with max HP
+  24000 or 48000 at 0 HP on the first action of a command (byte 0x112CA15 == 1) sets
+  `dword_11334C4`, which `FFX_Btl_ExecCommand` 0x79263C reads to stop applying the command (it clears
+  it at 0x7926E8). [V]
+- `FFX_Btl_ShowFloatingNumber` 0x79FA00 is not only a visual: style & 0x7F == 1 sets bytes 0x112C9D3
+  and 0x112C9D4, style 2 sets 0x112C9D4, and every style sets 0x112C9D5. The battle end phase 2 waits
+  on `HIBYTE(word_112C9D4)` (BATTLE_START_AND_END.md). [V] for the writes, which steps wait on each is
+  not all traced.
+- **`FFX_Btl_OnUnitDefeated` 0x78C740**, in order: cause 2 for Eject, else 1 for HP <= 0. Nothing
+  when `+0x10` is clear, the cause is 0 or the unit is KO. `+0x702` cause, `+0x700` = `+0x701` or 1
+  for an Eject, `+0xDEE` killer, the killer's `+0x6DD = 0`, `+0xDCF` when left and petrified. The save
+  block half (BATTLE_START_AND_END.md), with the overkill banner `ShowFloatingNumber(v, 5, -1, -1, 0, 0,
+  129)` at 0x78C885. Status 2 is read at 0x78C89E, then `+0xDCC = 1`, `FFX_Btl_ReleaseProvokeBy`
+  0x78D4E0, the Threaten release, `FFX_Btl_ClearUnitStatus(v, 0)` 0x79A190 (status 1, counters,
+  status 2 and the six stacks to 0, then `FFX_Btl_SetHpMpDoubling(v, 0)` 0x78D270), a summon unit's
+  overdrive to 0, status-1 |= 1, the queued command cut when `+0x6D0`, both queues emptied for the
+  victim, `+0xDC8 = 0` when `+0x3F5`, `FFX_Btl_RunAiAndCommit(v, k, 4, 0, 1, 0)`, the payout when a3
+  is 0. For cause 1, `FFX_Btl_TryAutoLife` 0x7B2910: Auto-Life in the saved status 2 commits 0x311F
+  at priority 64 through `FFX_Btl_CommitCommandOnTarget` 0x7B2740, otherwise `+0x5CA = 0` and
+  `FFX_Btl_TryAutoPhoenix` 0x7B27B0. Then `FFX_Btl_ChargeOverdriveOnKill` 0x7B0F80,
+  `FFX_Btl_StartDefeatSequence` 0x78DC30 (0 unless KO and settled, and it can start event 57), the pose, and
+  when that gave non zero the booster auto battle cancel for units 8..14 with `+0x591 == 17`, and for
+  15..17 with 17 when all three of 15, 16, 17 are at 0 HP. Returns the defeat sequence's result. [V]
+- `FFX_Btl_UpdateHpBandAndPose` 0x78D7F0 can store `+0x63D = 3`: band 3 (HP <= 0) on a KO unit
+  that `FFX_Btl_IsUnitSettled` 0x78C4C0 calls settled. The 0..2 range in ffx_types.h was short. [V]
+- **The reaction pick**, `FFX_Btl_PickReaction` 0x78C270, from `FFX_Btl_ComputeEffectForTarget`
+  (0x78E831 normal, 0x78EC40 the Nul path with zeros for the defence, Armored and status arguments).
+  No draw, no call through a pointer. Its `FFX_Btl_GetUnitMaxHp` 0x79ADF0 / `FFX_Btl_GetUnitMaxMp`
+  0x79AE70 call has its result dropped. With no status changed (tally word 4 zero) a refused roll
+  (word 6) counts into var_7C, else an immunity (word 5) into var_80. HP or MP taken: 5, or the
+  target's own reaction from `+0x447` when Armored cut the hit or the defence the formula used was 100
+  or more (magic defence for class 2): 3 for class 2 with bit 0x02 and no Mental Break staged, 4 for
+  class 1 with bit 0x01 and no Armor Break staged. A critical makes it 5 for the own reaction, 6
+  otherwise. Nothing taken: class 1 with an HP or MP part bit gives 4 or 5 by `+0x447` bit 0x01,
+  then tally A word 1 gives 8, A2 11, B2 12, B3 2, a heal 2 from another unit not asleep (else 0),
+  a part bit 3 for class 2 with bit 0x02 (else 0), a CTB amount 0, B1 7 from another unit not asleep,
+  A0 9, B0 10, else 0. [V]
 
 ### 2.5 Which statuses change the CTB
 
@@ -755,6 +850,21 @@ pass a3 = 0, the test at 0x78C935 then reaches the call at 0x78C952, and PayKill
 is the record pointer at 0x7990DA. A monster self kill pays its full record. A party self kill banks
 0 AP and 0 gil but still draws stream 10 three times (0x799282 twice, 0x79936B). A normal hit's
 `FFX_Btl_ApplyPendingHits` passes a3 = 1 and does not pay there.
+
+Census additions from the Project Zanarkand battle loop port (2026-10-29, PROGRESS 13.1, 13.3 and 13.5,
+checked in IDA and against an independent model over the install):
+
+- Rows 2 to 5 run in this order and nothing else in the battle start draws on stream 1 or 20..35. The
+  bsil03_00 start (monsters 0x1044 and 0x1045, no shared file, so row 3 draws nothing) with SeedAll(1, 2)
+  draws 1, 20..27, 27 x 10, 28..35 on those streams, the model and the port agree. The battle field
+  scripts (event 24), the monster script boot and events 117, 118 and 124 draw on stream 2 only in
+  that run.
+- Row 4's summon test is `ply_rom.bin` row byte 16 bit 0x04, which `FFX_Btl_LoadUnitParams` copies to
+  `+0x590` for units 0..17 at phase 7 (`FFX_Btl_SetupUnitRoster`), long before row 4 at the last monster
+  file completion. In the shipped tables slots 8..17 all carry it, so slots 7..17 draw on 27 as the row says.
+- `FFX_Btl_CtbTick`, `FFX_Btl_SendMenu` up to the turn offer, `sub_791760`, `sub_7A2690`, `sub_7AF2B0`
+  and 0x7B13C0 (proposed `FFX_Btl_ChargeTurnOverdriveModes`, see section 6) draw nothing. The turn
+  offer's own draws are the forced target picks (streams 4 and 5) and Yojimbo's row 6.
 
 Two lockstep consequences:
 
@@ -835,7 +945,7 @@ RNG, it appends a name to a small per-kind table.
 | 0x7AF770 | sub_7AF770 | `FFX_Btl_RegenPendingKind` | 2 zombie regen, 1 regen, 0 none |
 | 0x7AFAB0 | sub_7AFAB0 | `FFX_Btl_ApplyPoisonDamage` | `maxHP * +0x5BA / 100` |
 | 0x799CD0 | sub_799CD0 | `FFX_Btl_StepDoomCountdown` | `+0x5C8` countdown, commits 0x3120 |
-| 0x78E410 | sub_78E410 | `FFX_Btl_ReleaseThreatenAtTurnStart` | clears the link bit at turn start |
+| 0x78E410 | sub_78E410 | `FFX_Btl_ReleaseThreaten` | releases a held Threaten link, at turn start and on a defeat (2026-10-29, was proposed as `..AtTurnStart`) |
 | 0x78E460 | sub_78E460 | `FFX_Btl_UpdateThreatenLink` | sets or releases `+0x5C5` / `+0x5C6` both ways |
 | 0x79B290 | sub_79B290 | `FFX_Btl_ApplyAutoStatuses` | permanent masks, counters to 0xFF, saves the old |
 | 0x79B1A0 | sub_79B1A0 | `FFX_Btl_RestoreAutoStatuses` | the inverse |
@@ -853,6 +963,15 @@ RNG, it appends a name to a small per-kind table.
 | 0x112A923 | byte_112A923 | `g_ffxBtlForcedAdvantage` | 0xFF none, `Btl 125` case 25 |
 | 0x112A8E4 | (word_112A8E3+1) | `g_ffxBtlScriptHold` | `Btl 060` = 2, `Btl 151` = 1, `Btl 061` = 0, closes the CTB gate [I] name |
 | 0xC42464 | unk_C42464 | `g_ffxBtlCounterStatusInfo` | 13 x 4 bytes, +3 the tick flags |
+| 0x7B13C0 | FFX_Btl_PlayTurnStartVoice | `FFX_Btl_ChargeTurnOverdriveModes` | added 2026-10-29: misnamed, it plays no voice. For a party unit 0..6 it bumps overdrive mode counters 13, 15 and 16 (`FFX_Btl_BumpOverdriveModeCounter`) and adds gauge for the unit's own mode. `FFX_Btl_CtbTick` calls it after a push. tools/apply_battle_loop_names.py |
+| 0x7AF2B0 | sub_7AF2B0 | `FFX_Btl_AnyRegenReactionBusy` | added 2026-10-29: a unit on the field reacting (+0x433) with a Regen count, into 0x112C9EA, one of the CTB gate bytes |
+
+Correction 2026-10-29 (the overdrive port, PROGRESS 13.9) to the 0x7B13C0 row: it bumps four mode
+counters, not three. After Ally (13, gain 3), Daredevil (15, 5) in HP band 1 or worse and Loner (16, 16)
+with no other unit 0..17 standing on the field taking turns, it bumps Sufferer (14, 16) when status 1 has
+Zombie or Poison (0x0A) or Confuse (0x100), a Sleep, Silence, Darkness or Slow count (+0x608, +0x609,
++0x60A, +0x614) is set, or status 2 has Doom (0x4000) (0x7B14B4). It returns 1 plus one per extra mode. Ported as `ChargeTurnOverdriveModes` in
+Project Zanarkand's `ffx/btl/Overdrive.cpp`, reached through `OverdriveCtbHooks`.
 
 ---
 
@@ -886,9 +1005,17 @@ engine port.
 - **The recorded battle** for 1.11.7. Capture list in section 4.
 - `+0xDE8` at battle start for a unit whose first turn comes straight from the normalisation (its
   counter was already 0, so the tick never reset the rank). If that turn performs no action the
-  delay uses whatever the byte held, 0 behaving as rank 1.
-- The summon flag on aeon slots 8..17 at battle start (stream aliasing, 3.1).
+  delay uses whatever the byte held, 0 behaving as rank 1. Answered 2026-10-29 (the battle loop
+  port): it is 0. `FFX_Btl_AllocActorArrays` 0x793530 zeroes every unit in `FFX_Btl_BeginBattle`,
+  `FFX_Btl_LoadUnitParams` only clears 0x540..0x72B and nothing between writes +0xDE8, so the first
+  turn of such a unit delays as rank 1 unless its action sets a rank.
+- The summon flag on aeon slots 8..17 at battle start (stream aliasing, 3.1). Answered 2026-10-29:
+  `ply_rom.bin` row byte 16 bit 0x04 through `FFX_Btl_LoadUnitParams`, set before the ICV draws (3.2).
+- `FFX_Btl_BeginBattle`'s word write of 0 at `g_ffxBtlCmdQueueCount` 0x112BDE1 (0x78120D) also zeroes
+  `g_ffxBtlCtbSubTick` 0x112BDE2, so the sub tick starts at 0 every battle (2026-10-29).
 - What post-action kind 8 is (which command sets record +6 = 8).
 - Status table flag bits 0x10..0x80, and status-2 bits 0x0010 and 0x8000.
 - Whether shipped scripts that set the forced advantage (`Btl 125` case 25) always reset it.
-- `sub_7842F0`'s purpose (`+0x424`), only its draws matter here.
+- `sub_7842F0`'s purpose (`+0x424`), only its draws matter here. 2026-10-29: proposed
+  `FFX_Btl_RollMonsterGroupOffsets`, the values are 8 * i + (draw & 3) shuffled over the members of a
+  shared file group. The reader of `+0x424` is still not traced.

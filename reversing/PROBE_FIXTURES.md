@@ -3,8 +3,10 @@
 The probe plugin, `loader/plugins/probe` (`AlBhedProbe.dll`), records what the original `FFX.exe` does per
 step so the recreation's unit tests can be fed the original's inputs and checked against its outputs. It
 serves Project Zanarkand PROGRESS 18.1 (the oracle harness) and the done-whens of 3.4.3, 6.3.1, 10.4 and
-10.5. Written 2026-10-13, the joints recipe added the same day. The plugin has been compile checked, it has
-NOT been run in game yet.
+10.5. Written 2026-10-13, the joints recipe added the same day. First run in game 2026-10-29: recording on
+from boot (`probe.capture=1`), pacing, camera and motion, ended by quitting the game. All three files read
+back whole against the known build, no lost records by `probe_fixture.py --check`, and the plugin ran next
+to Pilgrimage Together and the cheats plugin with every hook installed. Joints has still not been run.
 
 The C++ side of every layout below is `loader/plugins/probe/capture/FixtureFormat.h`, with static_asserts
 on each size and offset. The reader is `projectzanarkand/tools/probe_fixture.py`, which checks every record
@@ -33,8 +35,8 @@ recipe), `CHARACTER_MOTION.md` section 10.4 (the motion recipe) and section 11.1
 
 | Kind | Name | Hooked | Records | Consumer |
 |---|---|---|---|---|
-| 1 | pacing | `FFX_StepPacing 0x821E80`, entry and return | one per call | `tests/engine/StepPacingTest.cpp`, PROGRESS 3.4.3 |
-| 2 | camera | `FFX_Came_ActivateScreen 0x7BC110`, entry and return | one per call, about 3 per step | `tests/engine/CameraTest.cpp`, PROGRESS 6.3.1 |
+| 1 | pacing | `FFX_StepPacing 0x821E80`, entry and return | one per call | `tests/engine/StepPacingReplayTest.cpp`, PROGRESS 3.4.3 |
+| 2 | camera | `FFX_Came_ActivateScreen 0x7BC110`, entry and return | one per call, 9 per step (section 3) | `tests/engine/CameraReplayTest.cpp`, PROGRESS 6.3.1 |
 | 3 | motion | `FFX_Ch_UpdateMotionAll 0x832E10`, entry and return | one per in use CHR per side | `tests/engine/MotionTest.cpp`, PROGRESS 10.5 |
 | 4 | joints | `FFX_Mot_AdvanceFrame 0x838C90` at its call site, entry and return, plus three calls inside it | one per chosen CHR per side | the 10.4 playback tests, PROGRESS 10.4 |
 
@@ -141,12 +143,25 @@ Feed `dt` and the entry state into `zan::app::StepPacing::Step` in seq order, wi
 `exit.frac60`, `exit.frac30` and `exit.clock60Hz` bit for bit. Mode 1 needs the track fields and is
 wall clock driven, so a mode 1 test replays the recorded track rather than a clock.
 
+Chaining one call's exit into the next call's entry needs FFX_MainStep's catch-up decision in between
+(pendingSteps 0 when it is 1 or less, else one less) and three things the engine writes between calls:
+pendingSteps lowered by a menu step that skips pacing or by the resets at `0x820BFB` and `0x820EBA`,
+`g_ffxTimingTrackPauseUsPending` written by FFEscMenu's destructor (`0x6903D2`), and
+`g_ffxTimingTrackStartUs` moved on by `FFX_Cutscene_StepPauseOverlay` (`0x8AB301`), which happens in mode 0
+too and is zeroed again by the next LoadTimingTrack. Those are the only writers of the pacing globals
+outside FFX_StepPacing and FFX_StepPacing_LoadTimingTrack.
+
 ---
 
 ## 3. Camera, kind 2, 13572 bytes
 
-`FFX_Came_ActivateScreen 0x7BC110`, `int __cdecl (int screen)`, called three times per step from
-`FFX_MainStep` (`0x821189`, `0x82135E`, `0x821380`). Hooked through `ffx::HookActivateScreen`
+`FFX_Came_ActivateScreen 0x7BC110`, `int __cdecl (int screen)`, called 9 times per step from three call
+sites in `FFX_MainStep`. The screen walk runs twice (the loop at `0x82136E`): `0x821189` activates screen 0,
+then `0x82135E` activates 1, 2 and so on until one returns 1, which is index 3 because a disabled screen
+returns -1 and the walk goes on. Then `0x821380` activates `g_ffxMainScreenIndex` once more. With the main
+screen at 0 that is screen 0 three times and screens 1 to 3 twice each, and the 2026-10-29 recording has
+exactly that on every step. Each activate of an enabled screen steps its rect tweens and its two shake
+channels, so screen 0's shake advances three times a step. Hooked through `ffx::HookActivateScreen`
 (`src/ffx/CameraBuild.cpp`). Reserved on entry, committed at return. The recipe is `CAMERA_BUILD.md`
 section 10.
 
@@ -188,7 +203,9 @@ Flags: 0x01 globals, 0x02 RNG, 0x04 matrices, 0x08 the screen and slot blocks.
 
 The matrices are taken on entry as well as at return because the override and frozen paths can leave
 one or both untouched, and a recreation has to start from what was there. Slots are only taken on entry
-because ActivateScreen reads them and does not write them.
+because ActivateScreen reads them and does not write them. The screens do get one write besides the
+rects and shake: when slot `+0xCA8` is set, `0x7BC65B` copies slot `+0xCAC..+0xCB7` (the depth of field
+switch and two depths) into screen `+0xD0..+0xDB` and pushes them to the gfx side when they changed.
 
 What 6.3.1 does with it: restore the screens, slots, stream 9 and the globals from the entry side into
 the recreation, run `ActivateScreen(screen)` and compare `viewExit`, `projExit`, `screensExit` and
@@ -402,7 +419,9 @@ capture started between steps. The stop leaves `probe.capture` at 1 in the file 
 save of the file or the hotkey starts a fresh session, and the next boot records from the start.
 
 The log is `<game>\AlBhedWorkshop\albhed_probe.log`. Each close logs the record, drop and write error
-counts.
+counts. A capture that ends with the game's exit gets no close line. The files are written whole from
+DllMain at process exit, with no log line, so the log stops at "session 0 started". Use
+`probe_fixture.py --check` on the session's files instead, see section 7.
 
 ---
 
@@ -419,7 +438,12 @@ counts.
   read inside `__try`, the camera slot and ATEL context are range checked against module memory, and
   the rebasing runs on the copy in the writer's buffer.
 - With the budget spent, records are dropped and counted. A dropped record is not written at all, so seq
-  never has a gap. Compare the log's drop count to zero before trusting a file for a sequence test.
+  never has a gap. Compare the log's drop count to zero before trusting a file for a sequence test. When
+  there is no close line (the capture ended with the game), `python -I tools/probe_fixture.py FILES --check`
+  looks across the session's files: pacing ordinals without a gap, every motion call with a full side per
+  CHR in use, and camera and motion covering the same engine steps, since the two are written apart and a
+  lost chunk in one leaves steps the other still has. The first run had 3 engine step numbers missing from
+  both camera and motion, which is the engine skipping both functions on those steps, not a loss.
 
 ---
 
@@ -445,6 +469,16 @@ counts.
 - Joints: the composer answers say what the queries returned, not which composer ran. The scene
   overrides (368, 285, 80, 311, 100, 60) and the 0x870, 0x871 and `m_flags3` bit 2 checks are applied
   around them, see `CHARACTER_MOTION.md` 11.7. The head and CHR bytes carry every input to that.
+- Motion, found 2026-10-29 on the first recording: the return copy races the render job. Pass 4 of
+  `FFX_Ch_UpdateMotionAll` posts `FFX_Ch_UpdateRenderJob 0x833530` through `FFX_Ch_DispatchUpdateJob` at
+  0x83332D and 0x833374, before its `retn` at 0x83338F, so a worker can be writing the CHR while the hook
+  copies it. The fields the job writes can show either value in a phase 1 record: the bone outputs of
+  `FFX_Ch_UpdateBonePositions 0x8350F0` (+0x694..+0x6AC, `m_bodyHeight` +0x510, `m_feetDepth` +0x514),
+  `m_flags2` bit 0 (cleared at 0x83358A after `FFX_Ch_ShadowRegistrySetBit`), `m_flags1` 0x200 (set to "this
+  is the controlled CHR" at 0x833637..0x83365F) and the shade coefficient target and mode (`push 3` at
+  0x834280 into `FFX_Ch_SetShadeCoeff`). `tests/engine/MotionReplayTest.cpp` in Project Zanarkand
+  accepts those writes field by field and still compares everything else exactly. The next call's phase 0
+  copy is clean, the previous job is joined before the step goes on (`CHR_POOL.md` 5.2).
 - Raw pointers (chrArray, controlledChr, m_seqPC, m_anmHeader) are only meaningful against
   `exeModuleBase` and that run's heap. Compare them for null or equality, never by value across runs.
 

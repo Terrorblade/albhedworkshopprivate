@@ -204,6 +204,28 @@ forces the cursor onto Attack, B forges 0x40, C forges 0x2000, D forges 0x8000, 
 lockouts still apply, so an auto battle turn takes at least 0.45 s of wall clock. [V for the forges, I
 for the minimum]
 
+CORRECTION 2026-10-29, from the Project Zanarkand port (PROGRESS 13.11, every forge checked in the
+disassembly):
+
+- Root does not move the cursor "onto Attack". It zeroes `maybe_g_ffxBtlAutoBattleSubPageArmed
+  0x133D6E4`, forces the cursor to row 0 (`if cursor > 0`), runs
+  `FFX_BtlMenu_ClassifyCommand(owner, 0x3000)` only to decide whether to cancel Auto-Battle (a result
+  below 0 calls `FFX_Booster_CancelAutoBattleInBattle 0x7871F0`), then forges 0x20. The pick it confirms
+  is whatever sits on row 0 of the owner's root list. The classify in the confirm reads the id stored
+  from the cursor BEFORE the force, the push reads row 0. Both are row 0 at a fresh open.
+- Root forges 0x10 (the escape shortcut, `FFX_Btl_GetEscapeCommandId 0x78FB80`) instead when
+  `g_ffxBtlAutoBattleRetry 0x133D6EC` is 1. With an escape id of 0 it plays the refuse sound and falls
+  through to the row 0 confirm.
+- B (a List page, 0x89CDE0) forges 0x40, so a submenu on row 0 pops straight back to Root. It sets
+  0x133D6E4 to 1 first unless it is already 1 or the retry flag is 1.
+- The gil page (0x8A87D0) does not read the pressed half at all. Its confirm (0x20) and cancel (0x40)
+  are bits of the LOW byte of the repeat word `g_ffxMenuPadWord10`. Under Auto-Battle it overwrites that
+  local: Yojimbo (owner 14) gets amount 1 and 0x20, anyone else 0x40. The amount is clamped to the held
+  gil, and on the push the staged gil is floored to 1 for Yojimbo (0x8A898A), so Auto-Battle pays 1 gil
+  even with none held.
+- Nothing in the menu draws from the RNG, so what an Auto-Battle peer commits depends only on the unit
+  state, the lists and the retry flag. The wall clock only decides WHEN.
+
 ### 3.6 PushPage and ClassifyCommand
 
 `FFX_BtlMenu_PushPage 0x89A330`: [V]
@@ -227,6 +249,13 @@ The cursor memory is restored on push when the option is on. `FFX_BtlMenu_BuildT
 clears the target context at 0x133D0D0 and fills the candidate masks through 0x8985B0, 0x898490,
 0x898330, 0x8983F0 and 0x898640. [V]
 
+Added 2026-10-29: the root push (depth -1) still reads the target byte of "page -1", 0x133C862, which is
+0xF0 before `g_ffxBtlMenuPages` and not part of any page. It is uninitialized data and reads 0, so the
+push goes on. The five builders are named by `../tools/apply_summon_menu_names.py`:
+`FFX_BtlMenu_BuildCandidateMasks`, `FFX_BtlMenu_BuildTargetUnitMasks`, `FFX_BtlMenu_BuildTargetUnitFlags`,
+`FFX_BtlMenu_ApplyRowTargetFlags` and `FFX_BtlMenu_BuildTargetLists`. The unprotected mask is always
+forced to -1 by the row flags step, so protection never filters a menu target.
+
 ### 3.7 The target page
 
 `FFX_BtlMenu_PageProc_Target 0x89D390`: [V]
@@ -248,14 +277,16 @@ clears the target context at 0x133D0D0 and fills the candidate masks through 0x8
 
 - Mix (0x311E): mode 0x100, two items from one list, one target page with one candidate, the
   intersection mask. The first pick calls `FFX_SaveData_SetItemInUse 0x790790`, which writes
-  `g_ffxItemInUse 0x112C948`. [V]
+  `g_ffxItemInUse 0x112C948`. [V] (2026-10-29: a u16, the store at 0x790797 is `mov g_ffxItemInUse, ax`)
 - Doublecast (0x3029): mode 0x10000, two spells, two target pages, the second spell's cost is checked
   with the first spell's pending cost. [V]
 - `FFX_BtlMenu_PopPage` clears the mode when the popped page was opened by 0x311E or 0x3029. [V]
 - The gil pages (Spare Change, Bribe, Pay) are set up by `FFX_BtlMenu_Gil_Init 0x8A2030`: Spare Change
   passes a cap of 100000, the others -1 (no cap but the held gil). Left / Right picks a digit, Up / Down
   adds or subtracts a power of ten. Confirm stores the amount in `g_ffxBtlMenuStagedGil 0x23CC038` and
-  pushes. [V]
+  pushes. [V] (2026-10-29: the cap test is `cmp opener, 3024h` then `push 186A0h` at 0x8A0FEE..0x8A0FF9.
+  Left is bit 0x8000 of the repeat word, read as a sign test, and Right 0x2000. Confirm and cancel come
+  from the same word's low byte, see 3.5)
 
 ### 3.9 The hand-off
 
@@ -318,6 +349,14 @@ name offset is the u16 at row +0, strings at data + 96 * 320). [M]
 The per-actor lists are at `dword_2310CD8 + 1144 * actor`, read by `sub_785410` and built by
 `sub_79BB50`. Kind 0 at +0 (20 entries), 0xC at +40 (8), 0xD at +56 (8), 2 at +72 (24), 1 at +120 (24),
 3 at +168 (32), 0xE at +232 (32), 4 at +296 (24). [V]
+
+Added 2026-10-29: 7 at +344 (200) and 0xF at +744 (200) complete the block. `sub_785410` (now
+`FFX_Btl_BuildMenuList`) rebuilds six unit lists on every call: kind 5 summonable units (0x112C268, 10
+slots), 8 existing units (0x112C27C), 9 live allies, party order first (0x112C2BA), 18 kind 9 limited to
+AI property 215 (0x112C2F8), 10 the bench (0x112C336), 11 live enemies (0x112C376), and kinds 21 and 22
+one command, 0x3121 or 0x3122 (0x112C374). Kind 5 pads its list with 0xFF out to 31 entries from a 10
+slot buffer, so the pad runs over the first 21 entries of kind 8's list. Kind 8 is rebuilt before any
+read, so this is harmless, but a port with separate buffers must not "fix" the count kind 5 reports (10).
 
 ---
 
@@ -462,6 +501,11 @@ The whole menu is single slot (one stack, one staged record, one owner, one targ
 `../tools/apply_battle_menu_names.py`, 85 functions and 16 globals, no RENAMES. The rehearsal on a copy
 of the IDB: dry run 101 planned and 0 skipped, apply with comments renamed 101 and failed 0, longest
 comment 389 characters, second dry run planned 0.
+
+Added 2026-10-29: `../tools/apply_summon_menu_names.py` adds the menu lists, the target context
+globals, `g_ffxBtlUnitCommandBlocks 0x2310CD8`, `g_ffxBtlZeroAbilityRecord 0x1136008` (the zero row
+`FFX_Btl_GetAbilityRecord` hands back for class 0 and every class without a table) and the five target
+builders. Dry run on a copy only.
 
 ---
 

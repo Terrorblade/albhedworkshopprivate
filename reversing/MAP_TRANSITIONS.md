@@ -88,7 +88,7 @@ and to `FFX_Map_WarpToWithSavedFade 0x86FF40` (4). [V]
 
 | requester | VA | path | notes |
 |---|---|---|---|
-| Script doors, save points, airship, New Game, Load Game | `FFX_AtelSys_Core_017_resi 0x8581C0`, `_171_resi 0x858330`, `_267_WarpNoSavedFade 0x858460`, `_268_resi 0x858610` | `WarpToWithSavedFade(pop map, pop entry, 1 or 0)` | the four bodies are byte for byte the same apart from the third argument. 17 and 171 use the saved fade (`+0x11` style, `+0x12` frames), 267 and 268 use 0 or 30 frames. The title's Load Game is `core:267(-1, 0)`, the negative checkpoint form [V] |
+| Script doors, save points, airship, New Game, Load Game | `FFX_AtelSys_Core_017_resi 0x8581C0`, `_171_resi 0x858330`, `_267_WarpNoSavedFade 0x858460`, `_268_resi 0x858610` | `WarpToWithSavedFade(map, entry, 1 or 0)`, the entry popped first and the map second (corrected 2026-10-29, the first `FFX_Atel_PopInt` goes to ebx, pushed as the entry) | the four bodies are byte for byte the same apart from the third argument. 17 and 171 use the saved fade (`+0x11` style, `+0x12` frames), 267 and 268 use 0 or 30 frames. The title's Load Game is `core:267(-1, 0)`, the negative checkpoint form [V] |
 | Game over | `FFX_Map_ReturnToTitle 0x86DA10` | 20 resets, arms ctx 0 bit 0x80 itself, `WarpTo(23, 0)` | reached from `maybe_FFX_Field_QueueBootTasks 0x861160` when the battle result is 1 and `g_ffxFieldBootMode 0x1326B48 & 0x200` is clear [V] |
 | Debug | `maybe_SG_DebugGui_MapJumpItemProc 0x854DF0`, `maybe_SG_DebugGui_MiscItemProc 0x854C60`, `FFX_AutoTest_JumpMap 0x908100` (arms with `FFX_Map_ArmWarpGate 0x8729C0` first), `FFX_Debug_ApplyViewerSave 0x8B55E0`, `maybe_FFX_Atel__debugScreen` (three direct `RequestChange` calls) | `WarpTo` or bare `RequestChange` | see `CHEAT_WARP.md` [V] |
 | Boot | `FFX_MainInit 0x820860` | `RequestChange(23, 0)` then `maybe_FFX_Scene_Init(save, 23)` directly | the title is loaded synchronously, before the first step [V] |
@@ -107,6 +107,10 @@ and to `FFX_Map_WarpToWithSavedFade 0x86FF40` (4). [V]
 6. ctx byte 0 `&= ~0x80` (the gate is consumed), ctx `+0x210 |= 2` (makes
    `FFX_Atel_StepFieldFrame` cancel encounters and `FFX_MainStep_CheckQuit` stand down).
 7. `sub_877450(-0.06666667f)`, which is `flt_1328310`, the screen fade rate.
+   Corrected 2026-10-29: not a screen fade. `flt_1328310` is the field sound source fade rate. Its only
+   reader `FFX_Snd_StepFieldSources 0x877380` adds it to `flt_132830C`, whose only reader 0x876950 scales
+   every positional sound source volume, so a warp fades the map's ambient sounds out over 15 refreshes.
+   Proposed `FFX_Snd_SetFieldSourceFadeRate` (`tools/apply_atel_step_names.py`). [V]
 8. Fade and delay. With the saved fade: `SetTransitionFrames(save +0x12)` then a fade request of
    that many frames through `sub_82CDC0 0x82CDC0`, style from save `+0x11` (0 and 1 select two
    styles). Without: `SetTransitionFrames(save +0x02 == 265 ? 30 : 0)`.
@@ -199,7 +203,7 @@ The big block only runs when context 0 is active (`sub_86AFC0(0)`, ctx byte 0 bi
 | 9 | `sub_86FC20(0,0,0)`, `sub_86CFF0` | `dword_1326B50 = dword_1326B54 = 0`, `g_ffxFieldBootMode 0x1326B48 = 0x10001` |
 | 10 | `sub_870280(-1,-1,-1,-1)` | `dword_1326CF0..CFC = -1` |
 | 11 | `sub_919D70(0)` | guide map off: `sub_91D560(ctx+4, 0)` clears bit 0 of `g_rcbgGuideFlags` when `g_ffxRcBgCtx 0x193BF80` (`RCBG.md`) |
-| 12 | `sub_8762F0` | 8 x 2 records at `unk_1328156` / `byte_1328172` cleared |
+| 12 | `sub_8762F0` | 8 x 2 records at `unk_1328156` / `byte_1328172` cleared. Corrected 2026-10-29: these are the pad vibration channel layers at `g_ffxPadVibrationChannels 0x1328150`, so the unload stops every rumble ramp (`tools/apply_atel_step_names.py`) |
 | 13 | `sub_8715E0(0)`, `FFX_Atel_SetMesWinBufSel(0)` | ctx `+68 = 0`, `g_ffxAtelMesWinBufSel = 0` |
 | 14 | `sub_886A60(138)`, `sub_886800(138)` | two sound calls with id 138 [I] |
 | 15 | | `dword_1327120 = 0` (the localised ftc alias) |
@@ -211,7 +215,7 @@ The big block only runs when context 0 is active (`sub_86AFC0(0)`, ctx byte 0 bi
 | 21 | `sub_86D4C0` | `dword_1326B64 = 0`, `dword_1326B5C = dword_1326B60 = -1` |
 | 22 | `_cfltcvt_init_92` (misnamed) | `dword_132FFA0..FDC` (16) = -1 |
 | 23 | `sub_875430` | **disposes every type 1 actor's weapon and armour child CHRs** (`actor+2804`, `+2808`) and its held CHR `actor+156` when `+156` was a child, through `FFX_Ch_DisposeIfLive` |
-| 24 | `sub_877330`, `sub_877460(0)`, `sub_877450(0)` | 16 records at `dword_1328318`, `flt_132830C = 0`, **`flt_1328310 = 0` (the fade rate)** |
+| 24 | `sub_877330`, `sub_877460(0)`, `sub_877450(0)` | 16 records at `dword_1328318`, `flt_132830C = 0`, **`flt_1328310 = 0` (the fade rate)**. Corrected 2026-10-29: the field sound source records, level and fade rate (`FFX_Snd_ResetFieldSources`, `SetFieldSourceFadeLevel`, `SetFieldSourceFadeRate`), not a screen fade |
 | 25 | `sub_886CB0`, `_cfltcvt_init_91` | `dword_132FF2C..54` sound group slots |
 | 26 | `sub_8661D0(1)` | sound command, then `sub_866520(ctx0 package, 1, -1)` |
 | 27 | `sub_86A1C0(0)` | `g_ffxEvSeSepBlock[0] = 0` |
@@ -225,7 +229,7 @@ Then, unconditionally:
 | 30 | `FFX_Tk_Free(g_ffxAtelActorPool)` | **actor pool `0x23CBD78` freed and zeroed** |
 | 31 | `FFX_Tk_Free(g_ffxEvPackageBase)` | **event package `0x23CBD70` freed and zeroed** |
 | 32 | `sub_887B50(0)` | `dword_132FF1C = 0` |
-| 33 | `sub_874130` | reads save `+0xE0` as a mode. For values other than 1, 2, 3 and 5 it frees `dword_1327110/14/18` and zeroes **save `+0xE0`** |
+| 33 | `sub_874130` | reads save `+0xE0` as a mode. For values other than 1, 2, 3 and 5 it frees `dword_1327110/14/18` and zeroes **save `+0xE0`**. Corrected 2026-10-29: 4 does not zero either, case 4 only calls `sub_76F090` and returns, so 1 to 5 all keep `+0xE0` and only the default case frees and zeroes |
 | 34 | `sub_909E60` -> `sub_909EA0` | **map teardown**: walkmesh off (`FFX_Map_ActivateWalkmesh(0)` twice), `sub_919A60`, rcBg main teardown, `g_ffxMapOutSection0 = 0`, `g_ffxMapOutSection10` released, the map out blob `dword_19138A4` freed, `sub_90CD90(&g_ffxMapWork)`, `dword_1934ED4/D8 = -1`, and when `dword_1934EC4 > 0`: `sub_640090` (gfx scene release) and `FFX_ChCache_FreeUnlockedEntries`, then `sub_6403B0` (gfx scene state reset, TextureAnimationManager cleared), `sub_6403C0`, `sub_645860`. Back in `sub_909E60`: `sub_90CEA0(&g_ffxMapWork)`, `dword_1934EDC/E0 = -1`, `FFX_Map_ActivateWalkmesh(0)` |
 | 35 | `j_FFX_Ch_EventjumpDispose` -> `FFX_Ch_EventjumpDispose 0x83B420` | **the CHR pool**, 2.3 |
 
@@ -534,7 +538,7 @@ unless marked]
 | magic PRX preloads | | reset | `sub_9DACA0(-1)` |
 | draw switches, motion update, alpha order, water, lights, player control mode, fixed yaw, keep speed | 0x12FB8FF, 0x12FBBB6, 0x13009D8, 0xC496D5, 0x12FBC34 and the rest in 3.2 step 5 | reset | `FFX_Ch_EventjumpInit` |
 | screen fade | fade manager +74656, +74660 | written | load hold begun in EventjumpInit, ended on the first gameplay step |
-| fade rate `flt_1328310`, `flt_132830C` | | reset 0 | Map_Unload. The warp's `-0.0667` lives until here |
+| fade rate `flt_1328310`, `flt_132830C` | | reset 0 | Map_Unload. The warp's `-0.0667` lives until here. Corrected 2026-10-29: the field sound source fade, not the screen, see 1.3 step 7 |
 | `g_ffxFieldBootMode` | 0x1326B48 | reset 0x10001 | |
 | FMV script state | `g_ffxFmvScriptRunning`, `g_ffxFmvScriptBlocking` | reset | only if a movie was blocking |
 | `FFXApplication+928` | | written 1, cleared by the indicator after it fades | presentation |

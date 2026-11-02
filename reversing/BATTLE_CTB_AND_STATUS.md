@@ -748,6 +748,10 @@ idb6 copy. Names are the ones `tools/apply_status_tick_names.py` proposes.
   and 0x112C9D4, style 2 sets 0x112C9D4, and every style sets 0x112C9D5. The battle end phase 2 waits
   on `HIBYTE(word_112C9D4)` (BATTLE_START_AND_END.md). [V] for the writes, which steps wait on each is
   not all traced.
+  2026-11-01: the three bytes are recounted every sub-step by `sub_79F5E0` (from `FFX_Btl_MainStep` at
+  0x790D88) from the live digit records: style 1 counts into 0x112C9D3 and 0x112C9D4, style 2 into
+  0x112C9D4, every record into 0x112C9D5. A record lives 31 sub-steps, so each number holds its waits that
+  long. a5 is never read. BATTLE_MENU.md 3.12. [V]
 - **`FFX_Btl_OnUnitDefeated` 0x78C740**, in order: cause 2 for Eject, else 1 for HP <= 0. Nothing
   when `+0x10` is clear, the cause is 0 or the unit is KO. `+0x702` cause, `+0x700` = `+0x701` or 1
   for an Eject, `+0xDEE` killer, the killer's `+0x6DD = 0`, `+0xDCF` when left and petrified. The save
@@ -763,6 +767,17 @@ idb6 copy. Names are the ones `tools/apply_status_tick_names.py` proposes.
   `FFX_Btl_StartDefeatSequence` 0x78DC30 (0 unless KO and settled, and it can start event 57), the pose, and
   when that gave non zero the booster auto battle cancel for units 8..14 with `+0x591 == 17`, and for
   15..17 with 17 when all three of 15, 16, 17 are at 0 HP. Returns the defeat sequence's result. [V]
+  Correction 2026-11-01 (the 13.13 port, Project Zanarkand `src/ffx/btl/Defeat.cpp`): past its gate
+  `FFX_Btl_StartDefeatSequence` always returns 1 and does much more than event 57. In order: the boss kill
+  trophy (`FFX_Ach_CheckBossKill` of `sub_82A080`, the model number from the rom dev path), `+0x436` = 1,
+  the high byte of `word_112C9E2` = victim, `FFX_Btl_ReleaseHeldMotion` 0x788270, the bone 6 snap
+  `sub_78D680`, `sub_78DDC0` (`+0xDCC` = 2, `+0xF70` = y, battle event 63 through `FFX_BtlEv_FireEvent`,
+  word `+0x50E` = 0, flag100 vote 3 off, `+0x41C` = 0), `+0x438` = 0xFF, the CHR look-at off
+  (`sub_834F60(chr, 0)`). Then by `+0x449`, `+0xDCD`, `+0xDCE` and `+0xDD0` (0x78DCA3): release kind 1
+  finishes at once or runs event 57 when left, kind 6 starts the death effect and finishes, left and
+  petrified queues the unit (`sub_7A2780`) and runs event 58, left runs 57, a capture starts death effect 2
+  and runs 64, anything else starts the death effect of kind `+0x3F5` and runs event 8. Its second caller
+  is `FFX_Btl_StartDefeatSequences` 0x791760 from `FFX_Btl_MainStep`. No draw on its static tree.
 - `FFX_Btl_UpdateHpBandAndPose` 0x78D7F0 can store `+0x63D = 3`: band 3 (HP <= 0) on a KO unit
   that `FFX_Btl_IsUnitSettled` 0x78C4C0 calls settled. The 0..2 range in ffx_types.h was short. [V]
 - **The reaction pick**, `FFX_Btl_PickReaction` 0x78C270, from `FFX_Btl_ComputeEffectForTarget`

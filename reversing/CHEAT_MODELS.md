@@ -45,6 +45,8 @@ The seven categories, from `FFX_Ch_LetterToCategory 0x829D80` and its inverse
 | 5 | `f` | `obj` | objects | `0x5000` to `0x5FFF` |
 | 6 | `k` | `skl` | skeletons | `0x6000` to `0x6FFF` |
 
+Added 2026-10-31: an equipment entry's model word (+0x0C, the w_name row's +0x38 + 2 * character) is the CHR id the battle loads for the weapon and armour side records (actors 31 + u and 62 + u). Most are `w` ids, 0x3017 is a summon category id (taken to be the dolls Lulu holds, not checked on screen), and the weapons that bring a motion set of their own are listed at `g_ffxBtlWeaponMotionModels 0xC43984` (0x4033..0x4038 and 0x3017). BATTLE_ACTOR.md 1.2.
+
 Three things about the edges that a picker has to respect:
 
 - **Category 7 to 14 do not exist.** `FFX_Ch_CategoryToLetter` returns `'-'` and

@@ -25,6 +25,7 @@ namespace probe
 		volatile long joints;          // off by default, a joints record is about 66 KB
 		volatile long jointsChr;       // JointsFilterControlled, JointsFilterEvery, or an m_id to match
 		volatile long jointsMax;       // joints each record has room for, read when a capture starts
+		volatile long battle;          // the battle recipe, kinds 5 to 7, read when a capture starts
 		volatile long hotkey;          // a virtual key code that toggles capture, 0 for none
 		volatile long maxSteps;        // stop after this many pacing calls, 0 for no limit
 		volatile long budgetMegabytes; // memory one file may hold waiting for the disk

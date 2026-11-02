@@ -246,6 +246,37 @@ host 225 `sub_7FCE10`), 3 and 5 wait, 4 and 6 call `EffectSetReady(h, 1 or 0)`, 
 character and message window draw enables. `sub_80C490` and `sub_7FE6C0` are Oef2 opcodes that call
 `EffectAdvanceState`, and Yanagi's host 437 `sub_925440` calls it when its program ends. [V]
 
+Correction 2026-11-01 (the 13.13 defeat sequence port): `FFX_Btl_EffectAdvanceState` switches on byte 1 of
+its handle, the handle kind of `FFX_Magic_PackEffectHandle` 0x788DF0, not only on the unit's state. Kind 2 is
+the 5 to 6 above. Kinds 4 (0x788992) and 15 (0x788A1A) end a death effect that `sub_79E3D0` 0x79E3D0
+started on the battle effect set: while `+0x3F7` and `+0x436` are both set they clear them (0x788A43,
+0x788A4A), and kind 15 also takes one off byte 2 of `dword_112CA0A` (the dispatched queued defeats) and sets
+`+0xE17`. Kinds 7 and 8 count `+0xE12` and `+0xE13` down, 9 clears `+0xEA4` when it holds the handle, 10
+clears `dword_112C024`, 14 counts `g_ffxBtlFinishHold` down and 0x80 sets the global effect state 6. Every
+kind then clears the explode hold (the high byte of `g_ffxBtlExplodeActive`) when `dword_112A8F0` is the
+handle (0x788A51). `sub_80C490` is `FFX_Oef2_Op127_AdvanceBattleEffect` and `sub_7FE6C0` is reached from
+`FFX_Oef2_Op001_KillObject`. [V]
+
+Added 2026-11-01 (Project Zanarkand item 4, `src/engine/fx/EffectUnit.cpp` and `src/ffx/btl/BattleEffects.cpp`).
+How the battle's own effects start and end, read for the port [V unless marked]:
+- Every battle start of a program goes through `sub_7FC2E0` 0x7FC2E0(data, set, program, handle). With
+  `g_ffxSgDebugEnabled` 1 and no bits in word_2321580 it starts only the battle unit (`g_ffxBattleEffectUnit`,
+  which `sub_7FB250` 0x7FB250 sets from `sub_79E6A0`'s et_battle.bin, asset kind 13 row 7) or a set held in
+  dword_119FEA0 (4 slots, `sub_7FE570`) or dword_119FED0 (8 slots, `sub_7FE540`), through `sub_7FD7F0`, and
+  answers 1. Anything else, a null set included, is -1. sub_7FD7F0's own result is dropped.
+- `sub_79EB10` 0x79EB10(unit, set, kind, program, a5) takes the serial first (+0xE1E, or +0xE22 for kind 1,
+  0x79EB4A), then starts on the unit's +0x4C. A monster has no +0x4C, so its hit effect counts its serial and
+  starts nothing. `FFX_Btl_StartHitEffect` 0x79EBA0 is kind 8 and counts +0xE13 up on a start.
+  `FFX_Btl_StartCriticalFlash` 0x79E590 is program 54 of dword_112A95C on kind 12, which the advance ignores.
+- A party unit's +0x4C is the effect section of its wep_data: `sub_784000` 0x784000 (from
+  `FFX_Btl_LoadWeaponModel`'s callback `sub_783FC0`) takes the u32 at +8 of the file when +0x11 is set, +0x4C
+  is 0 and the u32 at +0 is above 2, then `sub_788B70` sets +0x35 and `sub_7FCB60` puts the set in the first
+  free slot of dword_119FEA0 and starts its program 0 on handle -1.
+- The death programs are game data, now walked in memory: et_battle 42 (kind 3, the plain death) ends 24
+  passes after its op 53 first sees +0x3F4, its op 56 shade thread takes the alpha from 1 to 0 over 8 of
+  those passes, and its particle thread holds the unit's busy byte (+0x3A, op 82) for up to 70 more steps.
+  None of 41 to 44 and 57 uses op 34, so a death effect never applies hits or draws a battle stream.
+
 The global effect runs the same machine on `byte_1133364` with fewer states: `sub_788D60` does 3 to 4
 and slot 0, the DLL does 4 to 5 to 6 through the same hosts, `sub_788C00` frees at 6. `sub_788B90`
 asserts "EFFECT SYNC ERROR" and forces 6 when a new global effect starts over a live one. [V]

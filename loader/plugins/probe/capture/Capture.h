@@ -40,6 +40,19 @@ namespace probe
 	// BeginRecord and EndRecord, and 0 when this session has no joints file.
 	DWORD JointCapacity();
 
+	// A peek at the recording flag, with no claim on the files. For a hook that stashes
+	// state on entry and records it on exit: the exit still has to pass BeginRecord.
+	bool Recording();
+
+	// The capture session the open files belong to. Step thread, between BeginRecord and
+	// EndRecord, so a recipe can reset its own per session numbering when it changes.
+	DWORD SessionIndex();
+
+	// The pacing hook notes the thread it runs on. The battle hooks use it to refuse a
+	// call from any other thread, because a record file has exactly one producer.
+	void NoteStepThread();
+	bool OnStepThread();
+
 	// The step bookkeeping every record's prefix is built from. Kept by the pacing hook
 	// whether or not a capture is running, so the first record of a capture already has
 	// the right ordinal.
@@ -82,15 +95,27 @@ namespace probe
 	bool InstallCameraRecipe();
 	bool InstallMotionRecipe();
 	bool InstallJointsRecipe();
+	bool InstallBattleRecipe();
+
+	// The battle recipe's per step snapshot, called by the pacing hook on every entry
+	// whether or not pacing itself is recorded.
+	void OnBattleStep(DWORD frameTick);
 
 	// The kind specific header extension each recipe writes after FileHeader.
 	DWORD CameraExtensionBytes(void* out, DWORD capacity);
 	DWORD MotionExtensionBytes(void* out, DWORD capacity);
 	DWORD JointsExtensionBytes(void* out, DWORD capacity, DWORD jointCapacity);
+	DWORD BattleExtensionBytes(void* out, DWORD capacity);
+	DWORD BattleEventExtensionBytes(void* out, DWORD capacity);
+	DWORD BattleDumpExtensionBytes(void* out, DWORD capacity);
 
 	// Checks the span table against the record size. Logged and false when they disagree,
 	// in which case motion recording stays off.
 	bool MotionSpansConsistent();
 	bool JointsSpansConsistent();
+
+	// The battle unit and global span tables against the record, and the module globals
+	// the recipe copies against the image. Control thread, it may call Readable.
+	bool BattleSpansConsistent();
 
 } // namespace probe

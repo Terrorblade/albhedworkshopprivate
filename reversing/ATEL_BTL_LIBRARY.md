@@ -153,7 +153,7 @@ The monster AI staging rows of MONSTER_AI.md (11, 90, 279), the property get and
 override (27), the per unit AI queue and list (55, 56, 241, 242), target mask edits (204, 205, 206, 255),
 ability record queries (26, 120), the hit log (122, 228), and the command cost and preview rows (134,
 214, 244, 245). btl:14 ApplyPendingHits is the one row that lands damage directly, called once from
-system_01. btl:59 seals an ability for a mask. The counter tests 224 and 225 read the issuer's m_bDF1.
+system_01. btl:59 seals an ability for a mask. The counter tests 224 and 225 read the issuer's m_bDF1 and write nothing.
 
 ### 4.2 Chance, Yojimbo and Magus (18 rows, 223 calls)
 
@@ -252,6 +252,12 @@ Through the hit and kill code:
   its hits come from the CHR clip's type 5 event or the finish flush, not from here. The decompiler shows
   the call with two arguments, the disassembly at 0x7A3021 pushes three (unit, the second pop, the first
   pop), and the handler reads only the first two.
+  Note 2026-11-01: the clip path calls it the same way, `FFX_Mot_RunEvents` case 5 (0x8343E1) pushes 0,
+  the event id and the CHR's `+0x18C`. Which hits draw stream 9: the hit event 0 lands them with
+  `FFX_Btl_ApplyPendingHits(unit, -5, 0)` (0x7B7784), flags 0, so never. The miss event 1 passes -3,
+  which has 0x20 set, but only for a pending miss (reaction 1 or 17), and row 11's draw wants reaction
+  5, 6 or 8. So in an ordinary attack exchange the only battle draws of stream 9 are the camera shakes.
+  [V for the pushes, the "ordinary exchange" reading is inferred]
 - **btl:24 and 171** set properties through `FFX_BtlAi_SetProperty 0x7B4B70`, which BATTLE_START_AND_END.md
   4.2 lists as an `OnUnitDefeated(a3 == 0)` caller, so a script that sets HP to 0 pays the kill.
 
@@ -433,6 +439,46 @@ set 0 of context 2. The wait rows 60, 63 and 151 do not wait for their event thr
 ends at once. btl:105 picks with unit 0 as self and draws stream 7. Rows 1, 141, 153, 160 and 179 have
 new names in tools/apply_party_field_ai_names.py.
 
+Correction 2026-11-01 (the weapon CHR port, Project Zanarkand `src/ffx/btl/BattleSession.cpp` WeaponChrs). btl:116
+does not leave the weapon at the bone's world position alone, it also takes the owner's rotation
+(`FFX_Ch_GetRotWrapped` on the owner, then `FFX_Ch_SetRotAndMoveDir`). btl:115, 291 and 293 first hide model
+part 1 of unit 6 when its chr id is 7 (`FFX_Btl_SetRikkuWeaponPartHidden` 0x795C00) and btl:116 shows it. The
+bone point is looked up in the owner's data. Details in BATTLE_ACTOR.md section 1.2, names in
+tools/apply_battle_weapon_names.py.
+
+Correction 2026-11-01 (the 13.13 defeat sequence port, Project Zanarkand `src/ffx/btl/Defeat.cpp`). btl:57
+is the defeat sequence's finish, not an action state reset. `sub_78CCA0` 0x78CCA0 (proposed
+`FFX_Btl_FinishDefeatSequence`) clears `+0x436` (dying) only when `+0x3F7` (a death effect started) is 0
+(0x78CCA6), then sets `+0x3F4` = 1 (0x78CCB9, the sequence is over), refreshes the status visuals and runs
+`sub_788E60` 0x788E60 (`+0x1F` = 0, `FFX_Ch_SetI408(chr, 0)`, `FFX_Ch_EndChrEffects`, only with a CHR).
+`FFX_Btl_StartDefeatSequence` 0x78DC30 calls it at 0x78DD65 and 0x78DDA0 for the motion release kinds 1 and
+6, and the event 8, 57, 58 and 64 scripts reach it through this row. With a death effect running, dying is
+cleared by the effect's end instead (`FFX_Btl_EffectAdvanceState` cases 4 and 15, 0x788A43). Proposed row
+name `FFX_AtelSys_Btl_057_FinishDefeatSequence_resi` in tools/apply_battle_defeat_names.py. btl:174 reads
+the high byte of `word_112C9E2`, which only `FFX_Btl_StartDefeatSequence` writes (the victim, 0x78DC7A).
+`sub_7A8F20` 0x7A8F20 zeroes ten dwords, `dword_11363C0` to `dword_11363E4`, where row 57 says a 9 entry list
+(whether the first dword is a count was not checked).
+
+Correction 2026-11-01 (Wakka's ball throw, Project Zanarkand `src/ffx/btl/UnitMotion.cpp`, `BattleEvents.cpp`
+and `BattleFieldSyscalls.cpp`). btl:118 pops a turn side (int, +0x42A), a turn rate (float, +0x46C, 0 when
++0x41B is set) and the frames, in that order. It runs `sub_7B7C80` 0x7B7C80 (the start position into +0x390
+and `FFX_Btl_QueryCameraTargetMean(13, +0xDC0, 16, dword_1136AC4)`), writes the frames to +0x45A and 0 to
++0x452, builds path 2 with `FFX_Btl_BuildArcPath` 0x7B78C0, calls `FFX_Btl_StartPathMove(2, ..)` 0x7AB010 and
+then sets +0x452 to 1 (0x7A5770). The path is 11 points (2 + 7 + 2) for +0x420 (AI property 91) 0..3 and none
+for anything else, read signed at 0x7B7935, and StartPathMove starts nothing on a path with no points. Modes 2
+and 3 fly back to bone 11 of the primary unit, and with fewer than 8 frames left set +0x420 to 3 (0x7B7C53).
+`FFX_Btl_StepUnitMove` rebuilds path 2 every step while the word +0x454 is 2 (0x7AA86B), so that write lands
+mid flight. Wakka's script (system_01 worker 42) waits on the ball's property 91 reaching 3, so his catch can
+start before the ball lands. btl:110's poll is `FFX_AtelSys_Btl_StartedEventPoll` as for rows 60, 63 and 151,
+which ends at once, so the row does not wait despite its name. Its start is `sub_7A0720` per unit (proposed
+`FFX_BtlEv_StartUnitAltEvent`): the requests (2, 1, unit + 79), (2, 1, 77 + enemy), (2, 0, unit + 79), (2, 0,
+77 + enemy) started from slot unit + 79 with flags 1, and nothing is written on the unit. In system_01 slot 77
+kinds 9 and 10 run worker 4 entries 3 and 2, which draw stream 2 (Core 169) and stream 14 (came:128) on some
+of their paths, so the party's attack scripts reach those draws through this row. btl:119 is `sub_7A9A40`
+0x7A9A40 (proposed `FFX_Btl_GetDistanceToMoveTarget`) of the unit the selector names, fl(d / 20 + 4)
+truncated, at most 20, 4 for no unit. btl:43 calls `FFX_Mot_IsRequestActive` 0x8392C0. Names in
+tools/apply_battle_small_names.py.
+
 Columns: btl index, call sites, files, src (e event packages, m monster AI, b battle field files, s
 system_01), args in push order (the last is the top of the stack), result, blk (yes waits in a poll),
 name (the proposed name per slot, `kept` for a slot that keeps its current name, `dead` for an unused
@@ -450,7 +496,7 @@ row), meaning, lockstep, mark.
 | 7 | 2188 | 129 | mbs | motion:int | int frames << 8 / speed | no | `FFX_AtelSys_Btl_007_PlayMotion_resi` | sub_7A8FC0(.., 0): maps the motion kind through sub_7A8C80 (the unit's form bytes +0x408/+0x409, Magic 434 and 610 special case), FFX_Mot_SetByModeIndex, blend frames unless bit 0x8000. Returns the length scaled by the motion speed, 1 when nothing played |  | V |
 | 8 | 1444 | 125 | mbs |  | none | yes | `FFX_AtelSys_Btl_008_WaitMotion_poll` | poll only. 0 while self m_b3F3 is set, 5 with no unit or no CHR, else sub_7A8C50: 0 while the CHR motion request (+0x736 m_motionRequestActive, read by the misnamed FFX_Mot_IsFinished) is active and BTLUNIT +0x434 is clear, 5 otherwise |  | V |
 | 9 | 128 | 103 | ms | on:int | int 0 | no | `FFX_AtelSys_Btl_009_SetFloating_resi` | FFX_Btl_SetUnitGroundMode(self, on ? 0 : 1) |  | V |
-| 10 | 101 | 67 | ms | mode:int, base:float | int 0 | no | `FFX_AtelSys_Btl_010_SetYOffset_resi` | self m_yOffsetBase = base, m_b50C = mode, then sub_7AB300 recomputes m_yOffset (mode 0 centres on flt_112BDE8 minus half the height, mode 1 zero) |  | V |
+| 10 | 101 | 67 | ms | mode:int, base:float | int 0 | no | `FFX_AtelSys_Btl_010_SetYOffset_resi` | self m_yOffsetBase = base, m_b50C = mode, then sub_7AB300 recomputes m_yOffset (mode 0 centres on flt_112BDE8 minus half the height, mode 1 zero). flt_112BDE8 is -14.0, copied once from flt_B548DC by FFX_Btl_Init at 0x781B55, and the height is FFX_Btl_GetUnitHeight 0x7950F0, the CHR height times the unit's +0x3A4 scale (2026-10-31) |  | V |
 | 11 | 1622 | 298 | ms | sel:int, ability:int | int 1 staged, 0 refused | no | kept `FFX_AtelSys_Btl_011_AiAddCommand_resi` | Refuses when sub_7B24A0 says the unit cannot act or g_ffxBtlDbgMonInput is set, then FFX_BtlAi_AddCommandEntry(self, ability, mask, 0, -1) | global | V |
 | 12 | 407 | 73 | mbs | mode:int, speed:float, frames:int, i1:int, i2:int, x:float, y:float, z:float | int 0 | no | `FFX_AtelSys_Btl_012_StartMove_resi` | sub_7A9150(.., 0.0): pops eight values and calls FFX_Btl_StartUnitMove on self, nothing when frames <= 0 |  | V |
 | 13 | 44 | 34 | ms | targetKind:int, sectors:int | int sector | no | `FFX_AtelSys_Btl_013_GetTargetDirSector_resi` | resolves the move target point of kind targetKind (sub_7A9AC0) and returns sub_7A87F0, the direction to it quantised to one of sectors. A negative count with m_b44E set returns m_b44E < 0 |  | V |
@@ -465,9 +511,9 @@ row), meaning, lockstep, mark.
 | 22 | 566 | 146 | mbs | v:int | int 0 | no | `FFX_AtelSys_Btl_022_SetSelfByte3F2_resi` | unless self m_b3F3 is set it runs sub_7AB6C0 (clears +0x432, +0x43E, +0x404), then m_b3F2 = v |  | V |
 | 23 | 67 | 38 | m | id:int, param:int | int 0 | no | `FFX_AtelSys_Btl_023_PlayEffectA_resi` | sub_79EB10(self, id, 7, param, 1) registers a kind 7 effect, and on success ++self m_bE12, which btl:81 waits on |  | V |
 | 24 | 32859 | 952 | mbs | sel:int, prop:int, value:int | int | no | kept `FFX_AtelSys_Btl_024_SetProperty_resi` | FFX_BtlAi_SetProperty. Hard coded: on battle 0xD40000 with level hash 8207, prop 84 or 237 sets dword_11363B8. The heaviest row, 32,859 calls | rng 10-13*, local*, global | V |
-| 25 | 264 | 97 | mb |  | int ability | no | `FFX_AtelSys_Btl_025_AiGetCurrentCommand_resi` | FFX_BtlAi_GetCurrentEntryId(self): the ability of the issuer's current command, ids 12404..12407 mapped through the sub_7B19D0 slots |  | V |
-| 26 | 87 | 54 | m | ability:int, field:int | int | no | `FFX_AtelSys_Btl_026_GetAbilityField_resi` | sub_78CD30(self, ability, field), an ability record query, field 0..10 |  | V |
-| 27 | 5 | 2 | m | sel:int, ability:int | int 0 | no | `FFX_AtelSys_Btl_027_AiOverrideCurrentCommand_resi` | FFX_BtlAi_OverrideCurrentEntry(self, ability, mask): rewrites the issuer's current queued command |  | V |
+| 25 | 264 | 97 | mb |  | int ability | no | `FFX_AtelSys_Btl_025_AiGetCurrentCommand_resi` | FFX_BtlAi_GetCurrentEntryId(self): the ability of the issuer's current command, ids 12404..12407 mapped through the sub_7B19D0 slots. 0 unless the AI is running (g_ffxBtlScriptActorCtx != -1). It reads FFX_Btl_ResolveAbilityId's id over the ability then the sub id of actions[cursor] of the issuer's command or last command (issuer +0x0C), a class with no table skipped, and a slot (unk_112BE80, two words each) with a non zero word 1 replaces 0x3074..0x3077 (2026-10-31) |  | V |
+| 26 | 87 | 54 | m | ability:int, field:int | int | no | `FFX_AtelSys_Btl_026_GetAbilityField_resi` | sub_78CD30(self, ability, field), an ability record query, field 0..10. Pops field then ability. On the row from FFX_Btl_GetAbilityRecord (g_ffxBtlZeroAbilityRecord 0x1136008 for a class with no table): 0 the formula +0x28, 1 u16 +0x20 & 3, 2..4 bits 0, 1 and 2 of +0x23 (the bit, not 1), 5..9 bits 4..0 of the element +0x2D, 10 (u16 +0x1A >> 2) & 3, else 0. A row with dword +0x1C & 0x40000 takes the unit's +0x5C1 formula and ors its +0x5D9 element in (2026-10-31) |  | V |
+| 27 | 5 | 2 | m | sel:int, ability:int | int 0 | no | `FFX_AtelSys_Btl_027_AiOverrideCurrentCommand_resi` | FFX_BtlAi_OverrideCurrentEntry(self, ability, mask): rewrites the issuer's current queued command. Only while the AI runs and the issuer's m_bDF0 is not 3. actions[cursor] of FFX_Btl_CmdQueue_GetActorCmd 0x7B09E0(issuer +0x0C) becomes ability, sub id 0xFF, mask, the other words kept. Geneaux (m102) turns a magic command onto a tentacle with it (2026-10-31) |  | V |
 | 28 | 67 | 24 | m | mode:int | int 0 | no | `FFX_AtelSys_Btl_028_SetMoveArcMode_resi` | self m_b420 = mode, the 0..3 mode btl:118's timeline (sub_7B78C0) switches on |  | V |
 | 29 | 100 | 25 | m |  | int m_b420 | no | `FFX_AtelSys_Btl_029_GetMoveArcMode_resi` | self m_b420 |  | V |
 | 30 | 2726 | 818 | mbs | selA:int, selB:int | int count | no | `FFX_AtelSys_Btl_030_CountUnitsInBoth_resi` | units in both masks. Hard coded: with Magic 146 running, dword_12FB7E0 == 1 and a zero count on battles 0x235/0x236/0x238 it clears dword_12FB7E0 | global | V |
@@ -497,7 +543,7 @@ row), meaning, lockstep, mark.
 | 54 | 12 | 3 | ms | from:float, to:float, frames:int | int 0 | no | `FFX_AtelSys_Btl_054_FadeAlpha_resi` | sub_796550(self, from, to, frames, 1) |  | V |
 | 55 | 115 | 31 | mb | sel:int, ability:int | int count | no | `FFX_AtelSys_Btl_055_AiQueueCommand_resi` | sub_7AC840(self, ability, sel, 1): appends to m_queuedAiCommand (4 deep) of each unit and inserts into the per unit list at dword_2310CD8 |  | V |
 | 56 | 52 | 15 | mb | sel:int, ability:int | int count | no | `FFX_AtelSys_Btl_056_AiUnqueueCommand_resi` | sub_7ACB40: removes the ability from both lists |  | V |
-| 57 | 50 | 44 | ms |  | int 0 | no | `FFX_AtelSys_Btl_057_ResetActionState_resi` | sub_78CCA0 (+0x3F4 = 1, refresh status fx, sub_788E60) and sub_7A8F20, which clears the 9 entry once list btl:123 uses |  | V |
+| 57 | 50 | 44 | ms |  | int 0 | no | `FFX_AtelSys_Btl_057_ResetActionState_resi` | sub_78CCA0 (+0x3F4 = 1, refresh status fx, sub_788E60) and sub_7A8F20, which clears the 9 entry once list btl:123 uses. Corrected 2026-11-01: sub_78CCA0 is the defeat sequence's finish and also clears +0x436 when +0x3F7 is 0, see the correction above the table |  | V |
 | 58 | 1 | 1 | m | speed:int | int 0 | no | `FFX_AtelSys_Btl_058_SetMotionSpeed_resi` | self m_motionSpeed |  | V |
 | 59 | 1000 | 137 | mb | sel:int, id:int, on:int | int count | no | `FFX_AtelSys_Btl_059_SetAbilitySealed_resi` | sub_79B470 per unit: id 0x3NNN sets or clears its m_sealedAbilities bit, an id with no top nibble writes m_bDD4 of unit id |  | V |
 | 60 | 170 | 59 | mbs | event:int | int | yes | `FFX_AtelSys_Btl_060_FireHoldEventA_start`, `FFX_AtelSys_Btl_060_FireHoldEventA_poll` | start fires a slot 62/63 battle event through FFX_BtlEv_FireHoldEvent 0x7981E0 and sets the high byte of g_ffxBtlEndResult to 2 (the CTB hold, BATTLE_CTB_AND_STATUS.md), keeping it 2 only when the event started. The poll FFX_AtelSys_Btl_StartedEventPoll 0x7A8700 returns 4 * (work == 0) + 1, so it ends at once either way (corrected 2026-10-29, it does not wait for the thread) |  | V |
@@ -555,9 +601,9 @@ row), meaning, lockstep, mark.
 | 112 | 210 | 76 | b |  | int 0 | no | `FFX_AtelSys_Btl_112_SetMenuFlagOn_resi` | sub_89BC60(1): byte_C58EF4, read by FFX_BtlMenu_DrawRoot |  | V |
 | 113 | 680 | 79 | mb |  | int 0 | no | `FFX_AtelSys_Btl_113_SetMenuFlagOff_resi` | sub_89BC60(0) |  | V |
 | 114 | 832 | 76 | b | window:int, msg:int | int 0 | no | `FFX_AtelSys_Btl_114_ShowSubtitle_resi` | the btl:66 text with a fixed layout (sub_89B230, flags 0x2002). The voiced line pattern pairs it with 100 to 104, 169 and 222 | local | V |
-| 115 | 3 | 1 | s | side:int | int | no | `FFX_AtelSys_Btl_115_AttachWeapon_resi` | sub_793330(self, side): parents the side record CHR to its bone on self |  | V |
-| 116 | 2 | 1 | s | side:int | int | no | `FFX_AtelSys_Btl_116_DetachWeapon_resi` | sub_793F10: unparents it at the bone's world position |  | V |
-| 117 | 6 | 1 | s | sel:int, event:int, flag:int | int | yes | `FFX_AtelSys_Btl_117_RunWeaponEventAndWait_start`, `FFX_AtelSys_Btl_117_RunWeaponEventAndWait_poll` | btl:75 on each unit's weapon stand in unit |  | V |
+| 115 | 3 | 1 | s | side:int | int | no | `FFX_AtelSys_Btl_115_AttachWeapon_resi` | FFX_Btl_AttachWeapon 0x793330(self, side): parents the side record CHR to its bone on self, needs the side CHR, self's CHR and self +0x4B5, and clears +0x4B6 + side. Ported 2026-10-31 (Zanarkand btl/WeaponSyscalls.cpp) |  | V |
+| 116 | 2 | 1 | s | side:int | int | no | `FFX_AtelSys_Btl_116_DetachWeapon_resi` | FFX_Btl_DetachWeapon 0x793F10: unparents it at the bone's world position and sets self +0x4B6 + side. Ported 2026-10-31 |  | V |
+| 117 | 6 | 1 | s | sel:int, event:int, flag:int | int | yes | `FFX_AtelSys_Btl_117_RunWeaponEventAndWait_start`, `FFX_AtelSys_Btl_117_RunWeaponEventAndWait_poll` | btl:75 on each unit's weapon stand in unit. Ported 2026-10-31, the poll ends at once (4 * (work == 0) + 1) |  | V |
 | 118 | 3 | 1 | s | frames:int, yaw:float, flag:int | int 0 | no | `FFX_AtelSys_Btl_118_StartArcTimeline_resi` | records the start position, builds an 8 point path with sub_7B78C0 by m_b420 and starts it with sub_7AB010(2, ..) |  | V |
 | 119 | 12 | 11 | bs | sel:int, targetKind:int | int | no | `FFX_AtelSys_Btl_119_GetApproachFrames_resi` | min(distance / 20 + 4, 20) |  | V |
 | 120 | 19 | 6 | m | sel:int, ability:int, field:int | int | no | `FFX_AtelSys_Btl_120_GetAbilityFieldOf_resi` | btl:26 on another unit |  | V |
@@ -608,17 +654,17 @@ row), meaning, lockstep, mark.
 | 165 | 70 | 56 | mb | x:float, y:float, z:float | int 0 | no | `FFX_AtelSys_Btl_165_SetBtlPoint_resi` | qword_112A8D0 xyz, w 1.0, byte 1 of dword_112C9FC = 1 |  | V |
 | 166 | 7 | 7 | b | mode:int | int | no | `FFX_AtelSys_Btl_166_SetEscapeMode_resi` | g_ffxBtlEscapeMode 0x112C9FF: 0 roll, 1 never, 2 always (BATTLE_START_AND_END.md) |  | V |
 | 167 | 0 | 0 |  | sel:int, index:int | float | no | dead `FFX_AtelSys_Btl_167_GetMoveParamOf_resf` | sub_7B2C90: attack start distance, offset, back jump, the run speeds, weight, attack height |  | V |
-| 168 | 116 | 25 | m | sel:int, index:int, v:float | int 0 | no | `FFX_AtelSys_Btl_168_SetUnitFloatOf_resi` | FFX_BtlAi_SetUnitFloat on another unit |  | V |
+| 168 | 116 | 25 | m | sel:int, index:int, v:float | int 0 | no | `FFX_AtelSys_Btl_168_SetUnitFloatOf_resi` | FFX_BtlAi_SetUnitFloat on FFX_BtlAi_ResolveSelectorToUnit(sel), see 178 for the index map |  | V |
 | 169 | 836 | 76 | b | window:int | int | yes | `FFX_AtelSys_Btl_169_WaitMessageOrVoice_start`, `FFX_AtelSys_Btl_169_WaitMessageOrVoice_poll` | start clamps the window. The poll closes it on a confirm press, or by itself once the text phase is 3 and sub_8864B0 says no voice is busy | input, sound | V |
 | 170 | 1300 | 76 | ms | prop:int | int | no | kept `FFX_AtelSys_Btl_170_GetSelfProperty_resi` | GetProperty(self, prop, -13) |  | V |
 | 171 | 4536 | 298 | ms | prop:int, value:int | int | no | kept `FFX_AtelSys_Btl_171_SetSelfProperty_resi` | SetProperty(self, prop, -13, value) | rng 10-13*, local* | V |
 | 172 | 472 | 59 | ms | index:int | float | no | `FFX_AtelSys_Btl_172_GetMoveParam_resf` | btl:167 on self |  | V |
-| 173 | 1 | 1 | s |  | int | no | `FFX_AtelSys_Btl_173_AnyEquipFlag8_resi` | sub_7AD6E0: any equipment entry in use with flag 8 and without flag 2 |  | V |
+| 173 | 1 | 1 | s |  | int | no | `FFX_AtelSys_Btl_173_AnyEquipFlag8_resi` | FFX_Equip_AnyRowOneNameWeapon 0x7AD6E0: any equipment entry in use with flag 8 (name id 0x5001) and without flag 2 (the lock). Ported 2026-10-31 |  | V |
 | 174 | 4 | 3 | bs |  | int | no | `FFX_AtelSys_Btl_174_GetWordC9E2High_resi` | high byte of word_112C9E2 |  | V |
 | 175 | 2 | 1 | s |  | int | no | `FFX_AtelSys_Btl_175_HasFieldGroundSection_resi` | sub_7986A0: field monster section byte 0 set and btl:5 clear |  | V |
 | 176 | 150 | 140 | mbs | sel:int | int | no | `FFX_AtelSys_Btl_176_GetAttackFrames_resi` | the attack motion frame, scaled by the motion speed, plus the run up frames over the approach distance |  | V |
 | 177 | 15 | 3 | mb | v:int | int 0 | no | `FFX_AtelSys_Btl_177_DebugPrintInt2_resi` | pops one value into a stubbed print |  | V |
-| 178 | 2840 | 300 | ms | index:int, v:float | int 0 | no | `FFX_AtelSys_Btl_178_SetSelfFloat_resi` | FFX_BtlAi_SetUnitFloat(self, index, v) |  | V |
+| 178 | 2840 | 300 | ms | index:int, v:float | int 0 | no | `FFX_AtelSys_Btl_178_SetSelfFloat_resi` | FFX_BtlAi_SetUnitFloat(self, index, v). The indexes are not in dword order: 0 +0x4BC, 1 +0x4C0, 2 +0x4C8, 3 +0x4D4, 4 +0x4D8, 5 +0x4CC, 6 +0x4D0, 7 +0x4DC, 8 +0x4C4, 9 +0x4E4 (the collision radius, which also sets +0x44C and the CHR's radius). Nothing writes +0x4E0, and there is no bound check on the index (2026-10-31, from 0x7B4A90) |  | V |
 | 179 | 38 | 1 | s | v:int | int | no | `FFX_AtelSys_Btl_179_SetPendingVoice_resi` | FFX_Btl_SetPendingVoice 0x7B2B60: g_ffxBtlPendingVoice 0x112C8F0 = v, the voice FFX_Btl_PrepareVoice and FFX_Btl_StartVoice play. Named 2026-10-29 |  | V |
 | 180 | 1 | 1 | s |  | int 0 | no | `FFX_AtelSys_Btl_180_HideSideChr_resi` | m_bF65 = 8, sub_79EA90, side record CHR alpha 0 |  | V |
 | 181 | 36 | 32 | ms |  | int 0 | no | `FFX_AtelSys_Btl_181_ClearW400_resi` | self m_w400 = -1 |  | V |
@@ -664,7 +710,7 @@ row), meaning, lockstep, mark.
 | 221 | 0 | 0 |  | v:int | int | no | dead `FFX_AtelSys_Btl_221_SetDwordC8FC_resi` | dword_112C8FC, read by sub_792F20 |  | V |
 | 222 | 830 | 76 | b |  | int | no | `FFX_AtelSys_Btl_222_GetConfigBit9UnlessFfwd_resi` | FFX_Btl_GetOptionBit9UnlessFfwd: 0 while the booster battle fast forward is on, else bit 9 of the save battle config at 0x113079C. Every voiced line branches on it | booster | V |
 | 223 | 17 | 1 | s | battleId:int | int | no | `FFX_AtelSys_Btl_223_IsBattleScene_resi` | a battle is running and its scene word equals battleId >> 16 |  | V |
-| 224 | 94 | 86 | m |  | int | no | `FFX_AtelSys_Btl_224_CanCounter_resi` | sub_7B24A0(self, 0, 0, 1) and the issuer's m_bDF1 clear |  | V |
+| 224 | 94 | 86 | m |  | int | no | `FFX_AtelSys_Btl_224_CanCounter_resi` | FFX_Btl_CanAct 0x7B24A0(self, 0, 0, 1) and the issuer's m_bDF1 == 0. A test only, it writes nothing (clarified 2026-10-31, the 13.8 replay) |  | V |
 | 225 | 0 | 0 |  |  | int | no | dead `FFX_AtelSys_Btl_225_IssuerCounterAllowed_resi` | the issuer's m_bDF1 clear |  | V |
 | 226 | 49 | 11 | mb | sel:int, v:int | int 0 | no | `FFX_AtelSys_Btl_226_SetTexAnim4_resi` | FFX_Ch_SetTexAnimPattern(chr, 4, v) |  | V |
 | 227 | 6 | 6 | b | size:int | int 0 | no | `FFX_AtelSys_Btl_227_AllocScriptBlock_resi` | allocates size bytes into dword_112BE98, keeps the first size in dword_112BE9C |  | V |
@@ -731,8 +777,8 @@ row), meaning, lockstep, mark.
 | 288 | 9 | 3 | bs | unused:int, msg:int | int 0 | no | `FFX_AtelSys_Btl_288_ShowSystemMessage_resi` | sub_79D090: message type 7 from the second table | local | V |
 | 289 | 0 | 0 |  | window:int, msg:int | int 0 | no | dead `FFX_AtelSys_Btl_289_ShowSubtitle2_resi` | btl:183 on the second table | local | V |
 | 290 | 0 | 0 |  | sel:int | int unit | no | dead `FFX_AtelSys_Btl_290_EnableHeadSwayPlain_resi` | btl:272 without the unit 5 hack | render | V |
-| 291 | 2 | 1 | s | side:int | int | no | `FFX_AtelSys_Btl_291_AttachWeaponUnit5_resi` | sub_793330(5, side) |  | V |
+| 291 | 2 | 1 | s | side:int | int | no | `FFX_AtelSys_Btl_291_AttachWeaponUnit5_resi` | FFX_Btl_AttachWeapon(5, side). Ported 2026-10-31 |  | V |
 | 292 | 38 | 1 | s | v:int | int v | no | `FFX_AtelSys_Btl_292_SetDwordC8F4_resi` | dword_112C250 = v, then sub_7B2B50 sets dword_112C8F4 when sub_784E40 |  | V |
-| 293 | 5 | 1 | s |  | int 0 | no | `FFX_AtelSys_Btl_293_AttachWeaponUnit4_resi` | sub_793330(4, 0) when self is unit 4 |  | V |
+| 293 | 5 | 1 | s |  | int 0 | no | `FFX_AtelSys_Btl_293_AttachWeaponUnit4_resi` | FFX_Btl_AttachWeapon(4, 0) when self is unit 4. Ported 2026-10-31 |  | V |
 | 294 | 23 | 18 | b | unit:int | int unit | no | `FFX_AtelSys_Btl_294_MarkUnitB3E_resi` | m_head.m_b3E = 1 and both side records +0x3E = 1 |  | V |
 | 295 | 1 | 1 | b | slot:int, v:int | int | no | `FFX_AtelSys_Btl_295_SetMonsterShowVote_resi` | sub_7969A0: the show vote of monster unit slot + 20 |  | V |

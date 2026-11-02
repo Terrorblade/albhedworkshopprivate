@@ -264,6 +264,13 @@ players walk different parts of one of those maps.
 | +0x3DCC | 128 | u8[128] | world flags, 1,024 bits | `FFX_SaveData_Test/SetWorldFlag3DCC`, `FFX_SaMenu_*WorldFlag*` | persistent |
 | +0x3E4C | 128 | | **unused** | the only accessor, 0x785260, has no callers | unused |
 
+Added 2026-10-31, from the Project Zanarkand item port (src/ffx/item/Inventory.cpp): the gil is used
+as a signed i32. `FFX_SaveData_SpendGil 0x7859A0` subtracts and then tests the sign of the wrapped
+difference (sub, js at 0x7859AE / 0x7859B1), and only a non negative result goes through `SetGil`,
+which clamps to 0..999999999. Every add of gil (results screen, chests, core:310, the sell confirm) is
+`SpendGil(-n)`. The primer mask's writer `sub_906B30` is `FFX_SaveData_LearnAlBhedPrimer`: 0..25 sets
+one bit (trophy 1), 255 sets all 26 and -1 clears them, and the full mask asks for trophy 28.
+
 ### 2.6 Inventory, roster, characters, +0x3ECC .. +0x68C0
 
 | off | size | type | field | notes | class |
@@ -291,12 +298,12 @@ As CHEAT_SAVEDATA.md 4.1, with the readers it was missing.
 |---|---|---|
 | 0x00 | 2 | name id, 0x5000 based |
 | 0x02 | 1 | in use |
-| 0x03 | 1 | flags |
+| 0x03 | 1 | flags. 0x02 the worn lock `FFX_SaveData_LockEquippedGear 0x7AD5E0` toggles (the lists and Customize skip it), 0x04 Celestial (name 0x5000), 0x08 name 0x5001 (w_name row 1, weapon side), `& 0x0D` not for sale. Corrected 2026-10-31, CHEAT_SAVEDATA.md 4.1 |
 | 0x04 | 1 | for character |
 | 0x05 | 1 | kind |
 | 0x06 | 1 | owner |
 | 0x07 | 1 | **unused.** Copied with the entry, never read or written on its own. Zero in every real save |
-| 0x08 | 1 | read by `FFX_Btl_LoadCharRecordIntoActor 0x79C5F0` into actor +0x5C1 (0x79C863) |
+| 0x08 | 1 | read by `FFX_Btl_LoadCharRecordIntoActor 0x79C5F0` into actor +0x5C1 (0x79C863), the weapon's damage formula. The monster drop writes 0x08..0x0A from its reward record +46, +48, +47 |
 | 0x09 | 1 | same, into actor +0x5C7 (0x79C86D) |
 | 0x0A | 1 | same, both equipped entries added into actor +0x5D8 (0x79C877) |
 | 0x0B | 1 | ability slot count |
@@ -321,6 +328,28 @@ As CHEAT_SAVEDATA.md 3, with these settled:
 The generic record accessors `sub_8CECA0` and `sub_8CEE70` (offset table at 0xC5A608: +4, +8,
 +0x0C..+0x13, +0x24, +0x28, +0x2F..+0x36) and `sub_8C1490` (table 0xC5A790, +0x2F..+0x36) only reach
 fields already in the table.
+
+Added 2026-10-31, from the party port (Project Zanarkand src/ffx/party, a Python model of the
+disassembly, and 6 recorded battles whose 18 records rederive byte for byte from the sphere grid):
+
+| off | size | field | evidence |
+|---|---|---|---|
+| 0x14 | 4 | lifetime AP | `FFX_SaveData_AddAp 0x784610`, clamped 0..999,999,999 |
+| 0x18 | 4 | AP toward the next sphere level | AddAp spends it a level at a time, `FFX_SaveData_GetApTowardNext 0x7852B0` |
+| 0x2C | 1 | flags: 0x01 in party, 0x02 permanent, 0x04 slot locked, 0x10 selectable | GAME_STATE.md 1, corrected the same day |
+| 0x38 | 1 | selected overdrive mode | menu module 21 |
+| 0x39, 0x3A | 2 | overdrive gauge and its max | `FFX_Menu_GetCharOverdrive 0x8A9930`, `FFX_Menu_GetCharOverdriveMax 0x8A9950`, the battle commit |
+| 0x3B, 0x3C | 2 | sphere levels (0..99) and levels spent (0..101) | AddAp, `FFX_SaveData_SpendSphereLevels` |
+| 0x3D | 1 | the aeon recovery countdown | `FFX_Btl_CommitActorsToSave 0x785FC0` from unit +0x6D8, core:369 clears it |
+| 0x50 | 16 | u32[4] battle counters: battles, kills, downed, overdrive fills | CHEAT_SAVEDATA.md, the 2026-10-31 correction |
+
+Corrected 2026-10-31: `+0x3D58` and `+0x3D5B` are one u8[20] order, the three field slots then 17
+bench slots, 0xFF empty. `FFX_SaveData_SetCharInParty 0x7869B0` appends a character below 8 to the
+first empty bench slot, and `FFX_SaveData_SetPartyOrderSlot` searches the bench before the field and
+scrubs bench entries of 8 and up. "aeon order" is the battle's name for its copy
+(`g_ffxBattleAeonOrder 0x112C8A3`, written back by `FFX_Btl_CommitAeonOrderToSave 0x7860B0`). The
+party snapshot mask at `+0x24` has bits for characters 0..6 only, so a push and pop never restores
+Seymour (record 7).
 
 #### 2.6.3 Name record, 20 bytes
 

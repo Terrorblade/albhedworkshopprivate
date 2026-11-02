@@ -26,9 +26,11 @@ namespace probe
 		volatile LONG g_limitStop = 0;
 
 		// Written only while g_recording is 0 and nobody is inside.
-		RecordFile* g_files[KindCount] = { NULL, NULL, NULL, NULL, NULL };
-		DWORD g_seq[KindCount] = { 0, 0, 0, 0, 0 };
+		RecordFile* g_files[KindCount] = {};
+		DWORD g_seq[KindCount] = {};
 		DWORD g_jointCapacity = 0; // the open joints file's, 0 when there is none
+
+		volatile DWORD g_stepThread = 0; // written by the pacing hook
 
 		bool g_running = false; // control thread only
 		DWORD g_sessionIndex = 0;
@@ -46,6 +48,13 @@ namespace probe
 				return "motion";
 			case KindJoints:
 				return "joints";
+			// No underscore in these, a reader splits the stem from the kind at the last one.
+			case KindBattle:
+				return "battle";
+			case KindBattleEvent:
+				return "battleevent";
+			case KindBattleDump:
+				return "battledump";
 			}
 			return "unknown";
 		}
@@ -269,7 +278,20 @@ namespace probe
 				g_jointCapacity = capacity;
 		}
 
-		if (!g_files[KindPacing] && !g_files[KindCamera] && !g_files[KindMotion] && !g_files[KindJoints])
+		if (settings.battle && BattleSpansConsistent())
+		{
+			DWORD n = BattleExtensionBytes(extension, sizeof(extension));
+			g_files[KindBattle] = OpenKind(KindBattle, sizeof(BattleStepRecord), extension, n, start);
+			n = BattleEventExtensionBytes(extension, sizeof(extension));
+			g_files[KindBattleEvent] = OpenKind(KindBattleEvent, sizeof(BattleEventRecord), extension, n, start);
+			n = BattleDumpExtensionBytes(extension, sizeof(extension));
+			g_files[KindBattleDump] = OpenKind(KindBattleDump, sizeof(BattleDump), extension, n, start);
+		}
+
+		bool any = false;
+		for (int kind = 1; kind < KindCount; ++kind)
+			any = any || g_files[kind] != NULL;
+		if (!any)
 		{
 			Log("capture: no file could be opened, or every recipe is off, not starting");
 			return false;
@@ -323,6 +345,26 @@ namespace probe
 	DWORD JointCapacity()
 	{
 		return g_jointCapacity;
+	}
+
+	bool Recording()
+	{
+		return g_recording != 0;
+	}
+
+	DWORD SessionIndex()
+	{
+		return g_sessionIndex;
+	}
+
+	void NoteStepThread()
+	{
+		g_stepThread = GetCurrentThreadId();
+	}
+
+	bool OnStepThread()
+	{
+		return g_stepThread != 0 && g_stepThread == GetCurrentThreadId();
 	}
 
 	bool CaptureRunning()

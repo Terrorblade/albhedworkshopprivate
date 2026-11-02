@@ -187,6 +187,83 @@ In order: [V]
 Note `+0x3F5`: when it is non zero `FFX_Btl_OnUnitDefeated` clears `+0xDC8` on death. So a dead
 enemy leaves the field and a dead character stays on it. That matters to the over test. [V]
 
+Added 2026-10-31, the writes Project Zanarkand's roster was missing, each read in the disassembly and
+then matched against the first menu dumps of six recorded battles. The loop over units 0..30 also
+writes `+0xDD4 = 1` (0x79C1BA), `+0x15 = 1` (0x79C1C8), `+0x2D = 1` and the four votes `+0x2E..+0x31 = 1`
+(0x79C1DD, 0x79C1E1), `+0x422 = unit` (0x79C1EE), the word `+0xDE4 = 0xFFFF` (turn claim and command
+queue index, 0x79C1FB), `+0x41D = 1` (0x79C248), the word `+0x408 = 0` (0x79C26B) and `+0x3F0 = 0xFF`
+(0x79C29F). The party loop's `+0x3F8 = 1` is for j == 1 (0x79C3B0). Present party units get
+`+0xDD8 = 1` (0x79C452), so do the monsters (0x79C5BD). Step 7 in full: an enemy slot `+0x43D = 3`
+(0x79C4D4) and `+0x4FD = 5` (0x79C4DB), anything else `+0x43D = 8` (0x79C4F6), then an aeon
+`+0x4FD = 4` (0x79C504) and `+0x1E = 1` (0x79C511), with unit 16 also `+0x3F8 = 1` (0x79C528), and a
+character `+0x4FD = 3` (0x79C531). [V]
+
+Added 2026-11-01, the motion and shape writes of the same loop (0x79C191..0x79C339), carried by the
+Zanarkand motion port. `di = 0x100` (0x79C191) goes to the words `+0x3FC` (motion speed) and `+0x400`
+(the speed last applied to the CHR), `+0x406 = 8` (0x79C241), `+0x43F = 0xFF` (no link parent,
+0x79C24F), `+0x43B = 1` (0x79C22C), `+0x3F1 = 0x10` (the rest motion, 0x79C204), fld1 to the scale
+`+0x3A0..+0x3A8` (0x79C22A), the dwords `+0x4B0 = 0x60006` (0x79C2AC) and `+0x4B8 = 0x2004` (0x79C2BC),
+`+0x4BA = 0x20` (0x79C2CB), the shape floats `+0x4BC = 40`, `+0x4D0 = 0.4`, `+0x4D4 = +0x4D8 = 3`,
+`+0x4DC = 50`, `+0x50C = 1` (0x79C2DE), `+0x4F0 = 0.2` (the at home bound of
+`FFX_Btl_IsUnitAwayFromPlace`, flt_B412C4 at 0x79C323), `+0x534 = 0` (0x79C329) and `+0x34` = 1 on a
+ground field, 0 on an airborne one (setz at 0x79C339). [V for the addresses, read in the disassembly]
+
+Added 2026-10-31, what runs at the end of each CHR load, because a battle start depends on it.
+`FFX_Btl_PumpChrLoadQueue 0x7AD190` dispatches a finished load by its mode byte (`byte_112BEA3` of the
+12 byte entry): 1 `sub_783B90` (CHR set up and status visuals only), 2, 6, 8 and 10
+`FFX_Btl_OnUnitChrReloaded 0x783BC0`, 3 and 7 `FFX_Btl_OnUnitChrLoaded 0x7839B0`, 4 and 5
+`FFX_Btl_SetupWeaponChr` then `+0xDFD = 0` on the slot unit. Phase 11 queues the party with mode 1,
+phase 14 the monsters with modes 0 and 3, phase 19 the party again with mode 2. Both ends set
+`+0x38` (chrReady), run `sub_788270` (a held motion lets go), `FFX_Btl_RunAiAndCommit(unit, 255, 5, 0,
+2, null)` and `FFX_Btl_StartUnitEvent(unit, 39)`, then event 0 or 49 (49 and `+0x3F0 = 0xFF`, `+0x433 =
+1` when `+0x43D & 2`). So these loads are what starts every unit's idle loop: the recorded AI kind 5
+runs of units 20, 21, 22, 0, 1 and 4 at battle steps 29 to 36 of the first recorded battle are these
+callbacks. [V]
+
+Added 2026-11-01, what was missing above. Both ends also call `maybe_FFX_Btl_SetupUnitChr 0x793670`
+(proposed `FFX_Btl_SetupUnitChr`), `FFX_Btl_OnUnitChrLoaded` at 0x783A57 and
+`FFX_Btl_OnUnitChrReloaded` at 0x783C0D, but the reload only for a mode other than 2 (`if (a2 != 2)`,
+so phase 19's party reload keeps the CHR as it is). The reload in full, from the decompile: float
+`+0x40 = 1.0`, `+0x38 = 1`, `+0xDFC = 0`, dword `+0x6FC = -1`, the held motion lets go, the setup above,
+the render link for a unit below 8, AI kind 5 and event 39. Then mode 6 sets the word `+0x400 = 0xFFFF`,
+`+0x3F0 = 0xFF`, `+0x41C = 1`, moves the unit to `sub_794EC0`'s point (the placement of its group + 3)
+through `sub_796220` and goes on with event 50. Mode 8 sets `+0x3F0 = 0xFF`, clears flag 100 vote 2,
+moves the unit to `FFX_Btl_GetUnitPlacementPos` through `sub_796220`, goes on with event 0 and skips
+`maybe_FFX_Btl_RefreshStatusVisuals`. Mode 10 sets `+0x3F0 = 0xFF`, `+0x400 = 0xFFFF` and goes on with
+event 57. Anything else goes on with event 49. After that `+0x44F = 0` and
+`FFX_Btl_UpdateHpBandAndPose(unit, -1)`. A petrified unit (`+0xDCE`) gets `+0x508 = 0` and, in mode 10,
+`FFX_Btl_SetUnitShowVote1(unit, 0)`, and no event. Any other unit gets
+`+0x508 = FFX_Btl_IsUnitAwayFromPlace(unit, +0x34)` and then its event. The `+0x400 = 0xFFFF` write is
+what makes the next `FFX_Btl_StepUnitMotionSpeed` push the speed onto the new CHR again. [V]
+
+Added 2026-10-31, the idle step, `FFX_BtlEv_StepUnitIdleEvents 0x7AA160` (the middle of
+`FFX_BtlEv_StepBattleContext`): per unit 0..30, the CHR motion speed (`FFX_Btl_StepUnitMotionSpeed 0x78AC20`,
+named since this was written), then, when `+0x432`
+is 0, a pending unit event `+0x3F2` (Btl 22 writes it) is started and `+0x3F2` goes back to 0xFF.
+Without one, and with `+0x412` and `+0x415` clear, a unit at home counts `+0x428` up to 2, and a unit
+away from home (`+0x508`) starts event 0 unless `sub_7AB750` finds its place covered by another unit
+with flag 0x100 (`+0x427` counts those starts, the fourth clears vote 2). The battle field scripts'
+`FFX_Rand_Stream(2)` draws (Core 166 and 169 are the only callers that push stream 2 as an immediate)
+run inside these unit events, so stream 2 at the first command prompt depends on how long each unit's
+motion clips last. [V for the code, the stream 2 link is inferred from the port: with the idle loop
+running its stream 2 count went from 2 to 11 draws against the original's 10 in the first battle]
+
+Added 2026-11-01, the battle motion port (Zanarkand src/ffx/btl/UnitMotion.cpp). The Zanarkand count of
+11 above was measured with every clip a 20 step stand in. With the real clip lengths
+(`FFX_Mot_SeqTotalFrames` over the CHR's speed) the unit events run for as long as the original's, so
+the stream 2 count is expected to move toward 10. It has not been run yet. Where the per-step motion work
+sits in `FFX_Btl_MainStep` (0x790D74..0x790D97, [V]): `FFX_BtlMenu_Step`, `FFX_Btl_ExecCommand`,
+`FFX_Btl_GrantUnlockedOverdriveModes`, `sub_79CDF0`, `sub_79F5E0`, then `sub_7AAB80` at 0x790D8D (proposed
+`FFX_Btl_StepUnitMoves`, `FFX_Btl_StepUnitMove` for each unit that exists or plays on another's CHR) and
+`sub_7AA140` at 0x790D92 (proposed `FFX_Btl_UpdateAwayFromHomeAll`, `maybe_FFX_Btl_UpdateAwayFromHome`
+for 0..30), then `FFX_Btl_StepMagicEffectStates`. The clip events land later in the frame:
+`FFX_Mot_RunEvents 0x834350` case 5 (0x8343E1) pushes 0, the event id (cwde) and the CHR's `+0x18C`
+(the party index the battle gave it) and calls `FFX_Btl_OnMotionEvent 0x7B74D0`, so the third argument
+is always 0. `FFX_Btl_OnMotionEvent` hands the event to `+0x14` (the primary unit) when `+0x12` is set
+(0x7B7502), ORs `1 << event` into `+0x39C` and switches on the event. Event 0 with action kind 1 lands
+the hits through `FFX_Btl_ApplyPendingHits(unit, -5, 0)` (0x7B7784), flags 0, so a clip's hit never
+draws stream 9. The names of the new rows are in tools/apply_battle_motion_names.py. [V]
+
 ### 2.5 What `FFX_Btl_LoadUnitParams 0x79B4F0` reads
 
 It zeroes the 492 byte block at `actor+0x540` first. [V]
@@ -230,6 +307,21 @@ u16 at +0x78, the capture species (into +0x6D6 at 0x79B8C7, MONSTER_ARENA.md). A
 of the file, is copied to `dword_1136068 + 280*unit` and that pointer stored at `+0xF88`. [V]
 These run from `sub_79CB10` inside `FFX_Btl_RegisterMonsterMotions`, after all monster files are
 in. [V]
+
+Added 2026-10-31, writes outside the tables above, checked against six recorded battles. Characters:
+`+0x6D9` is `ply_rom` row `+0x2B` (0x79B5D6), the float `+0x70C = 1.0` is a store through `ebx =
+actor+0x540` (0x79B645), `+0x712 = 0xFF` (0x79B659), the word `+0x6C8` is 0 for a summon unit (record
++0x2C bit 0x04) and 0x3021 otherwise (0x79B6AE). Monsters: `+0x6C8 = 0xFF` (0x79BA24), and after the
+image block, with or without a file, `+0x70C = 1.0` and `+0x712 = 0xFF` (0x79BA46..0x79BA4F). The
+`sub_79B470(k, 0x3002, 1)` call (0x79B745) is the command lock: it sets bit 2 of the word `+0x690`,
+which `FFX_Btl_IsCommandLocked 0x79A5B0` reads, so 0x3002 is locked for every character on an airborne
+field or in script mode 2. One of the six recorded battles has it on every party unit. [V]
+
+Added 2026-10-31: the party's start scripts write AI properties 158 (the dword `+0x4AC`, the motion
+type flags, `FFX_BtlAi_SetProperty` 0x7B5AB6) and 163 (`+0x41D`, 0x7B5AED) on every unit, aeons
+included, so `+0x4AC` does not come from the CHR. With 0x10 in it an attack takes the attack in place
+path, `+0xDFB = 15` (`sub_7AB500`), which only `FFX_Btl_StepMagicEffectStates 0x788480` moves on
+(case 15: `sub_787650` then state 0 and `sub_787D70`). [V]
 
 ### 2.6 Phase 10 to the first command menu
 
@@ -355,13 +447,36 @@ Runs from `FFX_Btl_MainStep` only when `FFX_Btl_IsCtbTickAllowed` passes **and**
 | 24 | waits for the script hold and the same four. `sub_8AB7B0`. Result 1 with `!(g_ffxFieldBootMode & 0x200)`: game over sequence on (`dword_112C9F4 = 1`, waits 30, music track 20 [I], effect 140) -> 25. Result 2 with `!(g_ffxFieldBootMode & 0x100)`: victory pose (`HIBYTE(word_112C9F1) = 1`, wait 10, track 12 [I], effect 138) -> 25. Result 4: wait 30 -> 27. Else -> 27 | [V] |
 | 25 | `sub_8863F0` / `sub_886AF0` with the track id | [V] |
 | 26 | `sub_79FFF0(effect)`, wait 10 | [V] |
-| 27 | every unit 0..30: AI event 0 if `sub_791780`. Returns while any unit is mid animation. Then -> 28 if pose or game over, else straight to 29 | [V] |
+| 27 | every unit 0..30: AI event 0 if `sub_791780`. Returns while any unit is mid animation. Then -> 28 if pose or game over, else straight to 29. Corrected 2026-10-31, "mid animation" in full (0x791ADE..0x791B18): a unit not petrified and shown (`+0x15`) holds the phase when `+0x508`, `+0x42E` or `+0x415` is set, or `+0x41C` and `+0x41D` both are. `+0x41C` (AI property 162) is set by unit events through Btl 171 when a monster acts, and the idle event 0's branch on Btl 147 (`FFX_AtelSys_Btl_147_CanAct_resi 0x7A60F0`, which is `sub_791780` of the script's unit) is what puts it back, so a port without Btl 147 holds here forever. That last part is inferred from Project Zanarkand: with Btl 147 answering 0 the first Besaid battle held in phase 27 for good, with it ported the battle ended. The direct clears of `+0x41C` in 0x780000..0x7C0000 are only the escape (0x7AEA9C), the defeat sequence (`sub_78DDC0` 0x78DE22), `FFX_Btl_PlayUnitReaction`'s petrified branch, `maybe_FFX_Btl_ReleaseUnitMotion` modes 1 and 6 (the effect programs), the stage clear, the flee and the party swap | [V] |
 | 28 | waits for `sub_7A0040(effect)` | [V] |
 | 29 | **`word_112A8E3 = result`**, `sub_793290` (every unit), `sub_7882B0`. Battle script event per result: 1 -> 67, 2 -> 66, 3 and 5 -> 68, 4 -> 69, with `sub_7982A0(1 / 0 / 2 / 3)`. Victory pose wait 88 frames. **`sub_7B1540`**: every front unit 0..6 bumps overdrive mode 11's counter and gains 20 gauge if mode 11 is set (Victor [I], it runs for every result but needs a living front unit) | [V] |
 | 30 | victory: units 0..17 on the field, alive, not petrified, with `+0x43B`, play AI event 45 once (`+0x43A`). Game over: `byte_112C9EF = 1` starts global magic effect `word_112C94E` (670) through `maybe_FFX_Magic_BeginGlobalEffect` once the overlay is ready | [V] |
 | 31 | waits for the counters and `FFX_ScreenFade_RequestMode3(frames)` (45 on game over, 10 otherwise) when the boot mode keeps the fade or game over runs | [V] |
 | 32 | `FFX_Magic_EndPhaseOverlayFree(word_112C94E)` after a game over effect. That is 670 unless a script changed it through Btl_284. Only 671 calls the DLL's overlay slot 8, anything else takes the plain free path (`EFFECT_OVERLAY.md` 2.1) | [V] |
 | 33 | done | [V] |
+
+Correction 2026-11-01 (the 13.13 defeat sequence port, Project Zanarkand `src/ffx/btl/Defeat.cpp`). Phase 30
+first waits on the defeats when `g_ffxBtlEndDrainEffects` 0x112C9F3 is set, which phase 29 sets when the end
+fade is off (the default field boot mode 0x10001): it stays set until no unit 0..30 has `+0x432` (busy) or
+`+0x436` (dying) and `sub_7FB240` (byte +58 of effect unit 0) is 0 (0x791C90..0x791CC9), and phase 30 does
+not move to 31 while it is set or `sub_7A2670` (queued plus dispatched defeats) is not 0. Dying is set by
+`FFX_Btl_StartDefeatSequence` 0x78DC30 (0x78DC72) and cleared either by `sub_78CCA0` (btl:57, only when no
+death effect started) or by the death effect's end: `sub_79E3D0` 0x79E3D0 starts an Oef2 program of the
+battle effect set (`sub_7FC2E0(dword_112A95C, 0, effect, handle)`, handle kind 4, or 15 for a dispatched
+queued defeat), and its op 127 (`FFX_Oef2_Op127_AdvanceBattleEffect` 0x80C490) or its kill (op 1 through
+`sub_7FE6C0`) calls `FFX_Btl_EffectAdvanceState` 0x788920, whose cases 4 (0x788992) and 15 (0x788A1A) clear
+`+0x436` and `+0x3F7`. So how long the battle end waits on a defeat is that program's length, game data. No
+battle step advances the fade, the program's op 56 (`sub_80A560`) writes the CHR shade colour and alpha.
+`FFX_Btl_ResetDefeatQueue` 0x7A2730 (`FFX_Btl_BeginBattle`) zeroes `dword_112CA0A` and also
+`g_ffxBtlDefeatDispatchedMask` 0x112C90C.
+
+Added 2026-11-01 (Project Zanarkand item 4). The program lengths are now walked in memory from the install's
+et_battle.bin, so the wait above has numbers. The plain monster death, program 42, starts the step its
+sequence starts and ends 24 passes after the first pass 0 that sees `+0x3F4` set, so a unit whose event 8
+never reaches btl:57 (`sub_78CCA0`) keeps `+0x436` for good and phase 30 never ends. Its particles (two parts
+of 60 and 70 steps, one every 8 passes while the program runs) hold `sub_7FB240`'s byte, so phase 30 also
+waits up to 70 steps past the last dying clear. The programs step in pass 0
+of `FFX_Magic_Oef2Dispatch` after `FFX_Atel_StepOnce`, passes 1 and 2 after the CHR motion pass. [V, data]
 
 ### 3.3 The teardown in `FFX_Btl_MainStep`, and what is written back
 
@@ -611,7 +726,7 @@ Opened from the field boot (3.4), on menu frames, after the battle module has sh
 | what | where | how |
 |---|---|---|
 | member rows | `sub_8BDE00` | units 0..7 with the took-part flag. AP phase only when one of them has AP |
-| equipment | `FFX_BtlResult_Init 0x8BDB70` | if the free equipment entries are at least the staged count, `FFX_SaveData_AddEquipEntry` for each, at once. Otherwise the "equipment full" flag 0x186A184 and a discard flow (states 32..43) [I] for the flow |
+| equipment | `FFX_BtlResult_Init 0x8BDB70` | if the free equipment entries are at least the staged count, `FFX_SaveData_AddEquipEntry` for each, at once. Otherwise the "equipment full" flag 0x186A184 and a discard flow (states 32..43) [I] for the flow. Corrected 2026-10-31 from the disassembly at 0x8BDCF5..0x8BDDA0 and held to the recording: first the staged entries from the count up to index 5 (not 6 and 7) get in use 0, then the all or nothing add, in staged order into the first free slots. The count is read signed (movsx). In 4 of 6 recorded battles one piece was added, and each was rebuilt byte for byte by the ported `FFX_Btl_RollEquipmentDrop` from the seen dump's streams 12 and 13 (Zanarkand EquipTest.cpp) |
 | gil | `sub_8BA590` per frame, states 23..24 | chunks of `(gil / 189) \| 1`, +2 when that is a multiple of 5, through `FFX_SaveData_SpendGil(-chunk)` |
 | AP | `sub_8BA550` per frame, state 12 | per member chunks of `(ap / 189) \| 1` (+2 likewise) through `FFX_SaveData_AddAp`. A member at 99 sphere levels has its remaining AP set to 0 and loses it. Pressing confirm (0x20) runs the loop to the end in one frame |
 | items | `sub_8BD9C0` from `FFX_BtlResult_DrawAndClose 0x8BB7A0` | `FFX_SaveData_AddItem` for every staged kind, when the screen closes |
@@ -619,6 +734,35 @@ Opened from the field boot (3.4), on menu frames, after the battle module has sh
 
 The end state does not depend on when the player presses confirm, but the steps on which gil, AP
 and items land in the save block do. [V]
+
+Corrected 2026-10-31, from the disassembly while porting it (Project Zanarkand
+src/ffx/party/Experience.cpp, checked against a Python model and against 5 recorded results screens):
+the AP chunk is not taken from the AP. `FFX_BtlResult_ApChunk 0x8BA3C0` is
+`(FFX_SaveData_ApNeededForNextLevel(c) / 189) | 1`, plus 2 when that is a multiple of 5, so it is
+sized by what the member's next sphere level costs. `FFX_BtlResult_PayMemberAp 0x8BA4E0` pays
+`min(chunk, spoils left)` through `FFX_BtlResult_AddApChunk 0x8BDAF0` and returns 1 while spoils
+remain. At 98 sphere levels a chunk that would cross the level is cut to exactly what the level
+needs, and the rest of that chunk is lost (the spoils still drop by the whole chunk). At 99 the
+spoils go to 0 and nothing is paid, as the table says. The rows come from
+`FFX_BtlResult_BuildRows 0x8BDE00` (was `sub_8BDE00`), characters 0..7 in index order, then
+`FFX_BtlResult_SortRowsFieldFirst 0x8BA400` swaps the field party's rows to the front, three at
+most. A level up sets the row's +0xA to 15 (`FFX_BtlResult_ShowLevelUp 0x8BE020`), when the AP
+toward the next level plus what was paid reaches the need. Since the chunk follows the need, the
+ending state does depend on the chunking near 98, not only on the total.
+
+Added 2026-10-31, from porting the item and gil half (Project Zanarkand src/ffx/item/Treasure.cpp):
+the order is the equipment at `FFX_BtlResult_Init 0x8BDB70`, the gil counter, then the items at the
+close. `FFX_BtlResult_Init` first clears the in-use word of the staged entries past the staged count,
+then adds them all only when `FFX_SaveData_CountEquipEntries`' free count (200 minus in use) is at
+least the count. The gil counter is `FFX_BtlResult_StartGilCounter 0x8BDF10` (was `sub_8BDF10`) into
+`g_ffxBtlResultGilStep 0x1869F10` and `g_ffxBtlResultGilRemaining 0x1869F14`, unsigned, and
+`FFX_BtlResult_StepGil 0x8BA590` pays the step while it is below what remains (`jb` at 0x8BA5A1) and
+then the rest. `FFX_BtlResult_CommitItems 0x8BD9C0` reads the kind count signed (0x8BD9C3), then
+`FFX_Spoils_Clear`. Checked against the 6 battles of the first recording: each kill the step snapshots
+show paid through `PayKillRewards` from the previous snapshot's streams lands streams 10..13 on the
+next snapshot (29 of 29 kill steps, 32 kills), and the committed save block plus this commit gives
+the results closed save block's item, gil, key item and primer bytes and its whole equipment array
+byte for byte in all 6.
 
 ### 4.6 Where the reward tables live
 
@@ -662,6 +806,20 @@ byte 0 is the kind: 2 an item (`sub_798AC0(u16 +2, byte +1)`), 5 equipment from 
 (+0xD1, +0xEC), anything else gil `100 * byte +1`. The chest syscalls `Core 347` and `Core 423`
 then commit and call `sub_798B60`. No RNG. [V] Because chests and battles share the buffer, a chest
 opened while battle spoils are still staged (4.1) pays them out and clears them. [I]
+
+Corrected 2026-10-31, from the disassembly while porting it (Project Zanarkand src/ffx/item/Treasure.cpp
+and ItemSyscalls.cpp). `Core 423`'s start 0x857B70 does not commit everything staged. It gives item
+kind 0 only (`AddItem(u16 +0xD4, u8 +0xE4)` when the kind count +0xD0 is not 0), the key item, the
+**first** piece of equipment only (`FFX_SaveData_AddEquipEntry(getEquipEntry(+0xEE[0]))`) and all the
+gil (`SpendGil(-gil)`). It keeps `AddEquipEntry() == 0` (the equipment array is full, the piece was
+refused) in its work at +8, the equipment id at +12, and clears the buffer itself only when nothing
+was refused. Otherwise `FFX_AtelSys_Core_423_GiveTreasureSilent_resi 0x858230` clears it when the
+script reads the result. So with battle spoils still staged, a chest pays out the first staged item
+kind and the first piece, and every other staged kind and piece is lost at the clear, not paid. The
+IDB comment on 0x857B70 ("AddEquipEntry for each staged piece") says more than the code does.
+`sub_798FF0` (`FFX_Treasure_DecodeIntoSecondBuffer`, tools/apply_item_names.py) decodes into a second
+432 byte buffer at 0x2310CE0 reset with bank 11, so its equipment ids are 0xB000 + i, which
+`FFX_SaveData__getEquipEntry 0x7ABBD0` maps to that buffer's entries.
 
 ---
 

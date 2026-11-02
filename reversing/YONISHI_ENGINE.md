@@ -241,6 +241,12 @@ ops read) and, if obj+0xBA is 1..11, `g_ffxOef2MoveFnTable[obj+0xBA](ctx, ip)` a
 is at `0xC492C8`, right after the opcode table, 12 slots, 1 and 2 empty. IDA names it `funcs_80D9A0`
 after the call site. The arithmetic goes through emulated VU registers at `0xC8F508..0xC8F990`.
 
+Correction 2026-11-01: obj+0x90 is the colour, not a position. The integrator stores the colour vector
+back to obj+0x40..0x4C from the VU register at 0xC8F8E0 (0x80D8ED..0x80D90A), and the same register times
+qword_C8F930 goes to obj+0x90..0x9C (0x80D91A..0x80D980). The pairs it integrates are position (+0x30)
+with velocity (+0x50) and colour (+0x40) with colour velocity (+0x60), each velocity first taking its
+acceleration (+0x70, +0x80). [V]
+
 ## 6. opp
 
 `opp_main(u16 unit)` at `0x80BD50`, host 721 [V]. Its own context: ctx+530 = time frozen =

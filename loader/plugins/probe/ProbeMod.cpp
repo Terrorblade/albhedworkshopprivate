@@ -6,13 +6,20 @@
 // <game dir>\AlBhedWorkshop\plugins\. The format is reversing\PROBE_FIXTURES.md and the
 // reader is projectzanarkand\tools\probe_fixture.py.
 //
-// FOUR RECIPES, each a pure observer on one engine function:
+// FIVE RECIPES, each a pure observer:
 //
 //   pacing   FFX_StepPacing            Zanarkand 3.4.3, the dt and pending step sequence
-//   camera   FFX_Came_ActivateScreen   Zanarkand 6.3.1, CAMERA_BUILD.md section 10
+//   camera   FFX_Came_ActivateScreen   Zanarkand 6.3.1, CAMERA_BUILD.md section 10, which
+//                                      covers the battle camera too (13.12)
 //   motion   FFX_Ch_UpdateMotionAll    Zanarkand 10.5, CHARACTER_MOTION.md section 10.4
 //   joints   FFX_Mot_AdvanceFrame      Zanarkand 10.4, CHARACTER_MOTION.md section 11.12,
 //                                      off by default (probe.joints) because it is heavy
+//   battle   the pacing hook, plus     Zanarkand 13, three files (battle, battleevent,
+//            FFX_Btl_RunAiAndCommit,   battledump). The step snapshot and the dumps ride
+//            CmdQueue_Push and Insert, the pacing hook, the four hooks catch what happens
+//            ComputeEffectForTarget    inside a step. probe.battle, on by default
+//            and the CommitActorsToSave
+//            call site
 //
 // Every hook calls the original unchanged and returns its result unchanged, and every one
 // chains with any other plugin's detour or call site patch on the same function. The probe never writes game
@@ -174,10 +181,12 @@ namespace probe
 			const bool camera = InstallCameraRecipe();
 			const bool motion = InstallMotionRecipe();
 			const bool joints = InstallJointsRecipe();
+			const bool battle = InstallBattleRecipe();
 			if (!pacing)
 				Log("without the pacing hook the step ordinal never advances, so camera and "
-				    "motion records will all carry ordinal 0 and the step limit cannot fire");
-			if (!pacing && !camera && !motion && !joints)
+				    "motion records will all carry ordinal 0 and the step limit cannot fire. The "
+				    "battle recipe rides it too, so there are no battle steps or dumps either");
+			if (!pacing && !camera && !motion && !joints && !battle)
 			{
 				Log("no hook went in, nothing to record");
 				return false;

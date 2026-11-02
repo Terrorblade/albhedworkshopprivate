@@ -39,6 +39,7 @@
 #include "ffx/Atel.h"
 #include "ffx/Api.h"
 #include "ffx/Battle.h"
+#include "ffx/BattleTrace.h"
 #include "ffx/Camera.h"
 #include "ffx/Character.h"
 #include "ffx/Cutscene.h"

@@ -77,6 +77,7 @@ namespace probe
 			settings.joints = 0;
 			settings.jointsChr = JointsFilterControlled;
 			settings.jointsMax = 136;
+			settings.battle = 1;
 			settings.hotkey = VK_SCROLL;
 			settings.maxSteps = 0;
 			settings.budgetMegabytes = 64;
@@ -98,6 +99,8 @@ namespace probe
 			    SettingInt, (void*)&settings.jointsChr, -2, 65535, 1, 0);
 			Register("probe.joints_max", "joints per record, larger skeletons are cut", SettingInt,
 			    (void*)&settings.jointsMax, 8, 512, 8, 0);
+			Register("probe.battle", "record battles, about 400 KB a second while one runs", SettingBool,
+			    (void*)&settings.battle, 0, 1, 1, 0);
 			Register("probe.hotkey", "virtual key that toggles recording, 0 for none", SettingInt,
 			    (void*)&settings.hotkey, 0, 255, 1, 0);
 			Register("probe.max_steps", "stop after this many steps, 0 for no limit", SettingInt,

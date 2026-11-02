@@ -56,6 +56,69 @@ and 14 (Yojimbo), hands the stand-in the owner's weapon CHR with `m_chrBorrowed`
 `m_primaryUnit` (+0x14) pointing back at the owner [V]. That these are the ball, the doll and Daigoro is
 [I], from which three units get one and that the CHR is the weapon model.
 
+Added 2026-10-31 (the Zanarkand equipment port, btl/WeaponSyscalls.cpp). `FFX_Btl_SetupWeaponChr` is
+the only writer of +0x12 and +0x13 found, and `FFX_Btl_SetupUnitRoster` resets +0x13 to 0xFF at
+0x79C134. The attach and detach bodies are `FFX_Btl_AttachWeapon` 0x793330 (Btl 115) and
+`FFX_Btl_DetachWeapon` 0x793F10 (Btl 116). Attach needs the side record's CHR, the owner's CHR and
+the owner's +0x4B5 (set by SetupWeaponChr), binds to the bone at side record +13 and clears
++0x4B6 + side. Detach sets +0x4B6 + side and leaves the CHR at the bone's world position. The side
+disposal is `FFX_Btl_DisposeWeaponSide` 0x7AD750 (mask 8 purge, 1 CHR, 4 motion set, 2 data, then
+the handles copied to the stand-in), and `FFX_Btl_SwapEquipInBattle` 0x7AD820 is the in-battle equip
+change at effect state 9. The weapon models with a motion set of their own are the zero ended list
+`g_ffxBtlWeaponMotionModels` 0xC43984 (0x4033..0x4038 and 0x3017), read by
+`FFX_Btl_IsWeaponMotionModel` 0x7AD130. Names in tools/apply_equipment_names.py.
+
+Correction 2026-11-01 (the Zanarkand weapon CHR port, `src/ffx/btl/BattleSession.cpp` WeaponChrs,
+`src/engine/chr/ChrAttach.cpp`, PROGRESS 10.8). What the paragraph above leaves out or says loosely:
+
+- Detach does not take the bone's place and nothing else. Its order is `FFX_Btl_SetRikkuWeaponPartHidden`
+  0x795C00(owner, 0), `FFX_Ch_GetBoneWorldPos`(owner CHR, record +13), `FFX_Ch_GetRotWrapped`(owner CHR),
+  `FFX_Ch_AttachToParentBone`(record CHR, null, 0), which clears m_parent and the uid and keeps m_parentJoint
+  and m_attachOff, then `FFX_Ch_SetPos` and `FFX_Ch_SetRotAndMoveDir`. So the let go weapon takes the owner's
+  rotation, not the bone's. Attach calls `FFX_Btl_SetRikkuWeaponPartHidden`(owner, 1) before it binds: for
+  unit 6 whose chr id is 7 it hides model part 1 while the weapon is in hand. [V]
+- The bone point is looked up in the OWNER's data (`FFX_Ch_LookupBonePoint` 0x833A70 on the parent), and the
+  per step attach is the parented branch of `FFX_Ch_BuildSkinMatrices` 0x832760 (0x8327C0..0x832937), run by
+  `FFX_Ch_UpdateRenderJob` 0x833530 in its mode 1 pass from `FFX_Ch_DispatchInBatches` 0x833390, after every
+  parentless CHR's mode 0: s = float(float(1 / parent m_f30) * child +0x1B4), M = parent joint+136 at
+  m_parentJoint times diag(s, s, s, 1), M's translation times 1000, then M's translation =
+  `FFX_Mtx_MulVec4`(M, parent m_f30 * m_attachOff xyz, w as it is), and the child's root at +0x1D0 = parent
+  root * M. The child's own position and rotation are not read while it is parented. A hidden CHR is
+  skipped, and the matrices are built only when flags1 & 0x3000000. [V]
+- The weapon hides and shows with its owner. The tail of `FFX_Btl_SetUnitShowVote` 0x797080, after the
+  recursion to +0x13 and to the linked units, sets each side record CHR's hide bits 0x10 and 0x02 to the
+  inverse of (owner +0x1D ? all four votes : 0), flags1 0x80 from record +0x32 and bit 1 from +0x33 when
+  shown (both 0 when hidden), the B183 request and `FFX_Btl_SetFlag100Vote`(record, 1, shown). [V]
+- Two more callers. `FFX_Oef2_Op133` 0x813B87 detaches side 0 or 1 (its cases 4 and 5) for a unit below 8, and
+  `FFX_Btl_PlayUnitReaction` 0x78CC30 re-attaches side 0 when the unit is petrified (+0xDCE) and +0xDED names
+  itself, plus `FFX_Btl_StartUnitEvent`(29, 0) for Lulu, then event 56. [V]
+- At the battle's end nothing is detached or disposed. `FFX_Btl_Shutdown` 0x7815E9 calls
+  `FFX_Btl_ReturnChrsToField` 0x7821F0, which shows every battle CHR again (hide bits 0x10 and 0x02 off) and
+  hands each unit's CHR and its two side records' CHR, bone (+0x0D) and model (+0x04) to the field ATEL actor
+  of the same chr id, then zeroes the record's CHR pointer. [V]
+- The model is a category 4 chr id: `FFX_Btl_GetEquipModelId` 0x7ABDC0 is the u16 at equip entry +0x0C, which
+  the new game fills from the w_name row at +0x38 + 2 * character. So the file is chr/wep/wNNN/mdl/wNNN.chr
+  (`FFX_Ch_IdToCategoryDir`, `FFX_Ch_IdToModelName`). The party's weapon load ends in mode 4 after the
+  owner's own mode 1 load (`FFX_Btl_OnPartyChrLoaded` 0x783B90, which sets the owner's CHR up), so the owner
+  has its CHR when `FFX_Btl_SetupWeaponChr` attaches. [V]
+- None of it draws. A static tree from SetupWeaponChr, AttachWeapon, DetachWeapon, DisposeWeaponSide,
+  QueueWeaponChrLoads, AttachToParentBone, the Rikku part hide, the rows 115, 116, 117, 291 and 293 and
+  SwapEquipInBattle, stopped at `FFX_Btl_StartUnitEvent` 0x7AB360, reaches `FFX_Rand_Stream` only through
+  `FFX_Btl_BuildHitTargetList` from the effect unit setup at 0x7FEBA0, which pushes a3 = 0 at 0x7FEC53, and the
+  stream 16 shuffle there needs a3 != 0. `FFX_Btl_Rand` and the CRT rand are not reached. The CRT rand under
+  `FFX_Ch_UpdateRenderJob` is the blink's, on the worker threads. [V]
+
+Names in tools/apply_battle_weapon_names.py.
+
+Correction 2026-11-01 (Wakka's ball throw, Project Zanarkand `src/ffx/btl/UnitMotion.h` sharedChr). The
+stand in does not only borrow the CHR for drawing: SetupWeaponChr writes the side record's CHR into the
+stand in's own +0x00 (0x7939C9), before its unit events 39 and 0 start. Every battle call that reads a
+unit's CHR through +0x00 then works on the weapon's CHR for units 28..30: `FFX_Btl_StepUnitMove` (which
+returns at once without one), `FFX_Btl_GetUnitPos` and `FFX_Btl_SetUnitPos`, Btl 7, 8 and 43. The ball's
+arc (Btl 118, move kind 7) only advances because of that. `FFX_Btl_StartCommandExec` copies the owner's
+targetMask (+0xDC0) into the stand in at 0x7AE58E, which is the mask the ball's kind 12 target aims at.
+`FFX_Btl_BuildArcPath` aims at the first unit of the primary unit's (the owner's) mask. [V]
+
 ## 2. Method
 
 The IDB has typing traps: `FFX_BtlAi_SetProperty` has unit records typed `CHR *`, and Hex-Rays reuses
@@ -129,6 +192,18 @@ BTLHIT entries of 44 bytes (reaction kind, floating number, new status words and
 and the HP, MP and CTB amounts). Read off `FFX_Btl_ApplyPendingEffects` 0x78F060, `sub_79A920` and
 `sub_79A760` [V].
 
+Added 2026-10-31, what `FFX_Btl_LoadCharRecordIntoActor 0x79C5F0` writes for units 0..17, ported as
+Project Zanarkand `party::DeriveBattleStats` and matched against 98 recorded party units (9212 of 9212
+fields): +0x594/+0x59C max HP and +0x598/+0x5A0 max MP from record +0x24 and +0x28 (the first pair
+then goes through `FFX_Btl_SetHpMpDoubling`), +0x5A8..+0x5AF the record's stats plus the unit's
++0x5B0 bonus clamped 1..255 (evasion 0..255), +0x592 and +0x593 the equipment ids, and from the two
+pieces, weapon first: +0x5C1 formula and +0x5C7 power (1 and 16 with no weapon), +0x5D8 the byte sum
+of both crit bytes, and per auto-ability a_ability.bin's elements ORed into +0x5D9..+0x5DD, status
+chances +0x5DE[25] and durations +0x5F7[13] added and clamped to 254, +0x604 ORed, the auto statuses
+ORed into +0x630 or, for a row whose +0x10 has bit 0, into the SOS words +0x636 with +0x63C set, the
+resists +0x641[25] added and clamped to 255, +0x65A ORed and the ability flags ORed into +0x6BC.
+An ability slot of 0 or 0xFF is empty and an equipment id of 200 and up reads entry 0. [V]
+
 ## 5. Corrections to existing docs
 
 Made in place, each pointing here:
@@ -175,6 +250,10 @@ GetActor comment no longer calls 31..92 monsters. The table keeps the old names 
   move and placement state bytes, separate fields and not an array, they have different readers),
   0x504..0x50F (AI properties 26, 31, 85, 86, 95..97, 343), 0x5C0..0x5C3, 0x6CA..0x6E1, 0x700..0x729,
   0xDF8..0xE2C and the dwords 0xF34..0xF58.
+  2026-11-01: 0xF3C..0xF50 are the HUD's screen anchors `sub_79F380` writes on drawn steps (the marker at
+  0xF3C and 0xF40, the overhead point at 0xF44 and 0xF48, it clamped at 0xF4C and 0xF50), and 0xF6C is the
+  Doom counter's colour phase the draw advances. Draw side writes, read only by the HUD draw.
+  BATTLE_MENU.md 3.12. [V]
 - 0x568..0x58F, see section 3. Closed 2026-10-28, section 9.1.
 - (Answered 2026-10-28, section 9.2: a shipped mistyped read.) The weapon record reading at `sub_795B40` (magic host API 219) indexes `v2[1088]` on a side record,
   beyond its 912 bytes. Either a quirk or a misread of which record it gets, not checked at runtime.

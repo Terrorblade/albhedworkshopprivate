@@ -658,6 +658,15 @@ unnamed.
 | 0x86DC50 | `FFX_Atel_ListAppend` | |
 | 0x86DC10 | `FFX_Atel_ListInsertAfter` | |
 | 0x86DC30 | `FFX_Atel_ListInsertBefore` | |
+
+Correction 2026-11-01 (Project Zanarkand `src/engine/atel/Interpreter.cpp`, ActorBinding). 0x862C60 binds
+the actor through the block list of the context the channel names (`g_ffxAtelCtxArray[channel +0x40]`), not
+the context that is running, and the bind keeps that context. That is how a context 2 battle worker runs a
+monster's own entry out of a context 3 block, or an effect's out of context 4: `FFX_BtlEv_StartFirstMatch`
+starts the thread on the worker of the call's own record with the request words of the block that matched.
+The port refused such a rebind as BadContext (system field actor 1 of context 2, op 0x3C at 0x2EBA in the
+Besaid road battle, and two more at 0x281 and 0x309 on op 0x58). From then on every block read of that
+actor, the fetch, the jumps, the calls and the returns, goes through the bound context's block.
 | 0x870D30 | `FFX_Atel_Op_SetEventEntry` | opcode `79` |
 | 0x86FAB0 | `FFX_Atel_Op_BindTriggerLink` | opcode `7A` |
 | 0x869DA0 | `FFX_Atel_DecodeAt` | the brk path's opcode and operand read |

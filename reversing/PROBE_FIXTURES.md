@@ -39,6 +39,9 @@ recipe), `CHARACTER_MOTION.md` section 10.4 (the motion recipe) and section 11.1
 | 2 | camera | `FFX_Came_ActivateScreen 0x7BC110`, entry and return | one per call, 9 per step (section 3) | `tests/engine/CameraReplayTest.cpp`, PROGRESS 6.3.1 |
 | 3 | motion | `FFX_Ch_UpdateMotionAll 0x832E10`, entry and return | one per in use CHR per side | `tests/engine/MotionTest.cpp`, PROGRESS 10.5 |
 | 4 | joints | `FFX_Mot_AdvanceFrame 0x838C90` at its call site, entry and return, plus three calls inside it | one per chosen CHR per side | the 10.4 playback tests, PROGRESS 10.4 |
+| 5 | battle | none, rides the pacing hook | one per step while a battle runs (section 10) | PROGRESS 13.1, 13.5 |
+| 6 | battleevent | `FFX_Btl_RunAiAndCommit 0x7ACEB0`, `FFX_Btl_CmdQueue_Push 0x7B0B90`, `FFX_Btl_CmdQueue_Insert 0x7B0A30`, `FFX_Btl_ComputeEffectForTarget 0x78E630`, entry and return | one per call | PROGRESS 13.4, 13.6, 13.8 |
+| 7 | battledump | the `FFX_Btl_CommitActorsToSave` call at 0x790EB2, plus the pacing hook | six per battle | PROGRESS 13.1, 13.13 |
 
 ---
 
@@ -409,6 +412,7 @@ timestamp changes. No co-op session is needed and none is looked for.
 | probe.joints | 0 | record kind 4, off by default because it is heavy |
 | probe.joints_chr | -1 | -1 the controlled CHR, -2 every CHR, 0..65535 an `m_id` to match |
 | probe.joints_max | 136 | joints each record has room for (8..512), read when a capture starts |
+| probe.battle | 1 | record kinds 5, 6 and 7 (section 10). A file without the key keeps the default |
 | probe.hotkey | 145 (Scroll Lock) | virtual key that toggles recording, 0 for none |
 | probe.max_steps | 0 | stop after this many steps, 0 for no limit |
 | probe.budget_mb | 64 | memory per file waiting for the disk |
@@ -500,3 +504,185 @@ IDA was read only for this pass. Every name proposed with the first three recipe
 | 0x838F70 | FFX_Mot_BuildJointTransforms `int (unsigned __int16 *)` | argument type `CHR *chr` |
 | 0x839200 | FFX_Ch_IsNearlyStationary `bool (float *)` | argument type `CHR *chr` |
 | 0x839140 | FFX_Ch_IsNearCameraForSmoothing `char (int)` | `bool (CHR *chr)` |
+
+---
+
+## 10. Battle, kinds 5, 6 and 7
+
+Added 2026-10-30 for Project Zanarkand PROGRESS 13. Not run in game yet. Recipe
+`capture/BattleRecipe.cpp`, kit side `workshop/include/ffx/BattleTrace.h`. Three files, because a file
+holds one record size and these differ by two orders of magnitude: a 13 KB snapshot every step, a 1.9 KB
+record per decision, and a 213 KB dump a handful of times a battle. All three open with every capture
+when `probe.battle=1`, so a session with no battle has three empty battle files, which is valid.
+
+Numbering, shared by the three: `battleOrdinal` counts battles from 0 in the capture session, and
+`battleStep` counts steps from 0 inside one battle. A battle is "running" when `g_ffxBtlSubPhase
+0x112A8E0` is not 0 and the unit array `*0x11334D4` is allocated (`ffx::ReadBattleTraceView`).
+
+### 10.1 Kind 5, battle, 13396 bytes
+
+One record per FFX_StepPacing call while a battle runs, plus one closing record. **The snapshot is taken
+at the start of the step**, inside the pacing hook, before FFX_MainStep runs the battle sub step. So
+record N holds what step N starts from, which is what step N-1 left. Extension 124 bytes: the sizes
+(3984, 31, 356, 68, 62, 16, 392), the unit span count and 8 spans, the global span count and 7 spans.
+
+| Offset | Field | |
+|---|---|---|
+| 0 | prefix | flags below |
+| 20 | battleOrdinal, battleStep | |
+| 28 | unitsBase, sideRecordsBase | the raw pointers, compare for equality only |
+| 36 | subPhase, turnQueueCount, cmdQueueCount, cmdQueueCopied | u8 each, counts clamped to 0..62 |
+| 40 | battleRand, effectRand | `g_ffxBattleRandState` and the effect LCG |
+| 48 | streams[68] | `FFX_Rand_Stream` states |
+| 320 | turnQueue | 62 entries of 8 bytes, `0x112AA80`, whole |
+| 816 | cmdQueue | the first 16 of 62 commands of 72 bytes, `0x112AC70`, only the live ones |
+| 1968 | globals | 392 bytes, the extension's global spans in order |
+| 2360 | units | 31 x 356 packed bytes, unit i at 2360 + 356 i |
+
+The global spans: `0x112A8E0` 0x50 (sub phase, CTB pause, pending kind, end result, script hold, debug
+flags), `0x112BDE0` 0x10 (queue counts, CTB sub tick), `0x112BE90` 4 (pending gil), `0x112C9D0` 0xA0
+(battle flow: advantage, acting unit, end wait, forced result, game over, escape, script mode),
+`0x11333C0` 0x24 (CTB ready count and list), `0x1136A68` 0x58 (AI staging) and `0x23CC088` 8 (menu
+owner and open mask). The unit spans follow Zanarkand's `BattleUnit.h`: +0x004 16, +0x590 72 (stats, HP
++0x5D0, MP +0x5D4), +0x604 100 (statuses, CTB +0x65C), +0x6C8 40, +0x700 24, +0xD24 28, +0xDC0 64 (KO
++0xDCC, ready +0xDD6, AI controlled +0xDF3), +0xF5C 12. `probe_fixture.py`'s `battle_unit_image` puts them
+back at their offsets.
+
+Flags: 0x01 globals and queues copied, 0x02 RNG read, 0x04 units copied, 0x08 more than 16 commands
+queued, 0x10 a unit copy faulted, 0x20 Began (the first record of a battle, battleStep 0), 0x40 Ended
+(the first step after it, sub phase 0, no units).
+
+### 10.2 Kind 6, battleevent, 1860 bytes
+
+One record per call of the four hooked functions, written when the call returns. They nest (an AI run
+commits, which pushes, and a property 242 kill runs the defeat AI inside the outer run), so `callId` is
+the entry order and `seq` the exit order, and a nested call is written before its parent. Only calls
+inside a battle the step snapshot is following are recorded. Extension 16 bytes: 12, 68, 72, 1024.
+
+| Offset | Field | |
+|---|---|---|
+| 0 | prefix | callIndex is the depth |
+| 20 | type (u16), depth (u16) | 1 AI run, 2 push, 3 insert, 4 hit |
+| 24 | callId, parentCallId | parent 0xFFFFFFFF at depth 0 |
+| 32 | battleOrdinal, battleStep | the step the call ran in |
+| 40 | args[12] | raw dwords, unused ones 0 |
+| 88 | result | |
+| 92 | subPhase, cmdQueueCount and turnQueueCount on entry and exit, slot, pad | u8 each, slot 0xFF unknown |
+| 100 | pendingGil | on entry |
+| 104 | battleRand on entry and exit | |
+| 112 | streamsEntry[68], streamsExit[68] | |
+| 656 | blockEntry[72], blockExit[72] | see below |
+| 800 | aiPriority, aiNoReorder | AI run, on exit |
+| 808 | hitExtra[4] | hit: the 3 drain dwords at args[7] and *args[10], on exit |
+| 824 | class3Group, class3Bytes, class3Base | AI run |
+| 836 | class3[1024] | AI run, the class 3 storage on exit |
+
+- AI run, `(u8 unit, issuer, kind, aeon, mode, fill)`: blockEntry is the fill record at args[5] on
+  entry (zero when null), blockExit is `g_ffxBtlAiStagedCmd 0x1136A78` on exit. Units 20..27 run in
+  ATEL context 3, so class3 is battle event group 1's private storage, anything else context 2, group 0.
+- Push and insert, `(unit, cmd72, ...)`: blockEntry is the record args[1] points at, blockExit the queue
+  slot it landed in. Push appends at the old count. Insert does not say where it put the record, so the
+  slot is the first one that differs from a copy taken on entry. Flag 0x10 says the slot was found.
+- Hit, ComputeEffectForTarget's 11 args: blockEntry and blockExit hold the 44 byte hit record at args[6]
+  (amounts +0x20, apply mask +0x18 with 0x100 a critical, reducedBy +0x03 with 1 a miss), the rest zero.
+  result is the HP amount.
+
+Flags: 0x01 class3 copied, 0x02 the storage is larger than 1024 (class3Bytes says how large), 0x04 a copy
+through an argument faulted, 0x08 RNG read, 0x10 slot found.
+
+### 10.3 Kind 7, battledump, 217968 bytes
+
+Whole state at chosen moments. Head 344 bytes: prefix (callIndex is the reason), reason, battleOrdinal,
+battleStep, sections, unitsBase, sideRecordsBase, class3Base[2], class3Bytes[2], subPhase and 3 pad,
+battleRand, effectRand, streams[68]. Then 31 whole units of 3984 at 344, 62 side records of 912 at
+123848, the 0x68C0 byte save block at 180392, the 0x21B0 byte work block from 0x112A8E0 at 207208, the
+0x58 byte AI staging span at 215832, and class 3 of groups 0 and 1, 1024 each, at 215920. Extension 44
+bytes: head size, 3984, 31, 912, 62, 0x68C0, work RVA 0xD2A8E0, 0x21B0, AI RVA 0xD36A68, 0x58, 1024.
+
+| Reason | When |
+|---|---|
+| 1 seen | the first step the battle is running, with Began |
+| 2 sub phase 1 | the first step at sub phase 1 |
+| 3 first menu | the first step the menu open mask `0x23CC08C` is not 0, 13.1's first prompt |
+| 4 committed | `FFX_Btl_CommitActorsToSave` just returned, inside the battle sub step. The units are still allocated and the sub phase not yet cleared, `FFX_Btl_Shutdown` is the next call (0x790EB7) |
+| 5 gone | the first step after the battle, with the Ended record |
+| 6 results closed | the first step with no menu flag up after the results screen ran |
+
+Sections: 0x01 units, 0x02 sides, 0x04 save, 0x08 work, 0x10 AI, 0x20 class 3 party, 0x40 class 3
+monster, 0x80 RNG, 0x100 a copy faulted. Results closed is found by watching `MenuSysRunning`,
+`MenuSysRunningAlt` and `MenuOpenPending` (and a gap of more than 30 presented frames between pacing
+calls, since `MenuSysRunningAlt` stops FFX_StepPacing) go up and come back down.
+
+### 10.4 What each done-when reads
+
+| Done-when | Read from |
+|---|---|
+| 13.1 actor stat blocks at the first prompt | dump reason 3, whole units and side records. Reason 2 is the state before any turn |
+| 13.4 command sequences | push and insert events, the queued record and where it landed, plus the step command queue |
+| 13.5 turn order | step turnQueue, the ready list in the globals and each unit's CTB +0x65C |
+| 13.6 every hit | hit events, the 44 byte record on both sides, the drain and tally, the streams on both sides |
+| 13.8 AI | AI run events: args give (unit, issuer, kind, mode), blockExit the staged record, aiPriority and aiNoReorder, class3 the variables after the run, streams 2 and 4 on entry and exit |
+| 13.12 battle camera | camera, kind 2. `FFX_Came_ActivateScreen` runs from FFX_MainStep after the battle sub step with no battle exclusion, so kind 2 already records it |
+| 13.13 the save block after the battle | dump reason 4 (the writeback, units still live) and reason 6 (after the results screen paid gil, AP and items) |
+| RNG | every record of all three kinds |
+
+### 10.5 Caveats
+
+- One snapshot per FFX_StepPacing call. When a pacing record's `subStepCount` is above 1 the battle
+  advanced more than once between two snapshots. The events still catch every decision inside.
+  Corrected 2026-10-31, from the first battle recording (6 battles): `subStepCount` read 769 in every
+  one of its 36332 pacing records, so the field is not a sub step count as recorded and this test cannot
+  be made from it. Use the prefix's `mainStepCounter` instead: it rose by exactly 1 from each battle
+  snapshot to the next in all 6 battles, so there every snapshot was one `FFX_MainStep`.
+- "The same draw count on streams 2 and 4" (13.8) is not a count in the record. It is the number of
+  `FFX_Rand_Stream` steps from streamsEntry to streamsExit, which `sim::GameRand` can walk.
+- Class 3 is capped at 1024 bytes, 8 monsters of the largest shipped AI (128 bytes). Context 2 can be
+  larger, flag 0x02 and class3Bytes say so.
+- The command queue in a step record holds the first 16 of 62 slots, flag 0x08 marks a step with more.
+  An event's blockExit has the landed record whatever its slot.
+- A battle the capture started inside of has no Began record and no seen dump. Start the capture on the
+  field before the encounter.
+- `g_ffxBtlDbgThrowAwayParm` skips the commit call, so no committed dump in that mode.
+- Every hook refuses a call that is not on the thread the pacing hook runs on, a record file has one
+  producer. None was seen in the disassembly, all four are reached from the battle sub step. A refused
+  call is counted and the log gets a "came from another thread" line.
+- The results closed dump (reason 6) depends on a guess about how the results screen shows up, menu
+  flags or a frame gap, and has not been seen in game. If it lands before the results screen pays out,
+  its save block will match reason 5's. Check that on the first recording.
+  Checked 2026-10-31 on the first recording (probe_20261031_154316): it lands after the payout. In all
+  6 battles the reason 6 save block holds the results screen's items, gil and equipment (it matches
+  the reason 4 block plus the Project Zanarkand port's payout, tests/engine/ItemRecordedBattleTest.cpp).
+  Its battle step reads the same as reason 5's, the battle step stops counting once the battle is gone.
+- Cost: about 13.4 KB a step, about 400 KB a second while a battle runs. A three minute battle is about
+  72 MB of steps, 1.3 MB of dumps and a few MB of events.
+
+- Added 2026-10-31, from the 13.6 and 13.8 replay of the first battle recording (Project Zanarkand
+  tests/engine/BtlRecordedHitsAndAiTest.cpp). What a replay has to rebuild because the record leaves it out:
+  - Only the exit class 3 is in an event. The entry class 3 is the previous event's exit, so the first AI
+    run of a battle has nothing to start from but the boot.
+  - Context 3 boots before the first event, and an init can draw (m088 draws stream 2). The boot's RNG
+    positions are not recorded. They can be walked back from the first event's streamsEntry, since every
+    stream's multiplier was odd and `FFX_Rand_Stream` is invertible then.
+  - The class 3 bytes no actor's definition covers keep FFX_MemAlloc's 0xCD fill:
+    FFX_Atel_GetActorClass3SliceBytes 0x86C160 rounds each slice up to 16 and
+    FFX_Atel_BindActorClass3Slice 0x870870 clears only the definition's size. The region comes from
+    FFX_BtlEv_BuildScriptContext 0x798390. Six first kind 5 runs differed from a zero filled replay only
+    there.
+  - Class 1 (the party's shared variables) is not recorded.
+  - The seen dump lands before the roster is built, so it cannot stand in for a step snapshot of the units.
+  - The issuer's `+0xDF1` (the counter variant) is set mid step, so a step snapshot can miss it. The
+    queued command's variant gives it back.
+  - The party's own AI runs (571 of them) need context 1, which the record does not carry.
+
+### 10.6 How to record a battle
+
+1. In `<game>\AlBhedWorkshop\albhed_probe.txt`: `probe.capture=1`, `probe.battle=1`. Set
+   `probe.camera=0` and `probe.motion=0` unless 13.12 is wanted, camera alone is 1.2 MB a second.
+2. Start the capture on the field, before the battle, so the Began record and the seen dump are there.
+3. Fight to the end, through the results screen, and walk a few steps on the field so the results closed
+   dump lands. Then stop the capture.
+4. `python -I tools/probe_fixture.py <the three battle files> --check` in Project Zanarkand.
+
+For 13.8 the set has to cover AI kinds 0 to 8, a boss with counters and a transform (Sinspawn Geneaux
+m102), a multi part fight and a script kill (property 242). Kinds 5 to 8 are rare (29, 18, 3 and 5 of
+332 AI slots handle them, MONSTER_AI.md 1), so check the AI runs by event kind line of the summary.

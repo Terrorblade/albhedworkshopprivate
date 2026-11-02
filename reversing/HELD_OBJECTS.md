@@ -92,6 +92,12 @@ mechanism is the engine's general answer rather than a script trick:
 - `sub_793330` at `0x793399`, `sub_793F10` at `0x793FB9`, `sub_795C90` at `0x795CE6`/`0x795D1D`
   and `sub_7AAB80` at `0x7AABC0`. All battle, all going through `FFX_Btl_GetUnitChr`. Weapons
   on battle units.
+  Correction 2026-11-01: these are `FFX_Btl_AttachWeapon`, `FFX_Btl_DetachWeapon`,
+  `FFX_Btl_AttachUnitToUnitBone` and `FFX_Btl_StepUnitMoves` (the last proposed in
+  tools/apply_battle_motion_names.py). Only the first two are weapons. The other two hang a whole unit's CHR
+  off another unit's bone (a linked unit, +0x43F and +0x441). The weapon's bone is 14 (armour 15), looked up
+  in the owner's data, and the weapon follows its owner's show votes (BATTLE_ACTOR.md section 1.2, the
+  2026-11-01 correction).
 
 Both groups are driven by state that is itself replicated, so neither needs a sync.
 

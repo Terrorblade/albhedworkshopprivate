@@ -542,6 +542,19 @@ composition changes with the in-battle Switch command, not from the field menu. 
 party-order screen in the field menu to sync.** The party-ordering problem is a battle-menu
 problem, which is somebody else's area.
 
+**Corrected 2026-10-31, this negative is wrong.** The main menu (module 1) does reorder the party.
+`FFX_Menu_ExecModule1Main 0x8E0350` calls `FFX_Menu_CommitPartyOrderSwap 0x8A9720` at 0x8E0915, and
+that calls `FFX_SaveData_SetPartyOrderSlot 0x784D00` at 0x8A97A3, which writes the u8[20] order at
+`saveData+0x3D58` (three field slots, then the 17 bench slots at +0x3D5B). The rows come from
+`FFX_Menu_BuildPartyOrderList 0x8A8F40` (built in `FFX_MenuSys_RunFrame`): the field slots, then the
+bench, then selectable characters not in the order, Seymour never listed. A swap whose target row is
+past the field slots goes to that character's bench slot, and the menu's list swaps its two rows
+even when the setter refuses (a slot locked character). The earlier search missed it because it
+looked for `SetCharInParty`, `CommitPartyToField` and direct writes, and this path is none of them.
+Membership still never changes from the menu, only the order. Ported as `party::BuildPartyOrderList`
+and `party::CommitPartyOrderSwap` in Project Zanarkand. So there is a field menu party order write
+to replicate in co-op.
+
 Also worth knowing: `FFX_SaveData_SetCharAbility 0x785E00` has exactly one caller,
 `sub_7AE370`, whose only caller is `sub_792210`, and neither is in the menu. So learning an
 ability is not committed from the menu screens either, it comes through the battle and reward
@@ -703,6 +716,15 @@ One more identity note: the Equip screen does **not** take the character from th
 it from the equipment entry's `+4` ForChar byte, which is how `sub_8D8520` and `sub_8D9120` call
 `FFX_SaveData__setCharEquip(entry[4], entry[5], slotId)`. So an equipment ownership rule has to
 read the entry, not the cursor.
+
+Corrected 2026-10-31 (the Zanarkand equipment port, src/ffx/equip/EquipMenu.h, from the disassembly
+at 0x8CF113..0x8CF2ED). That holds for the shop's two equip-on-buy helpers, which are the ones named
+above, not for module 4. The Equip screen lists `FFX_SaveData_ListEquipForChar(cursor character,
+side, 0)` and calls setCharEquip with the cursor character, so there the cursor is the character. Its
+init is `FFX_Menu_InitModule4Equip 0x8CF830`, which keeps the current HP and MP of characters 0..6. A
+pick that would leave HP or MP below the kept value is undone and asked about with kernel string 5
+rows 14, 15 or 16 (by a mask of 1 HP, 2 MP), answer row 0 commits. The armour list ends with a row id
+0 that stands for none, and `FFX_Menu_EquipPickedRowSlot 0x8D0430` turns it into 0xFF.
 
 ## The menu's button conventions, read off the Config screen
 
@@ -882,6 +904,31 @@ The same object has a second host. The Items screen, state 17 of `FFX_Menu_ExecM
 [ebx+22h], 10h` at 0x8C8A8D), and only item 101 "Rename Card" has that bit in item.bin. So renaming
 from the menu runs inside module 3, not module 14.
 
+## Module 3, using an item outside battle [V]
+
+Added 2026-10-31, from porting it (Project Zanarkand src/ffx/item/FieldUse.cpp, names in
+tools/apply_item_names.py). The field path does not share the battle formulas, it has its own.
+
+- The setup `sub_8C8A30` reads the item row (`FFX_Menu_GetItemRowAndName 0x8AB280`). +0x23 picks
+  what it restores: 2 MP, 3 HP and MP, anything else HP. +0x22 bit 0x10 is the rename (unless the
+  language is 11). One target when `(u16 +0x1A >> 2) & 3` is neither 1 nor 2, which goes to
+  `g_ffxItemsMenuSingleTarget 0x186A391`. The target mask is bit i over the aeon list
+  (`FFX_Menu_BuildAeonList 0x8A9090`) and then the party list, in the same 16 bits.
+- States 11 and 12 refuse an item whose +0x22 has bit 0x08. `FFX_ItemsMenu_CanReceive 0x8C6A70`
+  is (kind 0 HP below max, 1 MP below max, 2 either, 3 always).
+- The amount `FFX_ItemsMenu_GetRestoreAmount 0x8C69A0`, by the formula byte +0x28 and the power
+  byte +0x2A: 6 is 50 * power, 7 is power * ((power + magic) / 2) with the magic stat at record
+  +0x31, 8 is power * max / 16 (imul then a signed divide, 0x8C69DD..0x8C69E9) over max HP, or max
+  MP for the MP pass. Any other formula restores 0.
+- The apply `FFX_ItemsMenu_ApplyHp 0x8C8C40` and `FFX_ItemsMenu_ApplyMp 0x8C8D50`: the one target,
+  or with +0x22 bit 0x80 every aeon of the aeon list and with bit 0x40 every party member, each with
+  its own amount. `FFX_ItemsMenu_RestoreHp 0x8C8D10` / `RestoreMp 0x8C8E20` add with a 32 bit add and
+  cap at the max. `FFX_Menu_SetCharCurrentHp` clears the aeon recovery byte +0x3D when the HP is not 0.
+- State 14 applies, state 15 does `FFX_SaveData_AddItem(item, -1)`, state 17 is the name input above.
+- Sort `FFX_ItemsMenu_SortByOrderTable 0x8C8FE0` empties all 256 slots, sums the listed counts by id
+  & 0xFFF, and writes them back in the order of `g_ffxItemSortOrder 0xC87578` until 0xFFFF. An id
+  the table does not name is dropped.
+
 ## Module 12 = the equipment shop, module 13 = the item shop [V]
 
 | | module 12 `FFX_Menu_ExecModule12EquipShop 0x8D6E40` | module 13 `FFX_Menu_ExecModule13ItemShop 0x8D9600` |
@@ -893,6 +940,31 @@ from the menu runs inside module 3, not module 14.
 | refusals | mmain 25 / 26, then 49..51 and 40 "Equip?" after a buy | mmain 25 "You can't carry any more." / 26 "You don't have enough gil." |
 | sell | state 32: `FFX_SaveData_RemoveEquipEntry` + `SpendGil(-price)`, mmain 52..54 when the piece is equipped or cannot be sold | through `sub_8D9BD0` / `sub_8D9E20` |
 | close | `FFX_Module_Suspend(12)` in state 36 | `FFX_Module_Suspend(13)` in state 32 |
+
+Added 2026-10-31, from porting module 13 (Project Zanarkand src/ffx/item/Shop.cpp, names in
+tools/apply_item_names.py):
+
+- Buy price `FFX_ItemShop_GetPrice 0x8DB3B0`: the `item_rate` dword at row (id & 0xFFF) times
+  `FFX_Shop_GetPriceRate 0x86C480` (`g_ffxShopPriceRate 0x1326B6C`) in 32 bits (imul at 0x8DB3D4),
+  / 100 truncating, 1 when that is 0. core:549 sets the rate through `FFX_Shop_SetPriceRate 0x870F60`,
+  and `FFX_Ev_LoadEventPackage` puts it back to 100 (0x872F38), as `FFX_Atel_Init` does at boot. The
+  equipment shop's buy price reads the same rate.
+- Sell price `FFX_ItemShop_GetSellPrice 0x8DB400`: `FFX_Shop_SellPriceFromBase 0xA5CEE0` of the
+  `item_rate` dword, base / 4 signed, 1 when that is 0. The rate does not apply.
+- Stock `FFX_ItemShop_CountStock 0x8DB440`: up to 16 u16 ids from `item_shop` row +2, stopping at
+  the first 0 or 0xFF.
+- Quantity windows `FFX_ItemShop_OpenBuyQuantity 0x8DA860` and `FFX_ItemShop_OpenSellQuantity
+  0x8DAA00`, both starting at 1. The buy step `FFX_ItemShop_StepBuyQuantity 0x8D9BD0` allows at
+  most gil / price (idiv at 0x8D9BFA), cut so held + n stays at 99, and its confirm is
+  `AddItem(item, n)` then `SpendGil(price * n)`. The sell step `FFX_ItemShop_StepSellQuantity
+  0x8D9E20` allows at most the count held, confirm `AddItem(item, -n)` then `SpendGil(-(price * n))`.
+  Left and right move by 1, up and down by 10.
+- The sell list is every walked slot in slot order, empty slots as zero rows.
+- Module 12's record side: state 21 after a buy calls `FFX_EquipShop_TryOnLoss 0x8D8520`, which
+  equips the piece on its own character (entry +4) and side (+5), recomputes, notes whether the
+  current HP (bit 1) or MP (bit 2) went down, and puts everything back. 1, 2 and 3 pick mmain 49, 50
+  and 51, 0 picks 40 "Equip?". Yes in state 22 runs `FFX_EquipShop_EquipBought 0x8D9120`. The sell,
+  state 32, reads `FFX_EquipShop_GetSellPrice` first, then `RemoveEquipEntry` and `SpendGil(-price)`.
 
 Both shop ids run 0..46 in the scripts, and `arms_shop.bin` and `item_shop.bin` both have exactly 47
 rows. Events open both shops back to back with the same id (nagi0000 0x4004001D then 0x4002001D),

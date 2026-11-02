@@ -7,7 +7,8 @@
 // That is everything zan::app::StepPacing::Step needs to be fed and checked against.
 //
 // This hook also keeps the step cursor, so it runs its bookkeeping on every call whether
-// or not anything is being recorded.
+// or not anything is being recorded, and it is where the battle recipe takes its per step
+// snapshot.
 
 #include "capture/Capture.h"
 
@@ -66,6 +67,11 @@ namespace probe
 				cursor.cameraCallInStep = 0;
 				cursor.motionCallInStep = 0;
 				NoteStepForLimit();
+				NoteStepThread();
+
+				// The battle snapshot is the state at the start of this step, see
+				// BattleRecipe.cpp. It records whether or not pacing does.
+				OnBattleStep(frame.phyreFrameTick);
 
 				g_open = NULL;
 				if (!settings.pacing || !BeginRecord())

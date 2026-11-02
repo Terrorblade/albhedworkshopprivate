@@ -960,6 +960,50 @@ namespace ffx
 		// BtlCommitPartyToField, which is what overwrites a mid battle field party edit.
 
 		// ---------------------------------------------------------------------------
+		// THE BATTLE AS A RECORDER SEES IT. For ffx/BattleTrace.h, the probe's battle
+		// recipe. Read in IDA 2026-10-30, each one from the disassembly.
+		// ---------------------------------------------------------------------------
+
+		// BTLUNIT *, the 31 big unit records. FFX_Battle_IsActive 0x795970 is
+		// "mov eax, [0x11334D4] / retn" and FFX_Battle_GetActor 0x794020 adds
+		// 3984 * index to it for an index below 31.
+		const DWORD BattleUnits = 0x00D334D4;
+		const int BattleUnitCount = 31;
+		const int BattleUnitBytes = 3984;
+
+		// BTLCHR *, the 62 side records of 912 bytes, GetActor's index 31..92 at
+		// 0x794046: imul eax, 390h / add eax, [0x113446C].
+		const DWORD BattleSideRecords = 0x00D3446C;
+		const int BattleSideRecordCount = 62;
+		const int BattleSideRecordBytes = 912;
+
+		// The battle work globals from g_ffxBtlSubPhase (BtlSubPhase above) up to the
+		// save block at 0x112CA90. The turn queue, the command queue, the counts, the
+		// CTB sub tick, the debug flags and the end of battle state all sit in it.
+		// A byte count, not an address.
+		const int BtlWorkBlockBytes = 0x21B0;
+
+		// The three battle event groups of FFX_BtlEv_BuildScriptContext 0x798390, 84
+		// bytes each, group g making ATEL context g + 2. +0x00 the block count, +0x04
+		// the actor pool, +0x08 its size, +0x0C the private class 3 storage, +0x10 its
+		// size (the sum of FFX_Atel_CalcBlockClass3Bytes over the blocks), +0x14 the
+		// eight block pointers. Groups 0 and 1 allocate both with FFX_MemAlloc, group 2
+		// uses a static 2048 byte buffer. Class 3 is where the monster AI keeps its
+		// variables (reversing/MONSTER_AI.md section 7), one 16 aligned slice per
+		// large actor.
+		const DWORD BtlEvGroups = 0x00D34470;
+		const int BtlEvGroupBytes = 84;
+		const int BtlEvGroupCount = 3;
+		const int BtlEvGroupClass3Off = 0x0C;
+		const int BtlEvGroupClass3BytesOff = 0x10;
+
+		// The one call to BtlCommitActorsToSave, in BtlMainStep's teardown:
+		// 0x790EB2 e8 09 51 ff ff, then the call to FFX_Btl_Shutdown at 0x790EB7. Its
+		// own prologue is push ebx / push esi / push edi / call, so no detour fits and
+		// the call site is patched instead.
+		const DWORD BtlCommitActorsToSaveCallSite = 0x00390EB2;
+
+		// ---------------------------------------------------------------------------
 		// Every address above, for the startup build check.
 		// ---------------------------------------------------------------------------
 		inline const DWORD* BattleRvaList(int* count)
@@ -1281,6 +1325,10 @@ namespace ffx
 				BtlSwapUnitIntoPartySlot,
 				BtlSwapPartyArrangement,
 				BtlResolveUnitChrId,
+				BattleUnits,
+				BattleSideRecords,
+				BtlEvGroups,
+				BtlCommitActorsToSaveCallSite,
 			};
 			if (count)
 				*count = (int)(sizeof(list) / sizeof(list[0]));

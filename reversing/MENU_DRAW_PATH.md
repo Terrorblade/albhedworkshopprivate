@@ -408,6 +408,11 @@ line end: x back to the line start, y += 16
 The glyph quad rounds each edge to a whole HD pixel and keeps glyphs square (pen across at 3.75,
 width at 2.596). TEXT_RENDERING 4 to 6 has the formulas, they are not repeated here.
 
+2026-11-01, a correction: the chart above is `FFX_Text_DrawString`'s. `FFX_Text_DrawStringScaled
+0x905970` has the same pen and advance, but its layer 0 is `sub_8FAE40`, an eight copy ring at 2 HD pixels
+in each direction divided by the outline scale, not the single +2, +2 shadow, and it has no 0x0B button
+icon handling. `sub_905930` calls it with alpha 128. [V]
+
 ## 11. For 6.4.2: the main menu
 
 Every number here is HD pixels from the top left of the 1920x1080 frame, which is what the code's

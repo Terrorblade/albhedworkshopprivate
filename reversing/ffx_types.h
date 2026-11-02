@@ -513,7 +513,10 @@ struct BTLCHR {
   /* 0x011 */ unsigned __int8 m_ownsDataFile;   // 1 by default. FFX_Btl_LoadMonsterData clears it when an earlier slot already loaded the same mNNN.bin,
                                                 // and FFX_Btl_BindMonsterArchiveSections and sub_784000 0x784000 only bind sections for an owner
   /* 0x012 */ unsigned __int8 m_chrBorrowed;   // m_chr belongs to another record: FFX_Btl_SetupWeaponChr sets it on units 28..30 when it hands them the owner's
-                                               // weapon CHR, and the dispose loops (sub_793480 0x793480, sub_7821F0) skip such records
+                                               // weapon CHR, and the dispose loops (sub_793480 0x793480, sub_7821F0) skip such records.
+                                               // 2026-11-01: it also forwards. FFX_Btl_OnMotionEvent 0x7B7502 hands the record's motion events to m_primaryUnit,
+                                               // FFX_Btl_StepUnitMotionSpeed takes m_primaryUnit's +0x406, and sub_7AAB80 steps the move of a record with it set
+                                               // even when m_exists is 0 [V]
   /* 0x013 */ unsigned __int8 m_weaponUnit;   // the unit 28..30 that stands in for this unit's weapon (FFX_Btl_SetupWeaponChr: Wakka 4 -> 28, Lulu 5 -> 29,
                                               // Yojimbo 14 -> 30), 0xFF none. FFX_Btl_SetUnitShowVote 0x797080 forwards visibility to it
   /* 0x014 */ unsigned __int8 m_primaryUnit;   // the first slot sharing this record's monster file (FFX_Btl_LoadMonsterData writes slot + 20), the
@@ -674,7 +677,7 @@ struct BTLUNIT {
                                                 // m_onField on death, so a dead enemy leaves the field and a dead character stays (BATTLE_START_AND_END.md 2.4).
                                                 // FFX_Btl_ResetUnitForReentry restores it from m_leaveOnDeathDefault. AI property 79
   /* 0x3F6 */ unsigned __int8 m_leaveOnDeathDefault;   // the value FFX_Btl_ResetUnitForReentry copies back into m_leaveOnDeath. Btl 078 writes both
-  /* 0x3F7 */ unsigned __int8 m_deathEffectStarted;   // 1 when sub_79E3D0 0x79E48C launches a defeat dissolve effect. sub_78CCA0 0x78CCA6 then leaves +0x436 set instead of clearing it. Never cleared in the walk [V]
+  /* 0x3F7 */ unsigned __int8 m_deathEffectStarted;   // 1 when sub_79E3D0 0x79E48C launches a defeat dissolve effect. sub_78CCA0 0x78CCA6 then leaves +0x436 set instead of clearing it. Never cleared in the walk [V]. Correction 2026-11-01: FFX_Btl_EffectAdvanceState 0x788920 cases 4 and 15 clear it with +0x436 (0x788A43, 0x788A4A) when the effect ends
                                                       // Written by sub_79E3D0 0x79E3D0. Read by sub_78CCA0 0x78CCA0
   /* 0x3F8 */ unsigned __int8 m_centreSlot;   // 1 for party slot 1 and aeon 16 at setup (0x79C3B0, 0x79C528), passed on by a switch (0x7ADD18). sub_796D70 0x796D90 treats a unit with it as the centre of a 3+ unit target mask, so sub_7969F0 does not re-aim it. Debug label C. AI property 297 [V]
                                               // AI property 297. Written by Btl_SetupUnitRoster 0x79C110, Btl_SwapUnitIntoPartySlot 0x7ADAE0, BtlAi_SetProperty 0x7B4B70. Read by BtlAi_GetProperty 0x7B2DC0, sub_796D70 0x796D70, sub_7DBEE0 0x7DBEE0
@@ -684,12 +687,12 @@ struct BTLUNIT {
                                                             // Written by Btl_StartCommandExec 0x7AE370. Read by sub_7AB360 0x7AB360
   /* 0x3FB */ unsigned __int8 m_forceAttackReturn;   // latched from m_b3FA at event start (sub_7AB360 0x7AB3A1). sub_7B4A70 0x7B4A76 ORs motion_type 0x8 attack_return into m_motionType while set, sub_7A88E0 doubles unit 29's run speed. AI property 340 [V]
                                                      // AI property 340. Written by sub_7AB360 0x7AB360, BtlAi_SetProperty 0x7B4B70. Read by sub_7A88E0 0x7A88E0, BtlAi_GetProperty 0x7B2DC0, sub_7B4A70 0x7B4A70
-  /* 0x3FC */ unsigned __int16 m_motionSpeed;   // motion speed factor, sub_78AC20 0x78ACCB and sub_7A8FC0 scale frame counts by it / 8. 256 at setup,
+  /* 0x3FC */ unsigned __int16 m_motionSpeed;   // motion speed factor, FFX_Btl_StepUnitMotionSpeed 0x78ACCB and FFX_Btl_PlayScriptMotion scale frame counts by it / 8. 256 at setup,
                                                 // Btl 058 writes it, sub_7882C0 hands it to sub_788430
   unsigned __int8 _unk_3FE[0x2];
-  /* 0x400 */ unsigned __int16 m_appliedMotionSpeed;   // the speed sub_78AC20 last pushed with FFX_Ch_SetSpeedMulA (0x78AD2A). 256 at setup, 0xFFFF forces a re-push (FFX_Btl_OnUnitChrReloaded, Btl 181). FFX_Btl_GetUnitAppliedMotionSpeed 0x7956C0 returns it. Debug SP. AI property 251 [V]
+  /* 0x400 */ unsigned __int16 m_appliedMotionSpeed;   // the speed FFX_Btl_StepUnitMotionSpeed 0x78AC20 last pushed with FFX_Ch_SetSpeedMulA (0x78AD2A). 256 at setup, 0xFFFF forces a re-push (FFX_Btl_OnUnitChrReloaded, Btl 181). FFX_Btl_GetUnitAppliedMotionSpeed 0x7956C0 returns it. Debug SP. AI property 251 [V]
                                                        // AI property 251. Written by Btl_OnUnitChrReloaded 0x783BC0, sub_78AC20 0x78AC20, Btl_SetupUnitRoster 0x79C110 and 1 more. Read by BtlAi_GetProperty 0x7B2DC0, sub_78AC20 0x78AC20, sub_787840 0x787840 and 5 more
-  /* 0x402 */ unsigned __int16 m_motionSpeedOverride;   // speed used instead of m_motionSpeed * m_statusMotionSpeed / 8 while m_motionSpeedOverrideOn is 1 (sub_78AC20 0x78ACC2, sub_7A8FC0 0x7A90EE). FFX_Btl_SetUnitMotionSpeedOverride 0x78845A writes it, sub_7AA260 and sub_7AA280 reset it to 256 [V]
+  /* 0x402 */ unsigned __int16 m_motionSpeedOverride;   // speed used instead of m_motionSpeed * m_statusMotionSpeed / 8 while m_motionSpeedOverrideOn is 1 (FFX_Btl_StepUnitMotionSpeed 0x78ACC2, FFX_Btl_PlayScriptMotion 0x7A90EE). FFX_Btl_SetUnitMotionSpeedOverride 0x78845A writes it, sub_7AA260 and sub_7AA280 reset it to 256 [V]
                                                         // Written by sub_788430 0x788430, sub_7AA260 0x7AA260, sub_7AA280 0x7AA280. Read by sub_78AC20 0x78AC20, sub_7A8FC0 0x7A8FC0
   /* 0x404 */ unsigned __int8 m_motionSpeedOverrideOn;   // 1 selects m_motionSpeedOverride (sub_78AC20 0x78ACB3). FFX_Btl_SetUnitMotionSpeedOverride 0x788461 sets it, maybe_FFX_Btl_ResetUnitsForEffectStart and sub_7AB6C0 clear it. FFX_Btl_PlayUnitMotion 0x78830E installs the base speed when it is 0 [V]
                                                          // Written by sub_788430 0x788430, sub_793E00 0x793E00, sub_788E90 0x788E90 and 3 more. Read by sub_78AC20 0x78AC20, sub_7882C0 0x7882C0, sub_7A8FC0 0x7A8FC0
@@ -779,7 +782,7 @@ struct BTLUNIT {
                                                     // Written by sub_7A8FC0 0x7A8FC0, sub_7882C0 0x7882C0. Read by sub_7878A0 0x7878A0, Btl_FinishActions 0x7911E0, AtelSys_Btl_163_resi 0x7A3730 and 2 more
   /* 0x435 */ unsigned __int8 m_mixPrepareBusy;   // the Mix prepare event is running. FFX_Btl_ExecCommand 0x792418 sets it in record state 4 (set by FFX_Btl_StartMixPrepareLoad) with event 29, Btl 018 0x7A29C8 clears it, sub_7B0520 0x7B0544 waits on it [V]
                                                   // Written by AtelSys_Btl_018_resi 0x7A29A0, Btl_ExecCommand 0x792210. Read by sub_788480 0x788480, sub_7B0520 0x7B0520
-  /* 0x436 */ unsigned __int8 m_dying;   // death sequence running. sub_78DC30 0x78DC72 sets it when it starts the KO event (57, 58, 64 or 8), sub_78CCA0 0x78CCAF clears it when done. FFX_Btl_ExecCommand 0x7923F4, FFX_Btl_PlayUnitReaction 0x78CA57 and FFX_Btl_EndPhaseStep 0x791CAA wait on it [V]
+  /* 0x436 */ unsigned __int8 m_dying;   // death sequence running. sub_78DC30 0x78DC72 sets it when it starts the KO event (57, 58, 64 or 8), sub_78CCA0 0x78CCAF clears it when done. FFX_Btl_ExecCommand 0x7923F4, FFX_Btl_PlayUnitReaction 0x78CA57 and FFX_Btl_EndPhaseStep 0x791CAA wait on it [V]. Correction 2026-11-01: with a death effect started (+0x3F7) sub_78CCA0 leaves it, the effect's end clears it (FFX_Btl_EffectAdvanceState cases 4 and 15, 0x788A43), and sub_78DC30 sets it on every path, the release kinds 1 and 6 too
                                          // Written by sub_78DC30 0x78DC30, sub_7B7E20 0x7B7E20, Btl_SwapUnitIntoPartySlot 0x7ADAE0 and 1 more. Read by sub_788480 0x788480, sub_787950 0x787950, Btl_ExecCommand 0x792210 and 9 more
   /* 0x437 */ unsigned __int8 m_neckAimEnabled;   // the unit turns its neck toward a single target. FFX_Btl_AimNeckAtSingleTarget 0x7B1EA4 does nothing while it is 0, FFX_Btl_SetupUnitRoster 0x79C538 sets 1. AI property 335 [V]
                                                   // AI property 335. Written by Btl_SetupUnitRoster 0x79C110, BtlAi_SetProperty 0x7B4B70. Read by sub_7B1E80 0x7B1E80, BtlAi_GetProperty 0x7B2DC0

@@ -337,7 +337,7 @@ Ids are the file's own `firstId..lastId`, which is what the game's own setters t
 | `sphere.bin` | 0..49 | `inpc` | sphere types |
 | `takara.bin` | 0..497 | `inpc` | treasure |
 | `item_get.bin` | 0..365 | `inpc` | 100 KB of drop tables, 280 bytes a row |
-| `shop_arms.bin` | 0..427 | `inpc` | shop stock, with `arms_shop` / `item_shop` / `*_rate` alongside |
+| `shop_arms.bin` | 0..427 | `inpc` | shop stock, with `arms_shop` / `item_shop` / `*_rate` alongside. Added 2026-10-31: `arms_rate.bin` is the equipment shop's price per auto-ability, the first u32 of the row an ability id & 0xFFF locates (`FFX_EquipShop_GetRateRow 0x8C1AF0`), summed over the filled slots, and `kaizou.bin` (asset kind 47 row 5) is the Customize recipes, 8 byte rows {u16 kind mask, u16 ability, u16 item, u8 quantity}. CHEAT_SAVEDATA.md 4.5 |
 | `prepare.bin` | 0..111 | `inpc` | 224 bytes a row |
 | `*_txt.bin` | small | either | UI strings per screen: `menu_txt`, `btl_txt`, `config_txt`, `save_txt`, `status_txt`, `summon_txt`, `arms_txt`, `item_txt`, `mmain_txt`, `btlend_txt`, `build_txt`, `name_txt`, `help_txt` |
 

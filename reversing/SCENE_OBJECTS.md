@@ -102,6 +102,19 @@ m_meshInstance +28. 10,306 share a node's world. No world is shared by two mesh 
 Verified, data. The "node" pointer at mesh instance +0x1C that DISPLAY_LIST.md mentions is this
 m_bounds PMeshInstanceBounds, not a PNode.
 
+Correction 2026-11-01: m_groupID is the u32 at +72, and the game reads it. `FFX_Gfx_ApplyMapPartMask`
+0x66D610 (proposed, was sub_66D610) shows or hides an instance by its bit `1 << m_groupID` in the map part
+mask (`g_ffxMapPartMask`, dword_18DED0C): it writes the instance back into, or clears, m_meshInstance +28 of
+its PMeshInstanceBounds. `FFX_Gfx_FinishMapLoad` 0x65B8A0 makes the same test at load against gfx +64276.
+The mask starts at -9 (-1 with `g_ffxBtlDbgMapCircle`) and the scene pass clears bit 3 every pass, so group 3
+never draws. See BTLMAP_FORMAT.md section 6.
+
+Gap 2026-11-01: the mask has more writers than the load. `FFX_Map_SetPartMask` 0x90A2B0 stores its
+argument straight into dword_18DED0C (the store is at 0x90A2B6), so a script can change which groups show
+after the load. The other writers are `FFX_Map_LoadMapOutSync` (0x909640), `FFX_Map_MountDevVpa` (-1 at
+0x909772) and `FFX_Map_OnMapOutLoaded` (0x9099D9), and `FFX_Map_GetPartMask` reads it (0x908960). Project
+Zanarkand only carries the load's value and the scene pass's bit 3 clear, not the set. [V, xrefs]
+
 ## 5. What a map load does to the model cluster
 
 `FFX_Gfx_AdoptMapCluster 0x65AF60` (proposed, verified static) runs for the first model row of a

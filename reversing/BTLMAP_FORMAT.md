@@ -347,6 +347,16 @@ By class:
   section 0 map, so these are unreachable [I]. They are the same four maps that carry section 12.
 - `ags.phyre`: 10 `PSpriteAnimationInfo`, texture animation.
 
+Correction 2026-11-01: the battle background scene carries a debug circle, a ring with axes and a letter
+drawn in white, as a mesh instance of m_groupID 3 (`FFX_Gfx_ApplyMapPartMask` 0x66D610, SCENE_OBJECTS.md
+section 4). bsil03_a holds exactly one group 3 instance (objID 9) and bsil07_a one (objID 24), every other
+instance of those two is in a group the mask keeps. `FFX_Map_OnMapOutLoaded` 0x9097C0 and
+`FFX_Map_LoadMapOutSync` 0x9093B0 set the part mask to -9, or to -1 when `g_ffxBtlDbgMapCircle` 0x112A91B is
+set, and `maybe_FFX_Map_UpdateScenePass` 0x90BF10 sets bit 8 for scene 138 (0x90BF38) and clears bit 3
+(0x90BF42) in place before every `FFX_Map_SetGfxPartMask` 0x6423D0. So a renderer that draws every instance
+shows the circle, and the game never does. Presentation only, nothing in it draws a random number. Project
+Zanarkand `src/engine/phyre/Scene.h` MapPartMaskForPass and MeshInstanceShown.
+
 ## 7. For the recreation
 
 - Load the MAP1 with the same reader as a field map. Only sections 1, 2, 10, 11 and 12 occur, and a

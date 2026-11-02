@@ -476,6 +476,15 @@ monster shares anyway. The 13.8 port runs one block twice for units 20 and 21 an
 counters apart (BtlMonsterAiRunsASyntheticScriptAndCommits). [V] for the resolver, [D] for the
 census
 
+Added 2026-10-31, from the 13.8 replay of the first battle recording. A slice is not all variables.
+`FFX_Atel_GetActorClass3SliceBytes 0x86C160` rounds each actor's slice up to 16 bytes and
+`FFX_Atel_BindActorClass3Slice 0x870870` clears only the definition's size, so the tail of a slice keeps
+the 0xCD fill of the FFX_MemAlloc that `FFX_BtlEv_BuildScriptContext 0x798390` makes the region with
+(groups 0 and 1, group 2 uses the static `unk_1135570`). No script reads those bytes, but a byte for
+byte compare of class 3 sees them, and a port that zero fills them differs there and nowhere else. The
+boot (every actor's init) runs before the battle's first AI event and an init can draw: m088's init draws
+stream 2 once. [V]
+
 ---
 
 ## 8. The reader, tools/mon_ai.py
@@ -580,6 +589,16 @@ So a Geneaux turn draws stream 4 up to twice on steps 0 and 1 (the second only o
 on step 2, and his kind 2 handler (being targeted) can roll stream 2, gated on the count of his
 Tentacles (`btl:30(-15, 0x1067)`). [D]
 
+Added 2026-10-31, the other two kinds, from `tools/mon_ai.py`'s listing and checked on the port headless
+(BtlMonsterAiShippedGeneaux*). The init sets `var 9` to max HP * 4 / 5. Kind 3 (counter): nothing at 0 HP
+or with `var 4` at 255, below `var 9` the transform, `AiAddCommand(20, 0x6007)` with properties 91 = 1,
+32 = 0, 14 = 15, 13 = 10, `btl:168(-13, 9, 23)` (the collision radius), `var 3 = 0`, `var 4 = 255`.
+Otherwise `btl:16(-17, alive, 0, 0)`, the issuer, which cannot tie and so never draws, and two
+`btl:151` branches gated on `var 7`. Kind 2 (targeted): `var 6 = btl:25` (the issuer's command),
+`var 7 = btl:26(var 6, 1)` (u16 +0x20 & 3 of its row), and with tentacles present and `var 7 == 2` the command is
+turned onto a tentacle with `btl:27(t, 0x6009)`: 21 if it is alive, else 22, when one is present, and with two the
+issuer's property 29, or `Rand16 % 2 + 1` on stream 2 when that is 0. [D]
+
 The deterministic contrast is **Sinspawn Ammes (m159)**: kind 0 is `AiAddCommand(-14, 0x304E Demi)`
 every turn, plus a `var 0` triggered property write. No RNG site in any AI kind. [D]
 
@@ -602,7 +621,7 @@ Arguments in push order (the last is the top of the stack). [V] from the handler
 | `btl:158` | MotionEventHit | selector, x, y (fires `FFX_Btl_OnMotionEvent`) |
 | `btl:170` | GetSelfProperty | prop |
 | `btl:171` | SetSelfProperty | prop, value |
-| `btl:178` | SetSelfFloat | index 0..9, float -> `+0x4BC..+0x4E4`, 9 also the collision radius |
+| `btl:178` | SetSelfFloat | index 0..9, float -> `+0x4BC..+0x4E4` out of order (ATEL_BTL_LIBRARY.md row 178, corrected 2026-10-31), 9 the collision radius at `+0x4E4` |
 
 Also seen and decompiled but not used to pick commands: `btl:7` PlayMotion, `btl:8` WaitMotion
 (poll), `btl:9` ground mode, `btl:10`, `btl:13`, `btl:18`, `btl:20` returns `dword_112C8D8`,

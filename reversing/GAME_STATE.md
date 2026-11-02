@@ -123,11 +123,26 @@ Three more bits on the same byte have readers:
 |---|---|---|
 | in party | `0x785380` | 0x01 |
 | permanent, cannot be removed | `0x7853C0` | 0x02 |
-| unknown | `0x785360` | 0x04 |
+| slot locked, the order setter will not move it | `0x785360` | 0x04 |
 | selectable, set in lockstep with bit 0 | `0x7853A0` | 0x10 |
 
 `FFX_SaveData_SetCharInParty 0x7869B0` (was `sub_7869B0`) sets bits 0 and 4 together, refuses to
 clear when bit 1 (permanent) is set, and keeps the 17-byte aeon order array at +0x3D5B in step.
+
+Corrected 2026-10-31, from the disassembly while porting the party (Project Zanarkand
+src/ffx/party/Lineup.cpp, checked against a Python model of the original):
+- Bit 0x04 is the slot lock. `0x785360` is now `FFX_SaveData_IsCharSlotLocked` (was
+  `FFX_SaveData_GetCharFlagBit2`). `FFX_SaveData_SetPartyOrderSlot` refuses to move a character that has
+  it, and refuses to swap one out of the target slot.
+- "Sets bits 0 and 4 together" holds for an `on` that is not 0: the byte becomes
+  `(on & 1) * 0x11 | flags & 0xEE`, so an `on` of 2 clears both bits and gets past the permanent guard.
+  The `on` of 0 path clears bit 0 only, so a removed character stays selectable, and only that path
+  honours bit 1.
+- The array it keeps in step is the whole 20 byte order, the three field slots at +0x3D58 and the 17
+  bench slots at +0x3D5B. On add, a character below 8 that is in none of the 20 is appended to the
+  first empty bench slot. On remove, the first slot holding it is emptied. Aeons are never placed.
+- Both paths end in `FFX_SaveData_RecomputeEncountersEnabled 0x785B10`, and the add path first clears
+  the "worn" bit (0x02 at +3) of both equipped entries for characters 0..6.
 
 ## 2. Which character is which
 

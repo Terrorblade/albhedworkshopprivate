@@ -164,6 +164,11 @@ from 0xB5F890 (glyph) or 0xB5F8D0 (shadow) at index `2 * (slot / 2)`, the first 
 vertices and the second for the top two, a vertical gradient. Glyph colour 0 is grey 0x9D9D9D at
 the bottom to white at the top. **V**
 
+2026-11-01: "slot" there is the 16 entry page table's index (two pages per colour), so the words are
+`[2 * nibble]` (bottom) and `[2 * nibble + 1]` (top), each `R << 24 | G << 16 | B << 8 | A`. A shadow or
+decoration pass always takes the shadow table and page, its slot the high nibble less 8 when 8 or more.
+Colour 2 is yellow, 3 red. BATTLE_MENU.md 3.12. **V**
+
 The UV divisor is the FTCX sheet size from `sub_8AC400`, 128x234 for font 0x3D40. The HD pages
 are 512x1024 DXT5, so U scales by 4 and V by 4.376. Decoding the alpha of
 `menu_us/base_ftc/d3d11/font_0_0.dds.phyre` gives glyph column bands starting every 56 texels

@@ -165,6 +165,25 @@ list the entries of the table from `sub_790200(0, ...)` whose first two key byte
 `(code, 0)` and that `FFX_SaveData_TestCharAbilityBit(char, id)` says this character has.
 So: auto-abilities, then four per-character ability or command lists.
 
+Added 2026-10-31, from porting it (Project Zanarkand `party::BuildStatusAbilityList`, checked against
+a Python model of the decompile). The table is st_number.bin row 0 (`sub_790200` is now
+`FFX_Kernel_GetStNumberRow`), 4 byte entries of group, subgroup and a u16 id, ended by a group of 0xFF.
+`FFX_Menu_StatusBuildAbilityList(mode, group, subgroup, character, out)`:
+- The row count and the first row are `FFX_Menu_StNumberCount 0x8D2D80` and `FFX_Menu_StNumberFirst
+  0x8D2DC0`. With a mode of 0 they give 8 and 0, so the first argument only matters as zero or not.
+  `out` is zeroed for that count.
+- Group 1, whatever the mode, is the summon list: each id is a record that is in the party, 100
+  standing for record 15 (the Magus Sisters). It returns the count.
+- Any other group with a mode that is not 0 walks the matching entries. An ability
+  `FFX_SaveData_TestCharAbilityBit` says the character has is written and counted as learned. For
+  characters 0..7 one it does not have but that `FFX_SaveData_TestInnateAbilityFlag` marks (the
+  menu_panel words at save +0x3D28) leaves a 0 hole in the list, and one that is neither takes 1 off
+  the returned count. Groups 64..71 call `FFX_SaveData__getCharRecord` first, the rest call
+  `sub_8A8E20` (a menu side effect, not ported). Otherwise the two loops are the same.
+- Mode 0 with any other group lists the equipped weapon's then armour's non empty slots (0 and 0xFF
+  are empty), an id of 200 and up reading entry 0.
+- For a character of 8 and up it returns the learned count instead, which is 0 in the mode 0 branch.
+
 The slide animation is integer only. `g_ffxMenuStatusSlideVel 0x186A9FC` is a velocity of +-341 and
 `FFX_Menu_StatusAdvanceSlide 0x8D3280` accumulates it into `g_ffxMenuStatusSlidePos 0x186AA00`,
 clamped to 0..4096. No clock, no float.
@@ -260,6 +279,16 @@ All the behaviour is in `FFX_Menu_CustomizeStep 0x8D5830`, a 14-state machine on
  13 THE COMMIT, see below
  8  sub_8C2C10("scene23"); reset; back to 1
 ```
+
+Corrected 2026-10-31 (the Zanarkand equipment port, src/ffx/equip/Customize.h, from the disassembly
+at 0x8C2861..0x8C2A3C and 0x8D55E0). The trim walks down from count - 1 and stops above index 0, so a
+list whose only entry in use is its first counts 0, a list of one counts 0 and an empty list counts -1.
+State 7's statuses come from `FFX_Menu_BuildListRows 0x8C2390` case 5: 11 can be added (asks message
+33), 12 already held, 15 refused (message 29), 14 short of items (message 6), 16 no free slot (message
+27), anything else (12 and the 0x11 filler rows of the recipes whose item is not held) message 28.
+State 13 charges the kaizou row in the list row's top byte, not the cursor row. The helpers are now
+named `FFX_Menu_GetCustomizeString 0x8BEEB0` (kernel string 12), `FFX_Menu_GetCustomizeTable
+0x8C1B70` and `FFX_Menu_GetCustomizeRowCount 0x8C1B90`, in tools/apply_equipment_names.py.
 
 ### 3.3 The six co-op answers for module 9
 

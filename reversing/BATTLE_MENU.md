@@ -329,6 +329,12 @@ data reference. So the flag is a constant 1. [M for no reference, V for the valu
 `g_ffxBtlMenuPartyWindowOn 0xC58EF4` is set by `FFX_BtlMenu_SetPartyWindowOn 0x89BC60` (Btl 112 and 113)
 and by init, and gates `FFX_BtlMenu_DrawPartyWindow 0x896450`, the three front-line rows. [V]
 
+2026-11-01: item 3's "ally bars" is the party panel's step, `sub_8920D0` (named
+`FFX_BtlMenu_StepPartyPanel` by `../tools/apply_battle_hud_names.py`), at 0x89AE2F right after
+`RefreshTargetUnits`. It is not presentation only: it calls `FFX_BtlMenu_BuildMenuList(0, 18)`, which
+rebuilds list 18 at 0x112C2F8 every sub-step, a step visible write. The rest of what it writes, the three
+144 byte rows at 0x133F7D8 and the mode `byte_133D782`, only the draw reads. Section 3.12 has the detail. [V]
+
 ### 3.11 Command ids
 
 Decoded from command.bin in memory through `../tools/vbf.py`
@@ -357,6 +363,64 @@ AI property 215 (0x112C2F8), 10 the bench (0x112C336), 11 live enemies (0x112C37
 one command, 0x3121 or 0x3122 (0x112C374). Kind 5 pads its list with 0xFF out to 31 entries from a 10
 slot buffer, so the pad runs over the first 21 entries of kind 8's list. Kind 8 is rebuilt before any
 read, so this is harmless, but a port with separate buffers must not "fix" the count kind 5 reports (10).
+
+### 3.12 The HUD over the live battle (2026-11-01)
+
+Traced for Project Zanarkand's battle HUD port (PROGRESS 13.11). Every line [V] from the decompile and the
+disassembly unless marked.
+
+**Draw order.** `FFX_BtlMenu_DrawRoot 0x89B360`, drawn steps only:
+
+1. `sub_780CC0` (0x89B36D), in any battle phase but 0: `sub_79F380` writes each unit's screen anchors into
+   the unit (marker +0xF3C/+0xF40, -512 behind the eye, overhead +0xF44/+0xF48, that clamped to 27..485 and
+   34..391 at +0xF4C/+0xF50), then `sub_79F660` queues the Doom counters (at the marker, 19 up) and every
+   floating number record whose delay is out (at the overhead anchor) into the 63 entry queue at 0x133F110.
+2. `maybe_FFX_BtlMenu_DrawDamagePopups 0x893290` draws that queue: digits from battle.dds (`sub_8FB840`),
+   labels from icon.dds (`sub_8FBCC0`).
+3. In phases 1 and 2, `FFX_BtlMenu_DrawPartyWindow`. DrawRoot also calls the ability banner `sub_89D9B0`
+   (0x89B3D2, 0x89B3D9) and the enemy gauges `sub_8933C0` (0x89B407), which the HUD port does not draw.
+4. With a menu open and enabled: `sub_892590` (the spinning triangle over the owner), the CTB window, the
+   page draws, the help, the root slide and the target info.
+
+**Under Auto-Battle** (`g_boosterAutoBattle 0x133D6E0`): DrawRoot skips `sub_892590` (0x89B446), the CTB
+window and `FFX_BtlMenu_Root_Draw` return at once, the help, the slide's body and the target info test the
+flag and draw nothing, and `FFX_BtlMenu_Target_Draw` draws nothing in any mode. So the player sees no
+command window, no CTB window, no owner triangle and no target cursor, only the party panel, the numbers,
+the banner, the enemy gauges and the scene groups. The root page still starts its lay scene.
+
+**The panel.** `sub_8920D0` (every sub-step, see 3.10) takes its mode from the command row of the page that
+opened the current one (the root's opener at depth -1 is 0): byte 34 bit 0 clear gives mode 3 and a reset
+(`sub_898010`), set gives `(byte >> 1) & 3`, with a reset when the mode changes. In command.bin 22 rows set
+bit 0, 9 with mode 0 and 13 with mode 2, and none with mode 1 [M, read in memory]. Attack's row 0 has
+byte 34 at 0 (so do rows 1, 2, 0x15 and 0x29), and Auto-Battle keeps the owner (3.9), so under Auto-Battle
+the rows reset every sub-step and show the HP as it is at that sub-step's menu step. Otherwise HP and MP roll to a new value over 10 sub-steps (a tenth a
+step) and the gauge moves 6 a sub-step toward `gauge * word_25D0AA4 / max`, `word_25D0AA4` being
+battle_script.bin's dum9 width (`FFX_MenuLayout_LoadCommon` at 0x8AEE0A).
+`sub_898010` divides by the overdrive max with no zero check (0x89809E). Mode 3 draws the owner
+highlight, the name at scale 0.68, the HP and MP labels and the values right aligned (`sub_905890`) at
+scale 0.65, and the gauge `sub_8960E0` (a wall clock pulse when full, `FFX_Time_AppElapsedSeconds`).
+
+**The numbers are simulation.** `FFX_Btl_ShowFloatingNumber 0x79FA00` places one 20 byte record per digit
+and one for the label (128 records at `dword_11360B8`, a heap block, linked by pointers), delay index + 1,
+life 30. `sub_79F5E0` runs every sub-step from `FFX_Btl_MainStep` (0x790D88): it counts each delay down,
+ages every record, frees those past their life and recounts the three wait bytes from what is left. So a
+number holds the battle (the action finish, ExecCommand and the end phase) for up to 31 sub-steps, and a
+port without the records advances the battle early. `sub_79F9B0` resets the pool from
+`FFX_Btl_BeginBattle` (0x7814C6). a5 of the show call is unused. Nothing on the number path draws from the
+RNG.
+
+**Draw side writes into the battle.** The anchors above (+0xF34..+0xF50, read only by `sub_79F660`), the
+Doom phase +0xF6C (advanced per draw, read only by the draw), and the trophy latches the popup draw clears.
+None reaches the step. The enemy gauge step `sub_891220` runs in `FFX_BtlMenu_Step` and calls
+`FFX_BtlUi_ProjectUnitToScreen`, so step thread state there depends on the camera, though only the draw
+reads it.
+
+**Glyph colours.** `dword_B5F890` (glyph) and `dword_B5F8D0` (shadow) hold 8 slots of two words,
+`R << 24 | G << 16 | B << 8 | A`, slot n the bottom vertices from [2n] and the top from [2n + 1].
+`FFX_Font_ResolvePageTexture 0x8ACF50` gives the glyph pass the low nibble (8 or more the shadow page and
+table at n - 8) and the shadow or decoration pass always the shadow table, slot the high nibble (less 8).
+`FFX_Glyph2D_Draw 0x640660` multiplies the pen colour (0x80, alpha * 2) by the slot. HP colour bytes: 0, 2
+(yellow) below half, 0x53 at 0 (glyph red, shadow slot 5).
 
 ---
 
@@ -471,6 +535,11 @@ the target info slide, the bars, the cursor spin and the party window. Several o
 the step thread (the CTB window rows, the help text, the bars), so a presentation layer that reads them
 has to respect `ffx-present-is-not-the-step-thread`. [V for where they are written, I for the rest]
 
+2026-11-01, two corrections to that list. The bars' step also rebuilds list 18 (3.10), which a port must
+keep on the step side. And the floating damage numbers are not presentation at all: their records hold the
+battle's waits for up to 31 sub-steps (3.12), so every peer must place and age them in the step. Under
+Auto-Battle the CTB order window is never drawn (3.12). [V]
+
 **Only if both peers run the menu:** the wall-clock lockouts, the wall-clock repeat and the draw-clocked
 scroll lock make the step a confirm lands on depend on the machine. That does not matter while only the
 acting player runs the menu and the record is shipped. [I]
@@ -493,6 +562,10 @@ The whole menu is single slot (one stack, one staged record, one owner, one targ
 | `OVERDRIVES.md` 1 and 8 | "every battle menu page" has a lockout, "eight of the nine" state 4 callbacks | 10 step callbacks, 8 with a lockout, the gil and target pages without |
 | `INPUT_LAYER.md` 2.4 | which bit is confirm is not established | in the battle menu 0x20 confirms and 0x40 cancels [V] |
 | IDB comment on `FFX_BtlMenu_Step` | "EVERY state-4 callback gates" | not the gil page and not the target page. Not edited, the apply script appends to other rows only |
+| `BATTLE_CTB_AND_STATUS.md` (ShowFloatingNumber bullet) | which steps wait on each byte is not all traced | 2026-11-01: `sub_79F5E0` recounts all three every sub-step from the live records, 3.12 [V] |
+| `MENU_DRAW_PATH.md` 10 | `FFX_Text_DrawStringScaled` draws the +2, +2 drop shadow of `FFX_Text_DrawString` | 2026-11-01: its layer 0 is `sub_8FAE40`, an eight copy ring at 2 HD pixels over the outline scale, and it has no 0x0B icon handling [V] |
+| `CHEAT_BATTLE.md` table, 0x39FA00 | "a5" listed as an argument | 2026-11-01: a5 is never read [V] |
+| `BATTLE_MENU.md` 6 | the bars are local presentation | 2026-11-01: their step writes list 18, and the floating numbers are simulation, 3.12 [V] |
 
 ---
 
@@ -501,6 +574,11 @@ The whole menu is single slot (one stack, one staged record, one owner, one targ
 `../tools/apply_battle_menu_names.py`, 85 functions and 16 globals, no RENAMES. The rehearsal on a copy
 of the IDB: dry run 101 planned and 0 skipped, apply with comments renamed 101 and failed 0, longest
 comment 389 characters, second dry run planned 0.
+
+Added 2026-11-01: `../tools/apply_battle_hud_names.py`, 27 functions, 1 rename
+(`maybe_FFX_BtlMenu_DrawDamagePopups` -> `FFX_BtlMenu_DrawDamagePopups`) and 16 globals, 44 rows: the
+floating number step half, the popup queue, the party panel and gauges, the owner triangle, the banner and
+the text helpers the panel draws through. Dry run on a copy only: 44 planned, 0 skipped.
 
 Added 2026-10-29: `../tools/apply_summon_menu_names.py` adds the menu lists, the target context
 globals, `g_ffxBtlUnitCommandBlocks 0x2310CD8`, `g_ffxBtlZeroAbilityRecord 0x1136008` (the zero row
@@ -517,3 +595,8 @@ builders. Dry run on a copy only.
 - Whether the page depth can pass 7. `FFX_BtlMenu_PushPage` does not check it.
 - The exact writes of `sub_7969F0` beyond actor +0x49C.
 - What actor+0x6C8 holds, and so which command the 0x10 shortcut commits.
+- 2026-11-01: still open from the HUD trace. Who writes `byte_133D782` through the code at 0x89A850 (not a
+  function in the IDB). What `sub_898260` (panel mode 2's status names) builds. The enemy gauges
+  (`sub_8933C0`), the banner (`sub_89D9B0`) and `sub_895390` are traced only far enough to name.
+  `FFX_BtlMenu_DrawPartyWindow`'s two `sub_901660` calls (0x896C3D, 0x896F8C) and its language 11 variants.
+  What `MagicFile__getMagicId() == 283` is (it hides the Doom digits).

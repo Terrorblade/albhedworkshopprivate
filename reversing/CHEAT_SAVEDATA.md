@@ -498,6 +498,33 @@ allowed to use, not how many exist.
 Three fields in the entry are unaccounted for, `+0x07` through `+0x0A`. They are copied around and
 never read by anything I found. A cheat should preserve them rather than zero them.
 
+**Corrected 2026-10-31** (the Zanarkand equipment port, src/ffx/equip/, read from the disassembly and
+held to the recorded battles):
+
+- `+0x08`, `+0x09` and `+0x0A` do have a reader. `FFX_Btl_LoadCharRecordIntoActor 0x39C5F0` (at
+  `0x39C8F8`) puts the weapon's `+0x08` in the battle unit's damage formula `+0x5C1`, `+0x09` in its
+  power `+0x5C7` and adds `+0x0A` to its critical bonus `+0x5D8`. A unit with no weapon gets formula 1
+  and power 16. The monster drop writes all three from its reward record (`+46`, `+48`, `+47`). So
+  they are the weapon's formula, power and crit bonus. Only `+0x07` still has no reader.
+- Flag `0x02` is not a customise flag. It is the "somebody wears it" lock that
+  `FFX_SaveData_LockEquippedGear 0x3AD5E0` (core:576) toggles on both pieces of characters 0..6.
+  `FFX_SaveData_ListEquipForChar 0x3ABD10` leaves a locked entry out unless the character asked for is
+  8 or more, `FFX_Btl_BuildActorEquipLists 0x39CA80` leaves it out of the battle's equip lists,
+  `FFX_SaveData_CountEquipEntries` does not count it and Customize refuses it even when forced.
+- Flag `0x08` is not the Celestial Armour. It forces name id `0x5001`, `w_name.bin` row 1, which is on
+  the weapon side of the split above (rows 0..73). Btl 173 (`0x3AD6E0`) asks whether any entry in use
+  has it without the lock, and core:541 equips character 0 with it. Customize refuses `0x04` and
+  `0x08` unless forced, as the table says.
+- The shop and the results screen treat `flags & 0x0D` as not for sale (`FFX_EquipShop_GetSellPrice`
+  returns 0).
+- The two 8 entry arrays outside the block are not menu preview rows. Nibble 7 (`0x1F10F9E`) is the
+  battle's equipment spoils, `g_ffxTreasureStaging +0xFE`, which `FFX_Btl_RollEquipmentDrop` fills and
+  the results screen (`FFX_BtlResult_Init 0x4BDB70`) copies in. Nibble 11 (`0x1F10DDE`) is the
+  equipment shop's stock. An index of 8 or more in either reads entry 0, as 200 or more does in the
+  main array.
+- `FFX_Equip_HasFreeAbilitySlot 0x4BF720` reads the word at `+0x0C + 2 * slotCount`, the last slot
+  the count allows, so a slot count of 0 tests the model word at `+0x0C`.
+
 ### 4.2 How a character names a piece
 
 `record[0x2D]` and `record[0x2E]` hold the slot as **one byte**, so the stored value is the array
@@ -599,6 +626,23 @@ A cheat does not have to charge the item, but the customise table is still the r
 "which auto-abilities are legal on a weapon versus an armour", because it is the only table in the
 game that says so. 125 rows, `+0` = 1 for weapon and 2 for armour.
 
+**Corrected 2026-10-31.** The row the commit charges is not the list index. Each list row of
+`FFX_Menu_BuildListRows 0x4C2390` case 5 is `{u16 ability, u8 status, u8 recipe}` and state 13 takes
+`HIBYTE` of it, the kaizou row the list row came from. The list holds only the recipes whose kind mask
+has the entry's kind (1 for a weapon, 2 for armour) and whose item is held, then one filler row
+`0xFF110000` per recipe of the right kind whose item is not. The status: 11 can be added, 12 already
+held (same `a_ability` group `+0x69`, level `+0x6A` and variant `+0x6B`), 15 refused (the group held at a
+higher level, or the same level and another variant, or a held variant 0xFF against a recipe variant
+0xFE), 14 short of items, and 16 no free slot over all of them. The ability comparison walks all four
+words, and the last held ability that matches decides. Zanarkand Customize.h has the whole flow.
+
+The equipment prices, from `FFX_EquipShop_GetBuyPrice` and `FFX_EquipShop_GetSellPrice`: the
+`arms_rate.bin` u32 of every filled slot below the slot count is summed, then
+`FFX_EquipShop_ScalePrice 0x65CBE0` gives 100000 for four empty slots, else
+`int(Scale[slots] * float(sum + 50) * Scale[empty])` with Scale 1, 1, 1.5, 3, 5. The buy price is that
+times `g_ffxShopPriceRate` / 100, at least 1. The sell price is a quarter of it, at least 1, and 0
+for `flags & 0x0D`.
+
 ## 5. Items and the inventory
 
 ### 5.1 The list
@@ -650,6 +694,18 @@ Returns 0 on success and -1 on a rejected argument. To set a count to an exact v
 
 A direct array write is fine too but then `FFX_SaveData_RebuildItemLists 0x3906A0` has to run, or the
 Items menu will show a stale list.
+
+Corrected 2026-10-31, from the Project Zanarkand port (src/ffx/item/Inventory.cpp) read against the
+disassembly at VA 0x790550 (RVA 0x390550):
+
+* The free slot is the first of the 112 whose id is 0 **or whose count is 0** (0x7905A3), not the
+  first id 255. A slot only matches the id when its count is not 0 as well.
+* A new slot takes `clamp(delta, 0, 99)` and sets **no** mask bit. Only a change to a held slot sets
+  the gained (delta > 0) or lost (delta < 0) bit, and only when the clamped count actually moved.
+* The count add is 32 bit (0x79059F and 0x7905FF), so a delta near INT_MAX wraps. A negative delta
+  larger than the count held fails the sign test, the slot is skipped and the call returns -1 with
+  nothing changed, it is not clamped to 0.
+* A count that reaches 0 sets the id back to 255.
 
 `ItemInUse 0x00D2C948` is one process-wide "staged item" id that `GetItemCount` subtracts one for.
 If the UI reads a count while a menu has an item staged it will read one low.
@@ -1660,3 +1716,22 @@ above.
 - Character record `+0x00..+0x03` are carried from the template and never read. [V]
 - Equipment entry `+0x07` stays unused. It is copied with the entry and nothing reads or writes it
   on its own. [V]
+
+**Correction, 2026-10-31** (the party port, Project Zanarkand src/ffx/party). What each battle counter
+at `+0x50..+0x5C` counts, all through `FFX_SaveData_BumpCharBattleCounter 0x785A00` with `which` 0..3:
+
+- `+0x50` (0) battles taken part in, `FFX_Btl_FinalizeSpoilsAp 0x798B70` for every unit that took
+  part. core:425 reads it.
+- `+0x54` (1) kills, the killer of a monster in `FFX_Btl_OnUnitDefeated 0x78C740`. core:424.
+- `+0x58` (2) times downed, the victim in the same function. core:426.
+- `+0x5C` (3) overdrive gauge fills, `FFX_Btl_AddOverdrive` at 0x7B16E9 when the gauge reaches its
+  max. No script syscall reads it.
+
+The three getters `FFX_AtelSys_Core_424..426` go through `FFX_SaveData__getCharRecord 0x785330`, which
+returns null past record 17, so a script asking for a bad index would crash the original. [V]
+
+Also from the same port: `+0x14` is the lifetime AP total and `+0x18` the AP banked toward the next
+sphere level, both clamped to 0..999,999,999 by `FFX_SaveData_AddAp 0x784610`, which spends `+0x18`
+one level at a time while it covers `FFX_SaveData_ApNeededForNextLevel` and `+0x3B` is below 99. A
+negative amount adds nothing. `+0x38` is the selected overdrive mode, written by menu module 21 from
+the list `g_ffxOverdriveModeDisplayOrder 0xC8765C` filtered by the `+0x88` mask. [V]

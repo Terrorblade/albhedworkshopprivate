@@ -129,7 +129,7 @@ wrong offset here corrupts something else.
 | +0x65C | byte | CTB counter | `FFX_Btl_ApplyCtbDelay` adds to it, clamped 0..255 |
 | **+0x6BC** | word | **auto-ability flags 1** | OR'd from equipment ability row +98. Bit 0x4000 = Half MP Cost, 0x8000 = One MP Cost |
 | **+0x6BE** | word | **auto-ability flags 2** | OR'd from ability row +100. **Bit 0x800 = Break Damage Limit.** Bits 1 / 2 double / triple overdrive gain, bit 4 doubles at low HP, bit 8 = Overdrive to AP |
-| +0x6C0 | word | auto-ability flags 3 | OR'd from ability row +102 |
+| +0x6C0 | word | auto-ability flags 3 | OR'd from ability row +102. Added 2026-10-31: bit 0x0001 MP Stroll, 0x0002 No Encounters, 0x0004 Capture. The other two words in full: +0x6BC 0x0001 Sensor, 0x0002 First Strike, 0x0004 Initiative, 0x0008 Counterattack, 0x0010 Evade and Counter, 0x0020 Magic Counter, 0x0040 Magic Booster, 0x0200 Alchemy, 0x0400 Auto-Potion, 0x0800 Auto-Med, 0x1000 Auto-Phoenix, 0x2000 Piercing. +0x6BE 0x0010 Double AP, 0x0020 Triple AP, 0x0040 No AP, 0x0080 Pickpocket, 0x0100 Master Thief, 0x0200 Break HP Limit, 0x0400 Break MP Limit, 0x4000 Gillionaire, 0x8000 HP Stroll. The a_ability row's element bytes are +0x11 attack, +0x12 absorb, +0x13 immune, +0x14 half, +0x15 weak. Project Zanarkand equip/AutoAbility.h |
 | +0x6CC | byte | cached MP cost | `FFX_Btl_CheckCommandCost` writes it, `FFX_Btl_SpendCommandCost` spends it |
 | +0x6CD | byte | cached overdrive cost | same pair |
 | **+0x6E4** | dword | working HP during an action | `FFX_Btl_StageEffectsForTarget` seeds it from +0x5D0 |

@@ -163,6 +163,17 @@ one. [V]
 - SuspendCameraOf (0) and ResumeCameraOf (1) set and clear +4 for another actor's handle.
 - SetCameraPriority (101) rewrites +6 on every entry of the own handle, and is ignored while
   `dword_2311424` is set, which `FFX_Btl_BeginBattle` sets through `sub_7BE100`.
+  Correction 2026-11-01: `FFX_Btl_BeginBattle` writes the sign extended debug byte
+  `g_ffxBtlDbgCameraPrio 0x112A924` there (0x78115A, 0x781162). That byte is past the initialized data, so
+  0 at boot, and only `FFX_Btl_ParseBtlEnvConfig` (0x7CE753) and `SG_DebugWin_BattleConfigProc` (0x7C7A4B)
+  write it. So in a normal battle the lock is 0 and came:101 is obeyed. `FFX_Came_Init` clears it at
+  0x7BD601, and `sub_7BE0A0` (0x7BE0A3) is the one reader. [V] for the writes, [I] that no retail config sets
+  the byte.
+- Addition 2026-11-01: kind 1 versus 0 is decided against the system actor of context 0, whatever context
+  the caller runs in. `FFX_Atel_GetSystemActorId 0x86B5D0` reads the u16 at context 0's package +24, and the
+  rows compare it with the caller's id field (`FFX_Atel_GetActorIdField 0x86A5D0`, actor +46). So a battle
+  actor without a bound handle gets the map class when its id happens to equal the field map's system
+  actor id, the event class otherwise. [V]
 - CloseBattleCameras (118) closes the battle and viewer handles on all three screens.
 
 ### 4.2 Where the point is: the modes
@@ -194,6 +205,60 @@ evaluates it each step into the pending point. [V]
   of `g_ffxCameChrTargetNames` (name index -selector - 1) or a unit index. The angles go in as degrees,
   theta = aDeg and phi = bDeg in radians. Every row returns int 0. Nothing in the rows or the modes draws
   RNG. [V]
+
+### 4.2a The battle's own camera (addition 2026-11-01)
+
+From the 13.12 script camera port (Project Zanarkand `BattleSession::UseCamera`, written and not yet
+run). [V] unless marked.
+
+- **Owner and handle.** `FFX_BtlEv_BindWorkersToUnits 0x7976A0` first calls `FFX_Came_SetMatrixOverride` at
+  0x79779F with enable 0, which writes only `g_ffxCameOverrideFlag`. Then `FFX_BtlEv_BindSlotCamera 0x798720`
+  at 0x7977AC (context 2, set 1, slot 62) and 0x7977B9 (set 0, slot 0) finds the worker and calls
+  `FFX_Atel_BindActorCameraHandleChecked 0x7BA9A0(actor, 2, 0)` at 0x79874E. That returns 0 for a kind
+  above 3, else `FFX_Atel_BindActorCameraHandle 0x7BAA50` caches `FFX_Came_GetHandleForClass(5, kind, screen)`
+  at actor +0x3C when it is 0 (a kind of 0 becomes "1 for the system actor"). So the battle camera is the
+  class 5 handle of owner 5 on screen 0, `g_ffxCameBattleHandles[0]`, and every worker bound with kind 2
+  shares it through that cache. In bsil03_00 the worker that answers events 24, 25 and 66 is neither of
+  the two bound ones (it is actor 1, slot 0 of the field set). It binds the same handle itself in its boot
+  entry through core:2 (kind 2, screen 0), followed by came:126 (1) and came:127 (1, 20480).
+- **The step.** `FFX_Came_StepAll 0x7BE110` is called from `FFX_MainStep` at 0x82104D, inside the sub step
+  loop: after `FFX_Player__stepControl` 0x821010, `FFX_Btl_MainStep` 0x821015, `FFX_Atel_StepOnce` 0x82101A,
+  `FFX_MesWin_StepAll` 0x82101F and the magic overlay step (skipped during a movie), and before
+  `FFX_RcBg_Step` and `FFX_Ch_UpdateMotionAll` 0x82107D. The second call at 0x8210C2 runs only on a frame
+  with zero sub steps under `g_ffxCameraAlwaysStep`. `FFX_Came_ActivateScreen` runs after the loop and
+  after `FFX_Ch_DispatchInBatches` 0x8210DA: screen 0 at 0x821189, the other screens at 0x82135E, and the
+  main screen (`g_ffxMainScreenIndex`) last at 0x821380. It writes `g_ffxCameActiveSlot 0x2311430` at
+  0x7BC1C9, and `FFX_Came_Init` sets it to slot 0 at 0x7BD5E3. So whenever a script runs, the active slot
+  came:119 (`FFX_Came_GetRoll 0x7BD500`, +0xC90) and came:120 (`FFX_Came_GetScrDpt 0x7BD510`, +0xC9C) read
+  is the main screen's slot of the previous frame.
+- **No reinit.** `FFX_Came_Init 0x7BD5D0`'s only call in `FFX_Btl_MainStep` (0x790E20) is the debug
+  restart behind the pad bits. The end of `FFX_Btl_MainStep` calls `maybe_FFX_Came_StopClassMoves 0x7BA860`
+  with 2 at 0x790E84, which is `FFX_Came_StopMove(h, 0)` and `(h, 1)` on the three battle handles, but only
+  when the sub phase is 0x21 or the end result is 5 or 6, so it is the teardown's, not every step's.
+- **The opening.** `FFX_Btl_StepSubPhase` fires event 24 at 0x7832A5 (`FFX_BtlEv_FireEvent(0, 0xFF, 24,
+  0xFFFF, 0, 1)`). In bsil03_00 that is actor 1 entry 2: came:22 and 52, btl:153(3), came:32 REF (13.1326,
+  -64.7707, -0.7288), came:2 CAM (94.8261, -53.7765, -19.7873), came:58 roll 0, came:59 650, came:3 into
+  three class 1 variables (+0x44, +0x48, +0x4C), came:2 with each times 2.5, came:20 (accel 0, hold 0, decel
+  30, startDiv 15), the same fixed pair, roll and 650 again, came:26. The eye flies in over 30 steps from
+  2.5 times its coordinates, the snapshot then move pattern of section 5.3. Entry 4 (event 25, fired at
+  0x792E2B when the menu's target changes) sets the same fixed shot. The opening looks over the monsters: with Y
+  down the eye is about 54 above the floor and the look-at about 65, and bsil03 zone 0's two monsters sit
+  about 47 and 55 degrees off the view axis against a half field of view near 19, so the opening frames
+  no monster. The script values are [V], what the player sees is [I] since it follows the port's
+  projection.
+- **The rows the battle reaches.** bsil03_00 calls came:2, 3, 20, 22, 26, 32, 50, 52, 56, 58, 59, 64, 65,
+  68, 69, 126 and 127. system_01 adds 16, 33, 46, 63, 77, 119, 120, 125 and 128. Neither calls a shake row,
+  so stream 9 is only drawn in a battle like this one by the battle's own effects. The only core rows
+  either uses are 0, 2, 95 and 169, and neither uses a ch row. system_01's 52 came:128 calls draw streams
+  14 and 15 during an ordinary battle. [V] for the census of these two files, other battle fields not read.
+- **came:3 and 33 in detail.** `sub_7BA3C0` (came:3 0x7B9260 passes 1, came:33 0x7B9D40 passes 0) pops the
+  three references in the order z, y, x and resolves each through `FFX_Atel_ResolveVarAddress`, then takes
+  the handle (+0x3C, else the class 5 fallback), then `sub_7BD420(handle & 0xFF, sub & 1, x, y, z)` stores
+  the sub-block's committed x, y and z (+0x20 of the slot in the handle's low byte) as floats, skipping any
+  null pointer. The handle's priority is not read, so an inactive handle reads back the active view.
+- **Names.** `../tools/apply_battle_script_camera_names.py` (7 rows, dry run only so far) names `sub_7BA3C0`,
+  `sub_7BD420`, `sub_7BE100`, `dword_2311424` and `dword_C494C8`, and drops the maybe_ from
+  `maybe_FFX_Came_StopClassMoves` and `maybe_g_ffxCameStopMoveLatch`.
 
 ### 4.3 Moving between points
 
@@ -363,6 +428,12 @@ This is the co-op question, since the camera is meant to be per player.
 - The two path buffers at 0x1136B68 and their counts (came:72 to 75). [V]
 - `dword_12FB7E0`, a one shot latch. Under magic 146 (`MagicFile__load` arms `dword_C494C8 = 0`)
   the second came:22 sets it, and came:128 and btl:30 (0x7A68E9) test and clear it. [V]
+  Addition 2026-11-01: the latch is now named `maybe_g_ffxCameStopMoveLatch 0x12FB7E0` and is past the
+  initialized data, so 0 at boot. The count `dword_C494C8` is initialized data, -1. `MagicFile__load` sets
+  it 0 at 0x9DA486 when the magic id is 146 (0x92) and back to -1 at 0x9DA49B for any other. came:22
+  (0x7B9B9E to 0x7B9BC0) counts only while it is 0 or more, and the call that finds it at 1 sets the latch
+  and the count to -1. btl:30 clears the latch only for battles 0x2350000, 0x2360000 and 0x2380000 and only
+  when its count of units in both selectors is 0. came:52 does not count. [V]
 - `dword_1136B58`, set by came:2 and 32 at level 8207 under magic 250 at one exact position, read by
   `FFX_Btl_SetUnitShowVote 0x79714F`, and cleared by the battle target fixup at level 8207 under magic
   251, which also flushes a deferred hide queue through `FFX_Ch_SetHideBit10`. A camera row changing
@@ -436,6 +507,9 @@ between slots.
 - `sub_82BEE0`, `sub_82CE20` and `sub_82CB60`, the renderer side of came:125 to 127, were not
   followed, so "render only" there is an inference.
 - The monster AI and battle field restores of came:119 and 120 were not traced to their consumer.
+  Update 2026-11-01: in system_01 actor 1 entry 2 (event 61, `FFX_Btl_StartCommandExec` 0x7AECCB) reads
+  came:3, 33, 120 and 119 one after another (0x00093 to 0x000A8), the whole view into class 1 variables.
+  The consumer, presumably a came:2, 32, 58 and 59 restore after the action, is still not traced.
 - btl:30's role around the magic 146 latch belongs in the Btl library note.
 - Whether `FFX_Ch_IsNearCameraForSmoothing` changes anything a hash would see.
 
@@ -450,7 +524,7 @@ mark.
 | 0 | 863 | 241 | e | actorId:int | int handle | no | `FFX_AtelSys_Came_000_SuspendCameraOf_resi` | pops an actor id and sets byte +4 of that actor's handle entry (sub_7C0010), so FFX_Came_GetActivePrioSlot skips it until ResumeCameraOf |  | V |
 | 1 | 986 | 238 | e | actorId:int | int handle | no | `FFX_AtelSys_Came_001_ResumeCameraOf_resi` | clears byte +4 of that actor's handle entry, the inverse of came:0 |  | V |
 | 2 | 12932 | 857 | e,b,s | x:float, y:float, z:float | int 0 | no | `FFX_AtelSys_Came_002_CamSetPos_resi` | sub_7BB6A0 -> FFX_Came_SetPos, mode 1 'pos' on the eye. Hard coded cases: level 1761 at story 260 and one exact position calls sub_79E2A0, level 8207 under magic 250 at one position sets dword_1136B58, scene 248 in battle 0x1390000 patches x | global | V |
-| 3 | 769 | 560 | e,m,b,s | xVar:int, yVar:int, zVar:int | int 0 | no | `FFX_AtelSys_Came_003_CamGetPosToVars_resi` | sub_7BD420: copies the committed eye position (sub-block +0x20) of screen 0 into three script variables | camread | V |
+| 3 | 769 | 560 | e,m,b,s | xVar:int, yVar:int, zVar:int | int 0 | no | `FFX_AtelSys_Came_003_CamGetPosToVars_resi` | sub_7BD420: copies the committed eye position (sub-block +0x20) of screen 0 into three script variables. Corrected 2026-11-01: of the slot in the low byte of the caller's handle, which is screen 0 for every handle the field and battle rows open, through sub_7BA3C0, which pops z, y, x and skips a null variable pointer (section 4.2a) | camread | V |
 | 4 | 18429 | 1026 | e,m,b | aDeg:float, bDeg:float, len:float | int 0 | no | `FFX_AtelSys_Came_004_CamSetPolar_resi` | sub_7BF700, mode 2 'pol': the eye at a polar offset (degrees to radians) from the look-at point |  | V |
 | 5 | 21 | 21 | e | aDeg:float, bDeg:float, len:float | int 0 | no | `FFX_AtelSys_Came_005_CamAddPolar_resi` | sub_7BF7F0, mode 7 'polo': adds the polar offset to the current one |  | V |
 | 6 | 483 | 69 | e | a:float, b:float, cDeg:float, d:float, e:float, f:float | int 0 | no | `FFX_AtelSys_Came_006_CamSetHyp1_resi` | FFX_Came_SetHyp1, mode 4 'hyp1', the third value in degrees |  | V |
